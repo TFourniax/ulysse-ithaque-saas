@@ -1,5 +1,5 @@
 import { useOpportunities } from '../api.ts';
-import { useSession } from '../App.tsx';
+import { useSession } from '../session.tsx';
 import { EmptyState, ErrorBanner, Loading } from '../components/ui.tsx';
 import { formatDateTime, formatFactValue } from '../format.ts';
 

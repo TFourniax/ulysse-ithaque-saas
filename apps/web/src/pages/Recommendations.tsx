@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import type { View } from '../api.ts';
 import { useAnalyses, useConnections, useRecommendations } from '../api.ts';
-import { can, useSession } from '../App.tsx';
+import { can, useSession } from '../session.tsx';
 import {
   Banner,
   EmptyState,

@@ -9,7 +9,7 @@ import {
   useRules,
   useUpdateContext,
 } from '../api.ts';
-import { can, useSession } from '../App.tsx';
+import { can, useSession } from '../session.tsx';
 import { Banner, ErrorBanner, FictionalBadge, Loading } from '../components/ui.tsx';
 import { formatDateTime, ROLE_LABELS } from '../format.ts';
 

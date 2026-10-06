@@ -1,7 +1,7 @@
 import type { Connection } from '@ulysse/contracts';
 import { useId, useState } from 'react';
 import { useConnectionActions, useConnections, useConnectors, useSyncRuns } from '../api.ts';
-import { can, useSession } from '../App.tsx';
+import { can, useSession } from '../session.tsx';
 import { Banner, EmptyState, ErrorBanner, FictionalBadge, Loading } from '../components/ui.tsx';
 import { formatDateTime, formatRelative } from '../format.ts';
 

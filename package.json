@@ -28,7 +28,8 @@
     "db:seed": "npm run seed -w @ulysse/worker",
     "fixture:crm": "npm run fixture:crm -w @ulysse/worker --",
     "build": "npm run typecheck && npm run build -w @ulysse/web",
-    "test:e2e": "npm run build -w @ulysse/web && npm run test:e2e -w @ulysse/web"
+    "test:e2e": "npm run build -w @ulysse/web && npm run test:e2e -w @ulysse/web",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run check:cycles && npm run openapi:check && npm test && npm run check"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

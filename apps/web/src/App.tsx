@@ -1,31 +1,19 @@
 import type { Me } from '@ulysse/contracts';
 import { useQueryClient } from '@tanstack/react-query';
-import { createContext, use, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createBrowserRouter, Navigate, NavLink, Outlet, useLocation } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { ApiError, loginUrl, logout, useMe, useSelectTenant } from './api.ts';
 import { ErrorBanner, Loading } from './components/ui.tsx';
 import { ROLE_LABELS } from './format.ts';
+import type { Session } from './session.tsx';
+import { can, SessionContext } from './session.tsx';
 import { AdminPage } from './pages/Admin.tsx';
 import { ConnectionsPage } from './pages/Connections.tsx';
 import { HistoryPage } from './pages/History.tsx';
 import { OpportunitiesPage } from './pages/Opportunities.tsx';
 import { RecommendationDetailPage } from './pages/RecommendationDetail.tsx';
 import { RecommendationsPage } from './pages/Recommendations.tsx';
-
-export type Session = Me & { activeTenant: NonNullable<Me['activeTenant']> };
-
-const SessionContext = createContext<Session | null>(null);
-
-export function useSession(): Session {
-  const session = use(SessionContext);
-  if (!session) throw new Error('useSession outside an authenticated layout');
-  return session;
-}
-
-export function can(session: Session, permission: string): boolean {
-  return session.activeTenant.permissions.includes(permission);
-}
 
 const LOGIN_ERRORS: Record<string, string> = {
   denied: 'La connexion a été annulée.',

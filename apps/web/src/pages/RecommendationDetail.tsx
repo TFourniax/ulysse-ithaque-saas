@@ -8,7 +8,7 @@ import {
   useRecommendation,
   useRevision,
 } from '../api.ts';
-import { useSession } from '../App.tsx';
+import { useSession } from '../session.tsx';
 import { Banner, ErrorBanner, FictionalBadge, Loading, StatusBadge } from '../components/ui.tsx';
 import {
   CLOSED_REASON_LABELS,

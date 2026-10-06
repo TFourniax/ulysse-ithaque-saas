@@ -1,5 +1,5 @@
 import { useAudit } from '../api.ts';
-import { can, useSession } from '../App.tsx';
+import { can, useSession } from '../session.tsx';
 import { Banner, ErrorBanner, Loading } from '../components/ui.tsx';
 import { EVENT_LABELS, formatDateTime } from '../format.ts';
 
