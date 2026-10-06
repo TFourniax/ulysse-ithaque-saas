@@ -24,7 +24,9 @@
     "db:bootstrap": "npm run db:bootstrap -w @ulysse/database",
     "db:migrate": "npm run db:migrate -w @ulysse/database",
     "openapi": "npm run openapi -w @ulysse/api",
-    "openapi:check": "npm run openapi -w @ulysse/api -- --check"
+    "openapi:check": "npm run openapi -w @ulysse/api -- --check",
+    "db:seed": "npm run seed -w @ulysse/worker",
+    "fixture:crm": "npm run fixture:crm -w @ulysse/worker --"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

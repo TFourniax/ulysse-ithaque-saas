@@ -106,6 +106,14 @@ export class FixtureCrmWriter {
     return (result.rowCount ?? 0) > 0;
   }
 
+  async get(dataset: string, externalId: string): Promise<Record<string, unknown> | null> {
+    const result = await this.#client.query<{ payload: Record<string, unknown> | null }>(
+      'SELECT payload FROM fixture_crm.items WHERE dataset = $1 AND external_id = $2 AND NOT deleted',
+      [dataset, externalId],
+    );
+    return result.rows[0]?.payload ?? null;
+  }
+
   async list(
     dataset: string,
   ): Promise<Array<{ externalId: string; version: number; deleted: boolean }>> {

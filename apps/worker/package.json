@@ -1,0 +1,20 @@
+{
+  "name": "@ulysse/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Background worker: scheduled and requested syncs, outbox relay, analysis, expiry and purge.",
+  "dependencies": {
+    "@ulysse/connectors": "0.1.0",
+    "@ulysse/database": "0.1.0",
+    "@ulysse/domain": "0.1.0",
+    "@ulysse/observability": "0.1.0"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=../../.env --conditions=ulysse-source --watch src/main.ts",
+    "start": "node dist/src/main.js",
+    "seed": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/dev/seed.ts",
+    "fixture:crm": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/dev/fixture-crm.ts",
+    "test:integration": "node --env-file-if-exists=../../.env --conditions=ulysse-source --test --test-concurrency=1 \"test/**/*.test.ts\""
+  }
+}

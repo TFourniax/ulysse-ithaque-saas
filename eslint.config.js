@@ -49,6 +49,8 @@ export default tseslint.config(
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
       // Port implementations are async by contract even when a given adapter has nothing to await.
       '@typescript-eslint/require-await': 'off',
+      // Stylistic in strictTypeChecked; short-circuit callbacks such as `() => send(...)` are clear enough.
+      '@typescript-eslint/no-confusing-void-expression': 'off',
       eqeqeq: ['error', 'always'],
       'no-console': ['error', { allow: ['warn', 'error'] }],
     },
@@ -57,7 +59,6 @@ export default tseslint.config(
     files: ['**/test/**/*.ts', '**/src/testing/**/*.ts', '**/src/testing.ts'],
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',
-      '@typescript-eslint/no-confusing-void-expression': 'off',
       '@typescript-eslint/no-floating-promises': [
         'error',
         {

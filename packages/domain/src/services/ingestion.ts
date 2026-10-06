@@ -232,12 +232,21 @@ export class IngestionService {
       await tx.updateSyncRun(next);
       const connection = await tx.getConnection(run.connectionId, { forUpdate: true });
       if (connection && connection.status !== 'revoked') {
+        const failures = connection.consecutiveFailures + 1;
+        // Bounded exponential backoff for scheduled retries: 2^n minutes, capped at the sync interval.
+        const backoffMinutes = Math.min(
+          connection.syncIntervalMinutes,
+          2 ** Math.min(failures, 10),
+        );
         await tx.updateConnection({
           ...connection,
           status: failure.terminal ? 'error' : connection.status,
           lastErrorCode: failure.code,
           lastErrorAt: at,
-          consecutiveFailures: connection.consecutiveFailures + 1,
+          consecutiveFailures: failures,
+          nextSyncAt: failure.terminal
+            ? null
+            : toInstant(clock.now().getTime() + backoffMinutes * 60_000),
           updatedAt: at,
         });
         await tx.appendAudit(
