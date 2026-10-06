@@ -54,9 +54,10 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/test/**/*.ts', '**/src/testing/**/*.ts'],
+    files: ['**/test/**/*.ts', '**/src/testing/**/*.ts', '**/src/testing.ts'],
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/no-confusing-void-expression': 'off',
       '@typescript-eslint/no-floating-promises': [
         'error',
         {

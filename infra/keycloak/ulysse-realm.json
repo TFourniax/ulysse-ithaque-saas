@@ -1,0 +1,123 @@
+{
+  "realm": "ulysse",
+  "displayName": "Ulysse — développement (comptes fictifs)",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 7200,
+  "ssoSessionMaxLifespan": 43200,
+  "clients": [
+    {
+      "clientId": "ulysse-web",
+      "name": "Ulysse (backend for frontend)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dev-only-ulysse-web-client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": [
+        "http://localhost:3000/auth/callback",
+        "http://localhost:5173/auth/callback"
+      ],
+      "webOrigins": ["+"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/##http://localhost:5173/",
+        "id.token.signed.response.alg": "RS256"
+      }
+    }
+  ],
+  "users": [
+    {
+      "id": "0b9f8a10-0000-4000-8000-00000000a001",
+      "username": "alice",
+      "email": "alice.owner@acme.example",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Martin (fictive)",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ulysse-demo-alice",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "0b9f8a10-0000-4000-8000-00000000a002",
+      "username": "bruno",
+      "email": "bruno.reviewer@acme.example",
+      "emailVerified": true,
+      "firstName": "Bruno",
+      "lastName": "Leroy (fictif)",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ulysse-demo-bruno",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "0b9f8a10-0000-4000-8000-00000000a003",
+      "username": "vera",
+      "email": "vera.viewer@acme.example",
+      "emailVerified": true,
+      "firstName": "Vera",
+      "lastName": "Petit (fictive)",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ulysse-demo-vera",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "0b9f8a10-0000-4000-8000-00000000b001",
+      "username": "gina",
+      "email": "gina.owner@globex.example",
+      "emailVerified": true,
+      "firstName": "Gina",
+      "lastName": "Moreau (fictive)",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ulysse-demo-gina",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "id": "0b9f8a10-0000-4000-8000-00000000c001",
+      "username": "dan",
+      "email": "dan.dual@example.test",
+      "emailVerified": true,
+      "firstName": "Dan",
+      "lastName": "Roux (fictif)",
+      "enabled": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ulysse-demo-dan",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

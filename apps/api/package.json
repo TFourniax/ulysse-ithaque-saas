@@ -1,0 +1,31 @@
+{
+  "name": "@ulysse/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fastify API: OIDC sessions, memberships, permissions and v1 endpoints.",
+  "dependencies": {
+    "@fastify/cookie": "11.1.2",
+    "@fastify/rate-limit": "11.2.0",
+    "@fastify/static": "10.1.5",
+    "@fastify/swagger": "9.9.1",
+    "@ulysse/connectors": "0.1.0",
+    "@ulysse/contracts": "0.1.0",
+    "@ulysse/database": "0.1.0",
+    "@ulysse/domain": "0.1.0",
+    "@ulysse/observability": "0.1.0",
+    "fastify": "5.12.5",
+    "fastify-type-provider-zod": "7.0.0",
+    "openid-client": "6.8.8",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "jose": "6.2.12"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=../../.env --conditions=ulysse-source --watch src/main.ts",
+    "start": "node dist/src/main.js",
+    "test:integration": "node --env-file-if-exists=../../.env --conditions=ulysse-source --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "openapi": "node --conditions=ulysse-source src/openapi.ts"
+  }
+}

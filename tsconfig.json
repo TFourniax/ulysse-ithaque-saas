@@ -5,10 +5,22 @@
       "path": "packages/domain"
     },
     {
+      "path": "packages/contracts"
+    },
+    {
+      "path": "packages/observability"
+    },
+    {
+      "path": "packages/connectors"
+    },
+    {
       "path": "packages/database"
     },
     {
       "path": "apps/demo"
+    },
+    {
+      "path": "apps/api"
     }
   ]
 }
