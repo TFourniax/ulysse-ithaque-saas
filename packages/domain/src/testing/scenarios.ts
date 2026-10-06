@@ -14,6 +14,7 @@ import type { OutboxEvent } from '../records.ts';
 import { defaultRules } from '../rules.ts';
 import { AnalysisService } from '../services/analysis-service.ts';
 import { ConnectionService } from '../services/connections.ts';
+import { FormulationService } from '../services/formulation.ts';
 import { CompanyContextService, DoctrineService, MemberService } from '../services/governance.ts';
 import { IngestionService } from '../services/ingestion.ts';
 import { MaintenanceService } from '../services/maintenance.ts';
@@ -91,6 +92,7 @@ export function defineWorkflowScenarios(
         context: new CompanyContextService(deps),
         members: new MemberService(deps),
         queries: new QueryService(deps),
+        formulation: new FormulationService(deps),
       };
       const doctrine = await services.doctrines.draft(owner, FIXTURE_DOCTRINE);
       await services.doctrines.validate(owner, doctrine.id, 'Validation fictive pour les tests.');
@@ -1003,6 +1005,70 @@ export function defineWorkflowScenarios(
         ),
         expectCode('INVALID_TIMELINE'),
       );
+    });
+
+    test('model-assisted wording creates a machine revision but never overwrites a human edit', async () => {
+      const w = await world();
+      await w.sync([record('deal-1'), record('deal-2')]);
+      await w.analyze();
+      const [first, second] = await w.open();
+      assert.ok(first && second);
+      const inputs = await w.services.formulation.prepare(w.worker, first.id);
+      assert.ok(inputs);
+      assert.ok(inputs.evidence.length > 0);
+      assert.equal(inputs.spentThisMonthUsd, 0);
+      const provenance = { provider: 'fake', model: 'fake-model', promptVersion: 'next-step-v1' };
+      const formulated = await w.services.formulation.apply(
+        w.worker,
+        first.id,
+        inputs.recommendation.revision,
+        'Relancer le contact par téléphone cette semaine.',
+        provenance,
+      );
+      assert.equal(formulated.formulation, 'model');
+      assert.equal(formulated.contentRevision, 2);
+      await w.services.formulation.recordUsage(w.worker, {
+        recommendationId: first.id,
+        ...provenance,
+        inputTokens: 420,
+        outputTokens: 60,
+        costUsd: 0.0012,
+        latencyMs: 850,
+        outcome: 'formulated',
+        errorCode: null,
+      });
+      assert.equal(
+        await w.services.formulation.prepare(w.worker, first.id),
+        null,
+        'already reformulated',
+      );
+      const approved = await w.services.review.decide(
+        w.reviewer,
+        first.id,
+        { decision: 'approve', expectedRevision: formulated.revision, reason: null },
+        'formulated-approve',
+      );
+      assert.equal(approved.decision.contentRevision, 2);
+      await w.services.review.revise(
+        w.reviewer,
+        second.id,
+        { expectedRevision: 1, proposedAction: 'Texte humain.', note: null, submit: true },
+        'human-edit-0001',
+      );
+      assert.equal(await w.services.formulation.prepare(w.worker, second.id), null);
+      await assert.rejects(
+        w.services.formulation.apply(w.worker, second.id, 2, 'Texte machine.', provenance),
+        expectCode('INVALID_TRANSITION'),
+      );
+      await assert.rejects(
+        w.services.formulation.prepare(w.reviewer, second.id),
+        expectCode('FORBIDDEN'),
+      );
+      const spent = await w.services.formulation.prepare(
+        w.worker,
+        (await w.open()).find((r) => r.id !== first.id && r.id !== second.id)?.id ?? first.id,
+      );
+      assert.equal(spent, null);
     });
 
     test('pagination is stable and complete', async () => {

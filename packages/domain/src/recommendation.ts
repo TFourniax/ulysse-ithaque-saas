@@ -326,6 +326,47 @@ export function revise(
   };
 }
 
+/**
+ * Model-assisted wording of the proposed step. Applies only to a pending,
+ * unexpired recommendation whose content was never edited by a human
+ * (content revision 1): a person's wording is never overwritten.
+ */
+export function reformulate(
+  rec: Recommendation,
+  proposedAction: string,
+  now: number,
+): { next: Recommendation; revision: RevisionRecord } {
+  ensure(rec.status === 'pending', 'INVALID_TRANSITION', `${rec.status} -> reformulate`);
+  ensure(
+    rec.contentRevision === 1,
+    'INVALID_TRANSITION',
+    'human-edited content is never overwritten',
+  );
+  ensure(now < parseInstant(rec.expiresAt), 'EXPIRED');
+  const text = proposedAction.trim();
+  ensure(text.length > 0 && text.length <= 4000, 'INVALID_INPUT', 'proposedAction');
+  const at = toInstant(now);
+  return {
+    next: {
+      ...rec,
+      proposedAction: text,
+      contentRevision: 2,
+      formulation: 'model',
+      revision: rec.revision + 1,
+      updatedAt: at,
+    },
+    revision: {
+      tenantId: rec.tenantId,
+      recommendationId: rec.id,
+      contentRevision: 2,
+      proposedAction: text,
+      note: 'Formulation assistée par modèle (à vérifier avant décision).',
+      createdBy: null,
+      createdAt: at,
+    },
+  };
+}
+
 /** System closure used by maintenance and analysis (TTL, changed or deleted evidence, replacement). */
 export function close(
   rec: Recommendation,

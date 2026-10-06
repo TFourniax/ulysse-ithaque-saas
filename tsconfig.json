@@ -14,6 +14,9 @@
       "path": "packages/connectors"
     },
     {
+      "path": "packages/ai"
+    },
+    {
       "path": "packages/database"
     },
     {

@@ -21,6 +21,7 @@ import type {
   Fact,
   IdempotencyReceipt,
   Member,
+  ModelUsage,
   OutboxEvent,
   Page,
   PageRequest,
@@ -46,6 +47,7 @@ export type MemoryState = {
   audit: AuditEvent[];
   outbox: OutboxEvent[];
   members: Member[];
+  modelUsage: ModelUsage[];
 };
 
 export function emptyMemoryState(): MemoryState {
@@ -66,6 +68,7 @@ export function emptyMemoryState(): MemoryState {
     audit: [],
     outbox: [],
     members: [],
+    modelUsage: [],
   };
 }
 
@@ -467,6 +470,16 @@ class MemoryTx implements TenantTx {
     return this.#own(this.#s.analyses)
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id))
       .slice(0, limit);
+  }
+
+  async insertModelUsage(usage: ModelUsage): Promise<void> {
+    this.#check(usage);
+    this.#s.modelUsage.push(usage);
+  }
+  async sumModelCostSince(since: string): Promise<number> {
+    return this.#own(this.#s.modelUsage)
+      .filter((u) => u.createdAt >= since)
+      .reduce((sum, u) => sum + (u.costUsd ?? 0), 0);
   }
 
   async getReceipt(

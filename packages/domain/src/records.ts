@@ -184,5 +184,31 @@ export type Member = Readonly<{
   revokedBy: string | null;
 }>;
 
+export const MODEL_OUTCOMES = [
+  'formulated',
+  'abstained',
+  'rejected',
+  'failed',
+  'skipped_budget',
+] as const;
+export type ModelOutcome = (typeof MODEL_OUTCOMES)[number];
+
+/** Observed model usage (tokens and cost as reported by the provider; null when not reported). */
+export type ModelUsage = Readonly<{
+  tenantId: string;
+  id: string;
+  recommendationId: string | null;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number | null;
+  latencyMs: number;
+  outcome: ModelOutcome;
+  errorCode: string | null;
+  createdAt: string;
+}>;
+
 export type Page<T> = Readonly<{ items: readonly T[]; nextCursor: string | null }>;
 export type PageRequest = Readonly<{ limit: number; cursor: string | null }>;

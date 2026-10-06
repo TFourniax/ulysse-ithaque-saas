@@ -10,6 +10,7 @@ import type {
   Fact,
   IdempotencyReceipt,
   Member,
+  ModelUsage,
   Opportunity,
   OpportunityFields,
   OutboxEvent,
@@ -1070,6 +1071,37 @@ export class PgTenantTx implements TenantTx {
         [this.tenantId, limit],
       )
     ).map(analysisFrom);
+  }
+
+  async insertModelUsage(u: ModelUsage): Promise<void> {
+    await this.#exec(
+      `INSERT INTO model_usage (tenant_id, id, recommendation_id, provider, model, prompt_version, input_tokens, output_tokens,
+         cost_usd, latency_ms, outcome, error_code, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [
+        u.tenantId,
+        u.id,
+        u.recommendationId,
+        u.provider,
+        u.model,
+        u.promptVersion,
+        u.inputTokens,
+        u.outputTokens,
+        u.costUsd,
+        Math.round(u.latencyMs),
+        u.outcome,
+        u.errorCode,
+        u.createdAt,
+      ],
+    );
+  }
+
+  async sumModelCostSince(since: string): Promise<number> {
+    const row = await this.#one(
+      'SELECT COALESCE(sum(cost_usd), 0)::text AS total FROM model_usage WHERE tenant_id = $1 AND created_at >= $2',
+      [this.tenantId, since],
+    );
+    return row ? num(row, 'total') : 0;
   }
 
   async getReceipt(

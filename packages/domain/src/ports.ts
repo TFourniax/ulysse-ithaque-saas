@@ -15,6 +15,7 @@ import type {
   Fact,
   IdempotencyReceipt,
   Member,
+  ModelUsage,
   OutboxEvent,
   Page,
   PageRequest,
@@ -101,6 +102,9 @@ export interface TenantTx {
   listDecisions(recommendationId: string): Promise<DecisionRecord[]>;
 
   insertAnalysis(analysis: Analysis): Promise<void>;
+  insertModelUsage(usage: ModelUsage): Promise<void>;
+  /** Sum of reported model costs (USD) for the tenant since `since`. */
+  sumModelCostSince(since: string): Promise<number>;
   listAnalyses(limit: number): Promise<Analysis[]>;
 
   getReceipt(actorId: string, operation: string, key: string): Promise<IdempotencyReceipt | null>;

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
+import type { ModelSettings } from '@ulysse/ai';
+import { ModelError, ScriptedProvider } from '@ulysse/ai';
 import type { Connector } from '@ulysse/connectors';
 import {
   ConnectorError,
@@ -55,7 +57,12 @@ function stalled(id: string, inactiveDays: number, extra: Record<string, unknown
 }
 
 function runtimeWith(
-  options: { registry?: Connector[]; faults?: FaultHooks; env?: Record<string, string> } = {},
+  options: {
+    registry?: Connector[];
+    faults?: FaultHooks;
+    env?: Record<string, string>;
+    model?: ModelSettings;
+  } = {},
 ) {
   return new WorkerRuntime({
     config: loadWorkerConfig({
@@ -73,6 +80,7 @@ function runtimeWith(
     logger: createLogger('worker-test', { level: 'silent' }),
     metrics: createMetrics('worker-test'),
     ...(options.faults ? { faults: options.faults } : {}),
+    ...(options.model ? { model: options.model } : {}),
   });
 }
 
@@ -425,5 +433,91 @@ describe('background ingestion with pg-boss', () => {
       'graceful-2',
     );
     assert.equal(await w.count('SELECT count(*)::int AS n FROM source_records'), 6);
+  });
+
+  test('optional model wording is applied in the background, recorded, and degrades safely', async () => {
+    store.upsert('model', 'OPP-1', stalled('OPP-1', 14), iso(-day));
+    store.upsert('model', 'OPP-2', stalled('OPP-2', 16), iso(-day));
+    const w = await tenantWorld('model', 'model');
+    const good = {
+      abstain: false,
+      abstainReason: null,
+      proposedAction: 'Appeler le contact pour convenir d’une prochaine étape datée cette semaine.',
+      rationale: 'Pas d’interaction récente ni de prochaine étape enregistrée.',
+      citations: ['F1'],
+    };
+    // Deterministic per opportunity: other tenants' pending events may also reach this runtime.
+    const provider = new ScriptedProvider(
+      Array.from({ length: 50 }, () => (request: { user: string }) => {
+        if (request.user.includes('OPP-2')) throw new ModelError('unavailable', 'provider down');
+        return good;
+      }),
+    );
+    const runtime = runtimeWith({
+      model: { provider, timeoutMs: 2000, maxOutputTokens: 300, monthlyBudgetUsd: 1 },
+    });
+    await runtime.start({ schedule: false });
+    try {
+      await w.connect();
+      // Usage is recorded before the wording is applied (cost counts even on a conflict).
+      await waitFor(
+        async () =>
+          (await w.count('SELECT count(*)::int AS n FROM model_usage')) === 2 &&
+          (await w.count(
+            "SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'recommendation.formulated'",
+          )) === 1,
+      );
+      const open = await w.open();
+      assert.equal(open.length, 2);
+      assert.deepEqual(
+        open.map((r) => r.formulation).sort(),
+        ['model', 'template'],
+        'one formulated, one kept deterministic after a provider failure',
+      );
+      const formulated = open.find((r) => r.formulation === 'model');
+      assert.equal(formulated?.proposedAction, good.proposedAction);
+      assert.equal(formulated.contentRevision, 2);
+      assert.equal(
+        await w.count(
+          "SELECT count(*)::int AS n FROM model_usage WHERE outcome = 'failed' AND error_code = 'unavailable'",
+        ),
+        1,
+      );
+      assert.equal(
+        await w.count(
+          "SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'recommendation.formulated'",
+        ),
+        1,
+      );
+      assert.ok(
+        provider.requests.every((r) => !r.user.includes(w.tenantId)),
+        'no internal identifiers sent to the model',
+      );
+    } finally {
+      await runtime.stop(5000);
+    }
+  });
+
+  test('model calls stop when the tenant budget is reached', async () => {
+    store.upsert('budget', 'OPP-1', stalled('OPP-1', 14), iso(-day));
+    const w = await tenantWorld('budget', 'budget');
+    const provider = new ScriptedProvider([]);
+    const runtime = runtimeWith({
+      model: { provider, timeoutMs: 2000, maxOutputTokens: 300, monthlyBudgetUsd: 0 },
+    });
+    await runtime.start({ schedule: false });
+    try {
+      await w.connect();
+      await waitFor(
+        async () =>
+          (await w.count(
+            "SELECT count(*)::int AS n FROM model_usage WHERE outcome = 'skipped_budget'",
+          )) === 1,
+      );
+      assert.equal(provider.requests.length, 0);
+      assert.equal((await w.open())[0]?.formulation, 'template');
+    } finally {
+      await runtime.stop(5000);
+    }
   });
 });

@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Background worker: scheduled and requested syncs, outbox relay, analysis, expiry and purge.",
   "dependencies": {
+    "@ulysse/ai": "0.1.0",
     "@ulysse/connectors": "0.1.0",
     "@ulysse/database": "0.1.0",
     "@ulysse/domain": "0.1.0",

@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { modelSettingsFromEnv } from '@ulysse/ai';
 import type { Connector } from '@ulysse/connectors';
 import { createRegistry, FixtureConnector, PgFixtureStore } from '@ulysse/connectors';
 import { createPool, databaseUrl } from '@ulysse/database';
@@ -31,6 +32,7 @@ const runtime = new WorkerRuntime({
   clock: systemClock,
   logger,
   metrics,
+  model: modelSettingsFromEnv(),
 });
 
 let ready = false;

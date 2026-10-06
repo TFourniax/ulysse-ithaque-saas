@@ -1,3 +1,5 @@
+import type { ModelSettings } from '@ulysse/ai';
+import { formulateNextStep, PROMPT_VERSION } from '@ulysse/ai';
 import type { Connector, ConnectorContext, ConnectorRegistry } from '@ulysse/connectors';
 import { ConnectorError } from '@ulysse/connectors';
 import type { Pool } from '@ulysse/database';
@@ -12,6 +14,7 @@ import type {
 } from '@ulysse/domain';
 import {
   AnalysisService,
+  FormulationService,
   IngestionService,
   isDomainError,
   MaintenanceService,
@@ -21,7 +24,7 @@ import type { Job, SendOptions } from 'pg-boss';
 import { PgBoss } from 'pg-boss';
 import type { z } from 'zod';
 import type { WorkerConfig } from './config.ts';
-import { ConnectionJob, SyncJob, TenantJob } from './jobs.ts';
+import { ConnectionJob, RecommendationJob, SyncJob, TenantJob } from './jobs.ts';
 
 /** Resolves an opaque credential reference server-side. Secrets never go to logs, browsers or models. */
 export interface CredentialStore {
@@ -57,6 +60,8 @@ export type WorkerDeps = Readonly<{
   logger: Logger;
   metrics: Metrics;
   faults?: FaultHooks;
+  /** Optional model-assisted wording; null provider = deterministic wording only. */
+  model?: ModelSettings;
 }>;
 
 type OutboxRow = {
@@ -107,6 +112,7 @@ export class WorkerRuntime {
   readonly #ingestion: IngestionService;
   readonly #analysis: AnalysisService;
   readonly #maintenance: MaintenanceService;
+  readonly #formulation: FormulationService;
   #relayTimer: NodeJS.Timeout | null = null;
   #relaying = false;
   #stopping = false;
@@ -124,6 +130,7 @@ export class WorkerRuntime {
     this.#ingestion = new IngestionService(serviceDeps);
     this.#analysis = new AnalysisService(serviceDeps);
     this.#maintenance = new MaintenanceService(serviceDeps);
+    this.#formulation = new FormulationService(serviceDeps);
     this.boss = new PgBoss({
       connectionString: deps.connectionString,
       schema: PGBOSS_SCHEMA,
@@ -237,6 +244,15 @@ export class WorkerRuntime {
         this.handlePurge(parse(ConnectionJob, job), job.id),
       ),
     );
+    if (this.#deps.model?.provider) {
+      await this.boss.work(
+        QUEUES.recommendationFormulate,
+        tenantScoped,
+        instrument(QUEUES.recommendationFormulate, (job) =>
+          this.handleFormulate(parse(RecommendationJob, job), job.id),
+        ),
+      );
+    }
   }
 
   #isStopping(): boolean {
@@ -325,8 +341,17 @@ export class WorkerRuntime {
           data: { tenantId, connectionId: event.subject_id },
           options: { singletonKey: event.subject_id, group },
         };
+      case 'recommendation.generated':
+        // Model-assisted wording is opt-in; without a provider the deterministic text stays.
+        return this.#deps.model?.provider
+          ? {
+              name: QUEUES.recommendationFormulate,
+              data: { tenantId, recommendationId: event.subject_id },
+              options: { singletonKey: event.subject_id, group },
+            }
+          : null;
       default:
-        // recommendation.generated / recommendation.decided: no background action in this version.
+        // recommendation.decided: no background action in this version (no external execution, ADR-0002).
         return null;
     }
   }
@@ -545,5 +570,96 @@ export class WorkerRuntime {
     }
     await this.#deps.credentials.remove(connection);
     await this.#maintenance.purgeRevokedConnection(ctx, job.connectionId);
+  }
+
+  /**
+   * Optional wording by a model, outside any transaction. Only facts already linked
+   * to the recommendation are sent; the result is validated, recorded with its
+   * usage, and applied only if nobody decided or edited the proposal meanwhile.
+   */
+  async handleFormulate(job: RecommendationJob, jobId: string): Promise<void> {
+    const settings = this.#deps.model;
+    const provider = settings?.provider;
+    if (!settings || !provider) return;
+    const ctx = serviceContext(job.tenantId, `job:${jobId}`, ['analysis:run']);
+    const inputs = await this.#formulation.prepare(ctx, job.recommendationId);
+    if (!inputs) return;
+    const context = inputs.context?.content;
+    const result = await formulateNextStep(
+      provider,
+      {
+        recommendation: inputs.recommendation,
+        evidence: inputs.evidence,
+        context: context
+          ? {
+              offers: context.offers,
+              targetSegments: context.targetSegments,
+              salesProcess: context.salesProcess,
+            }
+          : null,
+      },
+      {
+        timeoutMs: settings.timeoutMs,
+        maxOutputTokens: settings.maxOutputTokens,
+        monthlyBudgetUsd: settings.monthlyBudgetUsd,
+        spentThisMonthUsd: inputs.spentThisMonthUsd,
+      },
+    );
+    const { metrics } = this.#deps;
+    metrics.modelCalls.inc({
+      provider: provider.name,
+      model: result.model,
+      outcome: result.status,
+    });
+    if (result.usage) {
+      metrics.modelTokens.inc(
+        { provider: provider.name, model: result.model, direction: 'input' },
+        result.usage.inputTokens,
+      );
+      metrics.modelTokens.inc(
+        { provider: provider.name, model: result.model, direction: 'output' },
+        result.usage.outputTokens,
+      );
+      if (result.usage.costUsd !== null)
+        metrics.modelCostUsd.inc(
+          { provider: provider.name, model: result.model },
+          result.usage.costUsd,
+        );
+    }
+    await this.#formulation.recordUsage(ctx, {
+      recommendationId: job.recommendationId,
+      provider: provider.name,
+      model: result.model,
+      promptVersion: PROMPT_VERSION,
+      inputTokens: result.usage?.inputTokens ?? 0,
+      outputTokens: result.usage?.outputTokens ?? 0,
+      costUsd: result.usage?.costUsd ?? null,
+      latencyMs: result.latencyMs,
+      outcome: result.status,
+      errorCode: result.status === 'formulated' ? null : result.reason.slice(0, 64),
+    });
+    if (result.status !== 'formulated') return;
+    try {
+      await this.#formulation.apply(
+        ctx,
+        job.recommendationId,
+        inputs.recommendation.revision,
+        result.proposedAction,
+        {
+          provider: provider.name,
+          model: result.model,
+          promptVersion: PROMPT_VERSION,
+        },
+      );
+    } catch (error) {
+      // A human decided, edited, or the proposal expired meanwhile: the human action wins.
+      if (
+        isDomainError(error, 'REVISION_CONFLICT') ||
+        isDomainError(error, 'INVALID_TRANSITION') ||
+        isDomainError(error, 'EXPIRED')
+      )
+        return;
+      throw error;
+    }
   }
 }
