@@ -1,0 +1,27 @@
+{
+  "name": "@ulysse/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Framework-free business rules, state transitions, ports and application services.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "ulysse-source": "./src/index.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./memory": {
+      "types": "./src/memory/index.ts",
+      "ulysse-source": "./src/memory/index.ts",
+      "default": "./dist/src/memory/index.js"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "ulysse-source": "./src/testing/index.ts",
+      "default": "./dist/src/testing/index.js"
+    }
+  },
+  "scripts": {
+    "test": "node --conditions=ulysse-source --test \"test/**/*.test.ts\""
+  }
+}

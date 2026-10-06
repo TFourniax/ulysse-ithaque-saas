@@ -1,0 +1,13 @@
+{
+  "name": "@ulysse/demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline CLI demo on the in-memory adapter with fictional data.",
+  "dependencies": {
+    "@ulysse/domain": "0.1.0"
+  },
+  "scripts": {
+    "start": "node --conditions=ulysse-source src/run.ts"
+  }
+}

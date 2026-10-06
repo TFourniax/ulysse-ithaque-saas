@@ -1,13 +1,33 @@
 {
   "name": "ulysse-ithaque-saas",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Proactive, evidence-backed commercial recommendations with human review.",
-  "engines": { "node": ">=24.16.0 <25" },
+  "engines": {
+    "node": ">=24.16.0 <25"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "test": "node --test packages/domain/test/workflow.test.ts",
-    "demo": "node apps/demo/run.ts",
+    "typecheck": "tsc -b tsconfig.json",
+    "lint": "eslint --max-warnings=0 .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:cycles": "node scripts/check-cycles.mjs",
+    "test": "npm run test --workspaces --if-present",
+    "demo": "npm run start -w @ulysse/demo",
     "check": "node scripts/check-repository.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "24.19.1",
+    "eslint": "9.39.5",
+    "globals": "17.13.0",
+    "prettier": "3.9.9",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1"
   }
 }
