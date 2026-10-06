@@ -1,0 +1,22 @@
+{
+  "name": "@ulysse/ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider-neutral model interface, OpenRouter adapter, versioned prompts, output validation and evaluation.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "ulysse-source": "./src/index.ts",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "dependencies": {
+    "@ulysse/domain": "0.1.0",
+    "zod": "4.6.5"
+  },
+  "scripts": {
+    "test": "node --conditions=ulysse-source --test \"test/**/*.test.ts\"",
+    "eval": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/eval.ts"
+  }
+}

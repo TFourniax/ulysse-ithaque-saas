@@ -44,9 +44,9 @@ TypeScript strict est la cible ; aucun any de confort, aucun cast pour faire pas
 
 ## Vérification et communication
 
-Aujourd'hui : npm test, npm run demo, npm run check.
-Le TypeScript natif de Node ne contrôle pas les types : ne pas présenter ces commandes comme tsc.
+Avant chaque commit : `npm run verify` (format, lint typé strict, `tsc -b`, cycles, OpenAPI à jour, tests unitaires, contrôle documentaire). Selon le périmètre touché : `npm run test:integration` (PostgreSQL réel sous les rôles d'exécution), `npm run test:e2e` (Playwright contre Keycloak, API et worker réels), stack conteneurisée et `scripts/smoke.mjs` (voir docs/OPERATIONS.md). La CI exécute tout cela.
+Le TypeScript natif de Node ne contrôle pas les types : seule `npm run typecheck` (incluse dans `verify`) vaut tsc.
 
-Après ajout des services : ajouter les contrôles stricts, migrations et tests d'intégration PostgreSQL/RLS, les tests API de droits, les tests de jobs et les parcours Playwright. Tester les scénarios sensibles dans l'infrastructure réellement visée, pas uniquement avec des mocks.
+Tester les scénarios sensibles dans l'infrastructure réellement visée, pas uniquement avec des mocks : à ce jour, aucune infrastructure pilote n'existe et toutes les preuves portent sur des données fictives.
 
 Rapport de fin : ce qui fonctionne, preuve, ce qui manque, prochain UL-nnn. Une contrainte sur une étape ne bloque pas les travaux indépendants. Ne demander que les arbitrages qui conditionnent réellement le lot.

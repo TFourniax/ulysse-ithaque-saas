@@ -1,6 +1,12 @@
 # Contrats de données et API cible
 
-Statut : spécification ; ni migration ni API livrée dans la fondation.
+Statut : spécification d'origine, conservée pour l'intention. Mise à jour 2026-10-06 : la V1 implémente ce modèle ; la référence exacte est le code (`packages/database/migrations`, `packages/contracts`) et le document [OpenAPI](api/openapi.json) généré et vérifié en CI.
+
+## Mise en œuvre V1 (écarts avec la cible ci-dessous)
+
+- Tables livrées : `tenants`, `users`, `memberships`, `sessions`, `oidc_login_attempts`, `connections`, `sync_runs`, `source_records`, `opportunities`, `facts`, `doctrines`, `company_contexts`, `analyses`, `recommendations`, `evidence_links`, `recommendation_revisions`, `decisions` (avec l'évaluation facultative `quality`, migration 0008), `idempotency_receipts`, `audit_events`, `outbox`, `model_usage`, plus le schéma `pgboss`.
+- Endpoints livrés (`/v1`) : `GET /me`, `PUT /session/tenant`, `GET /recommendations`, `GET /recommendations/{id}`, `POST /recommendations/{id}/decisions`, `POST /recommendations/{id}/revisions`, `GET /opportunities`, `GET /analyses`, `GET /connectors`, `GET|POST /connections`, `POST /connections/{id}/sync`, `DELETE /connections/{id}` (révocation), `GET /connections/{id}/sync-runs`, `GET /audit`, `GET /rules`, `GET|POST /doctrines`, `POST /doctrines/{id}/validate|retire`, `GET|PUT /context`, `GET /reports/quality`, `GET /members`, `PATCH|DELETE /members/{userId}` ; authentification `/auth/login|callback|logout` ; santé `/health/live|ready` ; `/metrics` protégé.
+- Écarts : pas de `POST /connections/:provider/authorize` (aucun fournisseur OAuth réel : le connecteur fictif se crée par `POST /connections`) ; historique des synchronisations par connexion au lieu de `/operations/sync-runs` ; doctrines par entreprise seulement (DEBT-012) ; aucun stockage de fichiers.
 
 ## Tables à implémenter
 

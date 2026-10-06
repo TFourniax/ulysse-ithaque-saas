@@ -1,21 +1,21 @@
-name: foundation-checks
+name: ci
 on:
   pull_request:
   push:
-    branches: [main, 'codex/**']
+    branches: [main, 'codex/**', 'claude/**']
 permissions:
   contents: read
 concurrency:
-  group: foundation-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  kernel:
+  static-and-unit:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,6 +23,124 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run check:cycles
+      - run: npm run openapi:check
       - run: npm test
-      - run: npm run check
       - run: npm run demo
+      - run: npm run check
+
+  integration-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_PASSWORD: ci-admin-password-only-for-ci
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      # Throwaway credentials of an ephemeral CI database; not secrets of any environment.
+      ULYSSE_DB_HOST: 127.0.0.1
+      ULYSSE_DB_PORT: '55432'
+      ULYSSE_DB_ADMIN_USER: postgres
+      ULYSSE_DB_ADMIN_PASSWORD: ci-admin-password-only-for-ci
+      ULYSSE_DB_MIGRATOR_PASSWORD: ci-migrator-password-only
+      ULYSSE_DB_APP_PASSWORD: ci-app-password-only-ci
+      ULYSSE_DB_WORKER_PASSWORD: ci-worker-password-only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run db:bootstrap
+      - run: npm run db:migrate
+      - run: npm run test:integration
+
+  e2e-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Throwaway credentials of ephemeral CI services; not secrets of any environment.
+      ULYSSE_DB_HOST: 127.0.0.1
+      ULYSSE_DB_PORT: '55432'
+      ULYSSE_DB_ADMIN_USER: postgres
+      ULYSSE_DB_ADMIN_PASSWORD: ci-admin-password-only-for-ci
+      ULYSSE_DB_MIGRATOR_PASSWORD: ci-migrator-password-only
+      ULYSSE_DB_APP_PASSWORD: ci-app-password-only-ci
+      ULYSSE_DB_WORKER_PASSWORD: ci-worker-password-only
+      OIDC_ISSUER: http://localhost:8080/realms/ulysse
+      OIDC_CLIENT_ID: ulysse-web
+      OIDC_CLIENT_SECRET: dev-only-ulysse-web-client-secret
+      OIDC_ALLOW_INSECURE_HTTP: 'true'
+      SESSION_SECRET: ci-session-secret-only-for-ephemeral-runs-0123
+      COOKIE_SECURE: 'false'
+      ENABLE_FIXTURE_CONNECTOR: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Start PostgreSQL and Keycloak
+        run: |
+          printf 'POSTGRES_ADMIN_PASSWORD=%s\nKEYCLOAK_ADMIN_PASSWORD=ci-keycloak-admin-only\n' "$ULYSSE_DB_ADMIN_PASSWORD" > infra/.env
+          docker compose -f infra/compose.yaml --env-file infra/.env up -d --wait postgres keycloak
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: npm run test:e2e
+
+  container-stack:
+    # Builds the image, runs the complete compose stack (profile app) with fictional
+    # data, then checks login/proposals, restart, and an encrypted backup/restore drill.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Throwaway configuration from the committed examples
+        run: |
+          cp .env.example .env
+          cp infra/.env.example infra/.env
+      - run: docker build -t ulysse-app:local .
+      - name: Start the stack and load the fictional demo data
+        run: |
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait --wait-timeout 600 postgres keycloak api worker
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app run --rm demo-seed
+      - run: npm ci
+      - name: Login through Keycloak and see background proposals
+        run: node scripts/smoke.mjs --user alice --password ulysse-demo-alice --expect-recommendations 1 --session-file "$RUNNER_TEMP/session.json"
+      - name: Restart API and worker; the session and data survive
+        run: |
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app restart api worker
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait --wait-timeout 300 api worker
+          node scripts/smoke.mjs --reuse-session --session-file "$RUNNER_TEMP/session.json" --expect-recommendations 1
+      - name: Encrypted backup and verified restore drill
+        run: |
+          export BACKUP_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+          export ULYSSE_PG_EXEC="docker compose -f $PWD/infra/compose.yaml --env-file $PWD/infra/.env exec -T postgres"
+          npm run db:backup -- --database ulysse_stack --out "$RUNNER_TEMP"
+          npm run db:restore -- --file "$(ls "$RUNNER_TEMP"/ulysse_stack-*.dump.enc)" --target ulysse_test_restore_drill --drop-after
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app logs --tail 200

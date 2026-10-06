@@ -1,0 +1,32 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "packages/domain"
+    },
+    {
+      "path": "packages/contracts"
+    },
+    {
+      "path": "packages/observability"
+    },
+    {
+      "path": "packages/connectors"
+    },
+    {
+      "path": "packages/ai"
+    },
+    {
+      "path": "packages/database"
+    },
+    {
+      "path": "apps/demo"
+    },
+    {
+      "path": "apps/api"
+    },
+    {
+      "path": "apps/worker"
+    }
+  ]
+}

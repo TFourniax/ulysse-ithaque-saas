@@ -1,0 +1,25 @@
+{
+  "name": "@ulysse/connectors",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Connector contract, fixture connector and future provider adapters.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "ulysse-source": "./src/index.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./testing": {
+      "types": "./src/testing.ts",
+      "ulysse-source": "./src/testing.ts",
+      "default": "./dist/src/testing.js"
+    }
+  },
+  "dependencies": {
+    "@ulysse/domain": "0.1.0"
+  },
+  "scripts": {
+    "test": "node --conditions=ulysse-source --test \"test/**/*.test.ts\""
+  }
+}

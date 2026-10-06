@@ -1,13 +1,46 @@
 {
   "name": "ulysse-ithaque-saas",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Proactive, evidence-backed commercial recommendations with human review.",
-  "engines": { "node": ">=24.16.0 <25" },
+  "engines": {
+    "node": ">=24.16.0 <25"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "test": "node --test packages/domain/test/workflow.test.ts",
-    "demo": "node apps/demo/run.ts",
-    "check": "node scripts/check-repository.mjs"
+    "typecheck": "tsc -b tsconfig.json && tsc -p apps/web/tsconfig.json --noEmit",
+    "lint": "eslint --max-warnings=0 .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:cycles": "node scripts/check-cycles.mjs",
+    "test": "npm run test --workspaces --if-present",
+    "demo": "npm run start -w @ulysse/demo",
+    "check": "node scripts/check-repository.mjs",
+    "test:integration": "npm run test:integration --workspaces --if-present",
+    "db:bootstrap": "npm run db:bootstrap -w @ulysse/database",
+    "db:migrate": "npm run db:migrate -w @ulysse/database",
+    "db:backup": "npm run db:backup -w @ulysse/database --",
+    "db:restore": "npm run db:restore -w @ulysse/database --",
+    "admin": "npm run admin -w @ulysse/database --",
+    "openapi": "npm run openapi -w @ulysse/api",
+    "openapi:check": "npm run openapi -w @ulysse/api -- --check",
+    "db:seed": "npm run seed -w @ulysse/worker",
+    "fixture:crm": "npm run fixture:crm -w @ulysse/worker --",
+    "build": "npm run typecheck && npm run build -w @ulysse/web",
+    "test:e2e": "npm run build -w @ulysse/web && npm run test:e2e -w @ulysse/web",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run check:cycles && npm run openapi:check && npm test && npm run check"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "24.19.1",
+    "eslint": "9.39.5",
+    "globals": "17.13.0",
+    "prettier": "3.9.9",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1"
   }
 }

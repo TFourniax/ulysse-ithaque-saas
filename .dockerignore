@@ -1,0 +1,15 @@
+# Keep secrets, local state and build outputs out of the image build context.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/playwright-report
+**/test-results
+.env
+.env.*
+!.env.example
+infra/.env
+.git
+.data
+.local
+backups
+docs

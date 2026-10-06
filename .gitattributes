@@ -1,0 +1,4 @@
+# Keep LF everywhere (Windows CI checks Prettier formatting byte for byte).
+* text=auto eol=lf
+*.png binary
+*.jpg binary

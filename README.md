@@ -1,46 +1,74 @@
 # Ulysse Ithaque SaaS
 
-Ulysse transforme les données autorisées d'une entreprise en propositions commerciales prioritaires, expliquées et soumises à une décision humaine. Les propositions apparaissent après ingestion et analyse en arrière-plan : la valeur ne dépend pas d'une question posée à un chatbot.
+Ulysse transforme les données autorisées d'une entreprise en propositions commerciales prioritaires, expliquées et soumises à une décision humaine. Les propositions apparaissent après ingestion et analyse en arrière-plan : la valeur ne dépend pas d'une question posée à un chatbot. La V1 de référence enregistre les décisions humaines **sans réaliser aucune écriture externe**.
 
-**État : fondation de développement, pas une alpha déployable.** Le code actuel est une tranche métier hors ligne, avec une règle fictive. Il n'y a pas encore d'interface, d'identification de production, de PostgreSQL, de planificateur ni de connecteur réel.
+**État : V1 de démonstration complète sur données fictives** (deux entreprises fictives, CRM simulé, doctrine fictive). Pas encore de pilote : aucune source réelle, doctrine validée, utilisateur pilote ni hébergement n'est disponible. Détail et preuves : [STATUS](docs/STATUS.md).
 
-## Commencer
+## Démarrer en 5 minutes (stack conteneurisée)
 
-Node.js 24 LTS, version 24.16.0 ou ultérieure de la branche 24.
+Prérequis : Docker avec Compose v2, Node.js 24 LTS.
 
-    npm test
-    npm run demo
-    npm run check
+```sh
+cp .env.example .env && cp infra/.env.example infra/.env   # valeurs locales ; remplacer les secrets hors poste de développement
+docker build -t ulysse-app:local .
+docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait postgres keycloak api worker
+docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app run --rm demo-seed
+```
 
-Ces commandes ne nécessitent aucun service externe, secret ou dépendance npm. Node exécute les fichiers TypeScript par suppression des annotations ; cela ne remplace pas un contrôle de types. Le contrôle TypeScript strict est une tâche ouverte du prochain lot.
+Ouvrir http://localhost:3000 et se connecter avec un compte fictif (par exemple `alice` / `ulysse-demo-alice`, owner de l'entreprise fictive Acme ; liste dans [infra/keycloak](infra/keycloak/README.md)). Les propositions apparaissent quelques secondes après le seed, produites par le worker sans action.
 
-La démo ingère une opportunité CRM **fictive**, détecte dix jours sans interaction ni prochaine étape, produit une proposition avec provenance, enregistre une validation humaine fictive et affiche le journal. Elle n'envoie aucun message.
+Vérification automatique : `npm ci && node scripts/smoke.mjs --user alice --password ulysse-demo-alice --expect-recommendations 1`.
+
+## Développer
+
+```sh
+npm ci
+docker compose -f infra/compose.yaml --env-file infra/.env up -d postgres keycloak
+npm run db:bootstrap && npm run db:migrate && npm run db:seed
+npm run build -w @ulysse/web
+node --env-file=.env --conditions=ulysse-source apps/api/src/main.ts      # API + web sur :3000
+node --env-file=.env --conditions=ulysse-source apps/worker/src/main.ts   # worker
+```
+
+Interface en rechargement à chaud : `npm run dev -w @ulysse/web` (port 5173, proxy vers l'API).
+
+| Commande | Rôle |
+| --- | --- |
+| `npm run verify` | format, lint typé strict, `tsc -b`, cycles, OpenAPI à jour, tests unitaires, contrôle documentaire — **avant chaque commit** |
+| `npm run test:integration` | PostgreSQL réel sous les rôles d'exécution (base, API, worker) |
+| `npm run test:e2e` | recette navigateur Playwright contre Keycloak, API et worker réels |
+| `npm run demo` | démo hors ligne du domaine (adaptateur mémoire) |
+| `npm run db:backup` / `db:restore` | sauvegarde chiffrée / restauration vérifiée ([OPERATIONS](docs/OPERATIONS.md)) |
+| `npm run admin -- admin:…` | provisionnement des entreprises, utilisateurs et rôles |
+
+Node exécute les sources TypeScript par suppression des types : seul `npm run typecheck` (inclus dans `verify`) contrôle les types.
 
 ## Reprendre le projet
 
-1. Lire [AGENTS.md](AGENTS.md), les [exigences](docs/PRODUCT.md) et le [blueprint](docs/BLUEPRINT.md).
-2. Lire [l'état courant](docs/STATUS.md), le [backlog](docs/BACKLOG.md) et les [questions ouvertes](docs/OPEN-QUESTIONS.md).
-3. Appliquer le [prompt Work](docs/WORK-PROMPT.md) pour une nouvelle session de développement.
-4. Suivre [CONTRIBUTING.md](CONTRIBUTING.md) ; consigner les changements et validations dans [le journal](docs/journal/2026-10-06-foundation.md).
+1. Lire [AGENTS.md](AGENTS.md), puis [STATUS](docs/STATUS.md) et [BACKLOG](docs/BACKLOG.md).
+2. Lire [PRODUCT](docs/PRODUCT.md), [BLUEPRINT](docs/BLUEPRINT.md), [OPEN-QUESTIONS](docs/OPEN-QUESTIONS.md) et les [ADR](docs/adr/).
+3. Exploitation : [OPERATIONS](docs/OPERATIONS.md) ; recette : [ACCEPTANCE](docs/ACCEPTANCE.md) ; pilote : [PILOT](docs/PILOT.md) ; sources : [CONNECTORS](docs/CONNECTORS.md).
+4. Suivre [CONTRIBUTING.md](CONTRIBUTING.md) ; consigner chaque lot dans `docs/journal/`.
 
 ## Organisation
 
 | Emplacement | Responsabilité | État |
 | --- | --- | --- |
-| packages/domain | Règles, recommandations, décisions et adaptateur mémoire de référence | Implémenté, tests métier |
-| apps/demo | Démo CLI fictive et reproductible | Implémentée |
-| apps/web | Interface React/Vite | Prévue |
-| apps/api | API Fastify, identité et contrôle des permissions | Prévue |
-| apps/worker | Ingestion, analyse et tâches de fond | Prévu |
-| packages/connectors | Contrats et adaptateurs aux sources autorisées | Prévus |
-| packages/database | Migrations PostgreSQL, RLS et dépôts transactionnels | Prévus |
-| packages/ai | Fournisseurs de modèles, sorties structurées et évaluations | Prévus |
-| docs | Cadrage, architecture, suivi et passation | Présent |
-
-Les chemins « prévus » sont des frontières d'architecture, pas des composants déjà livrés.
+| packages/domain | Règles, analyse, propositions, décisions, doctrine, contexte ; ports ; adaptateur mémoire et scénarios partagés | livré, testé (mémoire + PostgreSQL) |
+| packages/database | Migrations SQL, rôles, RLS, adaptateur transactionnel, sauvegarde/restauration, administration | livré, testé |
+| packages/contracts | Schémas Zod de l'API | livré |
+| packages/connectors | Contrat connecteur, connecteur **fictif**, suite de contrat | livré ; aucune source réelle |
+| packages/ai | Interface modèle neutre, adaptateur OpenRouter, validation, évaluation | livré, appel réel non vérifié |
+| packages/observability | Journaux Pino expurgés, métriques Prometheus | livré |
+| apps/api | API Fastify (OIDC BFF, sessions, droits), sert l'interface compilée | livré, testé |
+| apps/worker | pg-boss, outbox, synchronisations, analyse, maintenance, formulation optionnelle | livré, testé |
+| apps/web | Interface React/Vite + recette Playwright | livré, testé |
+| apps/demo | Démo hors ligne | livré |
+| infra | Compose, Keycloak de développement, règles d'alerte | livré (local) |
+| docs | Cadrage, état, ADR, exploitation, recette, journaux | à jour au 2026-10-06 |
 
 ## Limites de confiance
 
-Le Context du moteur est construit par un appelant de confiance. Le futur serveur devra vérifier l'identité et l'appartenance avant de le construire ; le tenant envoyé par un navigateur ne suffit pas. L'adaptateur mémoire n'offre ni durabilité ni transactions distribuées. Sa décision approved n'est jamais une autorisation d'envoi.
+Le navigateur n'est jamais source d'autorisation : identité, entreprise active et rôle sont établis côté serveur à chaque requête. Le compte de migration n'est pas le compte applicatif. Le contenu des sources est une donnée non fiable qui ne devient jamais instruction ni permission. Une approbation n'est jamais une autorisation d'envoi.
 
-Le dépôt public n'accueille que des exemples fictifs. Les données clients, secrets, transcriptions, documents contractuels et contenus propriétaires de doctrine doivent être gérés dans des espaces privés autorisés. Aucune licence de redistribution n'est choisie dans cette fondation.
+Le dépôt public n'accueille que des exemples fictifs. Données clients, secrets, transcriptions, documents contractuels et doctrine propriétaire sont gérés dans des espaces privés autorisés. Aucune licence de redistribution n'est choisie (Q-011). La pièce jointe initiale n'a pas pu être récupérée : son contenu n'est pas intégré (UL-013).

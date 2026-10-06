@@ -8,3 +8,6 @@ coverage/
 *.tsbuildinfo
 .data/
 .local/
+playwright-report/
+test-results/
+backups/

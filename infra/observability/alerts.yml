@@ -1,0 +1,68 @@
+# Prometheus alerting rules for Ulysse (metrics exposed on /metrics with a bearer token).
+# Scrape jobs are expected to be named ulysse-api and ulysse-worker. Thresholds are
+# starting points to tune on observed traffic; none of them is a measured SLO.
+# Each alert links to its runbook section in docs/OPERATIONS.md.
+groups:
+  - name: ulysse-availability
+    rules:
+      - alert: UlysseTargetDown
+        expr: up{job=~"ulysse-api|ulysse-worker"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: '{{ $labels.job }} is not answering scrapes'
+          runbook: docs/OPERATIONS.md#api-ou-worker-indisponible
+      - alert: UlysseApiErrorRate
+        expr: |
+          sum(rate(ulysse_http_requests_total{job="ulysse-api",status="5xx"}[5m]))
+            / clamp_min(sum(rate(ulysse_http_requests_total{job="ulysse-api"}[5m])), 1e-9) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: 'More than 5% of API requests fail with a server error'
+          runbook: docs/OPERATIONS.md#erreurs-serveur
+      - alert: UlysseApiLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(ulysse_http_request_duration_seconds_bucket{job="ulysse-api",route!~"/health.*"}[5m]))) > 1
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: 'API p95 latency above 1 s'
+          runbook: docs/OPERATIONS.md#erreurs-serveur
+
+  - name: ulysse-background
+    rules:
+      - alert: UlysseOutboxStuck
+        expr: ulysse_outbox_pending > 100
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: 'Outbox events are not being relayed to the job queue'
+          runbook: docs/OPERATIONS.md#travaux-en-retard
+      - alert: UlysseQueueBacklog
+        expr: max by (queue) (ulysse_queue_backlog) > 500
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: 'Queue {{ $labels.queue }} keeps more than 500 queued jobs'
+          runbook: docs/OPERATIONS.md#travaux-en-retard
+      - alert: UlysseJobFailures
+        expr: sum by (queue) (increase(ulysse_jobs_total{outcome="failed"}[15m])) > 5
+        labels: { severity: warning }
+        annotations:
+          summary: 'Repeated failures on queue {{ $labels.queue }}'
+          runbook: docs/OPERATIONS.md#travaux-en-retard
+      - alert: UlysseStaleSource
+        expr: max by (tenant, connection, provider) (ulysse_connection_data_age_seconds) > 86400
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: 'Connection {{ $labels.connection }} has no confirmed data for more than 24 h'
+          runbook: docs/OPERATIONS.md#source-perimee
+      - alert: UlysseModelFailures
+        expr: sum(increase(ulysse_model_calls_total{outcome="failed"}[1h])) > 10
+        labels: { severity: info }
+        annotations:
+          summary: 'Model calls keep failing; proposals fall back to deterministic wording'
+          runbook: docs/OPERATIONS.md#formulation-assistee-indisponible
