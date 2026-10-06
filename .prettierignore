@@ -6,3 +6,4 @@ playwright-report
 test-results
 .data
 *.md
+docs/api/openapi.json
