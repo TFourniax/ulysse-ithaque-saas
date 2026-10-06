@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 /**
  * Browser acceptance against the real stack: Keycloak (infra/compose.yaml), PostgreSQL,
  * the API serving the built web app, and the worker. The e2e database is recreated
- * and seeded with fictional data before each run (global-setup.ts).
+ * and seeded with fictional data before each run by e2e/prepare.ts (npm run test:e2e).
  */
 const PORT = 3100;
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
@@ -17,7 +17,6 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
-  globalSetup: './e2e/global-setup.ts',
   use: {
     baseURL: `http://localhost:${String(PORT)}`,
     trace: 'retain-on-failure',

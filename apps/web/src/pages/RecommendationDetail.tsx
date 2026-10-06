@@ -407,7 +407,7 @@ export function RecommendationDetailPage() {
               {rec.doctrine.version}
               {rec.doctrine.fictional && ' (fictive, non validée métier)'} · contexte v
               {rec.contextVersion ?? '—'} · formulation :{' '}
-              {rec.formulation === 'model' ? 'assistée par modèle' : 'modèle déterministe'}. Le
+              {rec.formulation === 'model' ? 'assistée par modèle' : 'règles déterministes'}. Le
               score est une priorité calculée, pas une probabilité.
             </p>
           </section>

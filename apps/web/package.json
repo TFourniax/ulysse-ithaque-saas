@@ -15,7 +15,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "node e2e/prepare.ts && playwright test"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
