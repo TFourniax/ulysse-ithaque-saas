@@ -28,7 +28,9 @@ npm run demo : exécuté, une proposition fictive, validation fictive, 3 événe
 
 npm run check : 16 documents requis, 17 fichiers Markdown, liens internes résolus.
 npm install --package-lock-only --offline --ignore-scripts --no-audit --no-fund : réussite ; lockfile minimal, aucune dépendance externe.
-CI distante : pas encore exécutée ; workflow Windows/Linux préparé, actions épinglées sur SHA vérifiés via les tags officiels. Aucune preuve de tsc, PostgreSQL, API, OIDC, worker réel ou UI n'est revendiquée.
+CI distante : [run 37483460691](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37483460691), succès au commit 4a117dc51a1bca75188ddd274c3f5f19f3b938cf ; jobs Windows/Linux et étapes tests/check/demo tous réussis. Actions épinglées sur SHA vérifiés via les tags officiels.
+Publication : [PR #1](https://github.com/TFourniax/ulysse-ithaque-saas/pull/1), branche codex/ul-001-foundation, brouillon non fusionné. Les 27 blobs publiés ont été comparés aux fichiers locaux par empreinte Git, sans différence.
+Cette mise à jour de preuve modifie seulement STATUS et ce journal ; le kernel reste celui vérifié en CI. Aucune preuve de tsc, PostgreSQL, API, OIDC, worker réel ou UI n'est revendiquée.
 
 ## Décisions et limites
 

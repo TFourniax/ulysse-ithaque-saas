@@ -18,7 +18,9 @@ npm test : **22/22 tests PASS**.
 npm run demo : exécuté, proposition puis décision et 3 événements d'audit, zéro action externe.
 npm run check : 16 documents requis et 17 fichiers Markdown vérifiés ; liens internes résolus.
 Lockfile minimal généré hors ligne ; aucune dépendance de framework installée.
-CI distante : non exécutée au moment de la rédaction initiale ; ne pas extrapoler depuis les tests locaux.
+CI distante : succès Windows/Linux sur le commit 4a117dc51a1bca75188ddd274c3f5f19f3b938cf ; tests, liens/docs et démo exécutés dans les deux jobs.
+Preuve : [GitHub Actions 37483460691](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37483460691).
+PR de démarrage : [#1](https://github.com/TFourniax/ulysse-ithaque-saas/pull/1), brouillon non fusionné.
 
 ## Non livré
 
