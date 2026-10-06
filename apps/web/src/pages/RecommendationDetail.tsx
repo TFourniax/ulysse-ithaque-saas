@@ -17,6 +17,7 @@ import {
   formatFactValue,
   formatRelative,
   KIND_LABELS,
+  QUALITY_LABELS,
 } from '../format.ts';
 
 const EVIDENCE_STATE_MESSAGES: Record<string, string> = {
@@ -63,9 +64,13 @@ function DecisionPanel({ detail }: { detail: RecommendationDetail }) {
   const decide = useDecision(tenantId, rec.id);
   const attempt = useAttemptKey();
   const [reason, setReason] = useState('');
+  const [quality, setQuality] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const reasonId = useId();
+  const qualityId = useId();
+  const qualityHelpId = useId();
   const approveHelpId = useId();
+  const rejectHelpId = useId();
 
   const approveBlocked =
     rec.effectiveStatus !== 'pending'
@@ -74,14 +79,21 @@ function DecisionPanel({ detail }: { detail: RecommendationDetail }) {
         : 'La proposition a expiré : seule une décision de rejet reste possible.'
       : detail.evidenceState !== 'current'
         ? (EVIDENCE_STATE_MESSAGES[detail.evidenceState] ?? 'Preuves non vérifiables.')
-        : null;
+        : quality !== '' && quality !== 'useful'
+          ? 'Cette évaluation explique un rejet : choisissez « Utile » ou aucune évaluation pour approuver.'
+          : null;
+  const rejectBlocked =
+    quality === 'useful'
+      ? 'Une proposition jugée utile ne peut pas être rejetée avec cette évaluation.'
+      : null;
 
   const submit = (decision: 'approve' | 'reject') => {
     setFeedback(null);
     const trimmed = reason.trim() || null;
-    const key = attempt.keyFor(JSON.stringify([decision, rec.revision, trimmed]));
+    const label = quality || null;
+    const key = attempt.keyFor(JSON.stringify([decision, rec.revision, trimmed, label]));
     decide.mutate(
-      { decision, expectedRevision: rec.revision, reason: trimmed, key },
+      { decision, expectedRevision: rec.revision, reason: trimmed, quality: label, key },
       {
         onSuccess: (result) => {
           attempt.reset();
@@ -126,6 +138,14 @@ function DecisionPanel({ detail }: { detail: RecommendationDetail }) {
             ? 'Votre rôle permet la consultation uniquement : la décision revient à un décideur ou au responsable.'
             : 'Cette proposition est close.'}
         </p>
+        {detail.decisions.map((d) => (
+          <p key={d.id} className="small">
+            {d.decision === 'approve' ? 'Approuvée' : 'Rejetée'} le {formatDateTime(d.createdAt)}
+            {' · évaluation : '}
+            {d.quality ? (QUALITY_LABELS[d.quality] ?? d.quality) : 'non évaluée'}
+            {d.reason && <> · motif : {d.reason}</>}
+          </p>
+        ))}
         {feedbackRegion}
       </section>
     );
@@ -136,6 +156,24 @@ function DecisionPanel({ detail }: { detail: RecommendationDetail }) {
       <p className="muted small">
         Approuver enregistre votre décision ; Ulysse n&apos;envoie rien et ne modifie aucun outil
         externe.
+      </p>
+      <label htmlFor={qualityId}>Évaluation de la proposition (facultatif)</label>
+      <select
+        id={qualityId}
+        value={quality}
+        aria-describedby={qualityHelpId}
+        onChange={(e) => setQuality(e.target.value)}
+      >
+        <option value="">Non évaluée</option>
+        {Object.entries(QUALITY_LABELS).map(([value, label]) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </select>
+      <p id={qualityHelpId} className="muted small">
+        Sert à mesurer la valeur des propositions (page Mesure) : « Utile » accompagne une
+        approbation, les autres évaluations expliquent un rejet.
       </p>
       <label htmlFor={reasonId}>Motif (facultatif)</label>
       <textarea
@@ -158,7 +196,8 @@ function DecisionPanel({ detail }: { detail: RecommendationDetail }) {
         <button
           type="button"
           className="button"
-          disabled={decide.isPending}
+          disabled={decide.isPending || rejectBlocked !== null}
+          aria-describedby={rejectBlocked ? rejectHelpId : undefined}
           onClick={() => submit('reject')}
         >
           Rejeter
@@ -167,6 +206,11 @@ function DecisionPanel({ detail }: { detail: RecommendationDetail }) {
       {approveBlocked && (
         <p id={approveHelpId} className="muted small">
           {approveBlocked}
+        </p>
+      )}
+      {rejectBlocked && (
+        <p id={rejectHelpId} className="muted small">
+          {rejectBlocked}
         </p>
       )}
       {feedbackRegion}

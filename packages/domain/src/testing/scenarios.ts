@@ -145,7 +145,10 @@ export function defineWorkflowScenarios(
     }
 
     function decision(id: string, revision = 1, kind: 'approve' | 'reject' = 'approve') {
-      return { id, input: { decision: kind, expectedRevision: revision, reason: null } };
+      return {
+        id,
+        input: { decision: kind, expectedRevision: revision, reason: null, quality: null },
+      };
     }
 
     test('background facts produce an explained, sourced recommendation without any question', async () => {
@@ -361,6 +364,60 @@ export function defineWorkflowScenarios(
         detail.history.some(
           (e) => e.eventType === 'recommendation.approved' && e.actorId === w.ids.reviewerId,
         ),
+      );
+    });
+
+    test('decisions carry an optional quality label and the report counts only recorded facts', async () => {
+      const w = await world();
+      await w.sync([record('deal-1'), record('deal-2'), record('deal-3')]);
+      await w.analyze();
+      const [first, second, third] = await w.open();
+      assert.ok(first && second && third);
+      await assert.rejects(
+        w.services.review.decide(
+          w.reviewer,
+          first.id,
+          { decision: 'reject', expectedRevision: 1, reason: null, quality: 'useful' },
+          'quality-key-0000',
+        ),
+        expectCode('INVALID_DECISION'),
+      );
+      h.clock.advance(2 * HOUR_MS);
+      const approved = await w.services.review.decide(
+        w.reviewer,
+        first.id,
+        { decision: 'approve', expectedRevision: 1, reason: null, quality: 'useful' },
+        'quality-key-0001',
+      );
+      assert.equal(approved.decision.quality, 'useful');
+      h.clock.advance(2 * HOUR_MS);
+      await w.services.review.decide(
+        w.reviewer,
+        second.id,
+        { decision: 'reject', expectedRevision: 1, reason: null, quality: 'duplicate' },
+        'quality-key-0002',
+      );
+      const detail = await w.services.queries.getRecommendation(w.viewer, first.id);
+      assert.equal(detail.decisions[0]?.quality, 'useful');
+      const report = await w.services.queries.qualityReport(w.viewer, {});
+      assert.equal(report.proposals.generated, 3);
+      assert.deepEqual(report.proposals.byStatus, { approved: 1, rejected: 1, pending: 1 });
+      assert.equal(report.decisions.total, 2);
+      assert.equal(report.decisions.byQuality.useful, 1);
+      assert.equal(report.decisions.byQuality.duplicate, 1);
+      assert.equal(report.decisions.byQuality.unlabeled, 0);
+      assert.equal(report.decisions.medianHoursToDecision, 3);
+      assert.equal(report.latestAnalysis?.evaluated, 3);
+      assert.equal(report.truncated, false);
+      const other = await world('B');
+      const empty = await other.services.queries.qualityReport(other.viewer, {});
+      assert.equal(empty.proposals.generated, 0, 'another company sees none of these figures');
+      await assert.rejects(
+        w.services.queries.qualityReport(w.viewer, {
+          from: '2025-01-01T00:00:00.000Z',
+          to: '2026-10-06T00:00:00.000Z',
+        }),
+        expectCode('INVALID_INPUT'),
       );
     });
 

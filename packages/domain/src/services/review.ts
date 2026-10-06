@@ -101,7 +101,11 @@ export class ReviewService {
           resourceType: 'recommendation',
           resourceId: rec.id,
           revision: next.revision,
-          metadata: { contentRevision: rec.contentRevision, withReason: input.reason !== null },
+          metadata: {
+            contentRevision: rec.contentRevision,
+            withReason: input.reason !== null,
+            quality: input.quality,
+          },
         }),
       );
       await tx.enqueueOutbox(

@@ -31,7 +31,7 @@ Contrôles transverses vérifiés : aucune exécution externe (aucune méthode d
 Plan proposé, à valider dans [PILOT](PILOT.md) : rien ci-dessous n'est mesuré à ce jour.
 
 - **Avant** : cas inclus, volume, utilisateurs, période, sources, droits, cadence et critères de succès décidés et datés par le responsable du pilote.
-- **Pendant** : chaque décision porte une étiquette de qualité (utile, correcte mais non actionnable, doublon, obsolète, non fondée, hors périmètre) — fonctionnalité UL-012b à livrer (DEBT-009) ; les abstentions (`missing_data`, `stale_source`, `volume_cap`, `rejection_cooldown`, `already_decided`) sont déjà enregistrées par analyse.
+- **Pendant** : chaque décision porte une évaluation (utile, correcte mais non actionnable, doublon, obsolète, non fondée, hors périmètre), disponible depuis UL-012b ([ADR-0011](adr/0011-mesure-pilote.md)) ; les abstentions (`missing_data`, `stale_source`, `volume_cap`, `rejection_cooldown`, `already_decided`) sont enregistrées par analyse. La page « Mesure » et `GET /v1/reports/quality` restituent ces chiffres par entreprise et par période.
 - **Indicateurs** calculés à partir des données enregistrées : part des propositions jugées utiles, motifs de rejet, abstentions par motif, délai observation → proposition (`ulysse_time_to_recommendation_seconds`), délai proposition → décision, propositions expirées sans décision, coût modèle par proposition si activé.
 - **Couverture** : sur un échantillon de cas éligibles annotés par l'équipe pilote, part des cas pour lesquels Ulysse a proposé quelque chose.
 - **Gain de temps** : mesuré avant/après sur une tâche comparable ; jamais extrapolé depuis la démonstration fictive. Aucun ROI n'est annoncé par ce dépôt.

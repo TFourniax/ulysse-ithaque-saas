@@ -27,6 +27,8 @@ const required = [
   'docs/adr/0008-contrat-connecteur.md',
   'docs/adr/0009-formulation-assistee.md',
   'docs/adr/0010-image-et-sauvegardes.md',
+  'docs/adr/0011-mesure-pilote.md',
+  'docs/journal/2026-10-06-UL-012b-mesure.md',
   'docs/OPERATIONS.md',
   'docs/PILOT.md',
   'docs/CONNECTORS.md',

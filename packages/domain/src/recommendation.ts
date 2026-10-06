@@ -89,6 +89,21 @@ export type EvidenceLink = Readonly<{
 
 export type DecisionKind = 'approve' | 'reject';
 
+/**
+ * Optional reviewer assessment recorded with a decision, used to measure the value
+ * of proposals during a pilot (ACCEPTANCE, UL-012b). `useful` goes with an
+ * approval; the other labels explain a rejection.
+ */
+export const QUALITY_LABELS = [
+  'useful',
+  'not_actionable',
+  'duplicate',
+  'outdated',
+  'unfounded',
+  'out_of_scope',
+] as const;
+export type QualityLabel = (typeof QUALITY_LABELS)[number];
+
 export type DecisionRecord = Readonly<{
   tenantId: string;
   id: string;
@@ -99,6 +114,7 @@ export type DecisionRecord = Readonly<{
   actorId: string;
   decision: DecisionKind;
   reason: string | null;
+  quality: QualityLabel | null;
   createdAt: string;
 }>;
 
@@ -161,6 +177,7 @@ export type DecisionInput = Readonly<{
   decision: DecisionKind;
   expectedRevision: number;
   reason: string | null;
+  quality: QualityLabel | null;
 }>;
 
 export function validateDecisionInput(input: unknown): DecisionInput {
@@ -177,10 +194,22 @@ export function validateDecisionInput(input: unknown): DecisionInput {
     'INVALID_DECISION',
     'reason',
   );
+  const quality = QUALITY_LABELS.find((label) => label === raw.quality) ?? null;
+  ensure(
+    raw.quality === undefined || raw.quality === null || quality !== null,
+    'INVALID_DECISION',
+    'quality',
+  );
+  ensure(
+    quality === null || (raw.decision === 'approve') === (quality === 'useful'),
+    'INVALID_DECISION',
+    'quality does not match the decision',
+  );
   return {
     decision: raw.decision,
     expectedRevision: raw.expectedRevision as number,
     reason: typeof reason === 'string' && reason.trim() ? reason.trim() : null,
+    quality,
   };
 }
 
@@ -242,6 +271,7 @@ export function decide(
       actorId,
       decision: input.decision,
       reason: input.reason,
+      quality: input.quality,
       createdAt: at,
     },
   };

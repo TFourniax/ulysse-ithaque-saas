@@ -12,7 +12,9 @@ import type {
 } from '../recommendation.ts';
 import { effectiveStatus } from '../recommendation.ts';
 import type { Analysis, AuditEvent, Page } from '../records.ts';
-import { toInstant } from '../time.ts';
+import type { QualityReport } from '../report.ts';
+import { buildQualityReport, REPORT_MAX_DAYS, REPORT_MAX_ROWS } from '../report.ts';
+import { DAY_MS, parseInstant, toInstant } from '../time.ts';
 import { checkEvidence } from './review.ts';
 import type { ServiceDeps } from './shared.ts';
 
@@ -126,5 +128,35 @@ export class QueryService {
   async listAnalyses(ctx: Context, limit?: number): Promise<Analysis[]> {
     requirePermission(ctx, 'analysis:read');
     return this.#deps.uow.run(ctx, (tx) => tx.listAnalyses(clampLimit(limit)));
+  }
+
+  /** Observed figures over [from, to], bounds included (default: the last 30 days). Read-only. */
+  async qualityReport(
+    ctx: Context,
+    options: { from?: string | null; to?: string | null },
+  ): Promise<QualityReport> {
+    requirePermission(ctx, 'analysis:read');
+    const now = this.#deps.clock.now().getTime();
+    const to = options.to ? parseInstant(options.to) : now;
+    const from = options.from ? parseInstant(options.from) : to - 30 * DAY_MS;
+    ensure(from < to, 'INVALID_INPUT', 'from must precede to');
+    ensure(to - from <= REPORT_MAX_DAYS * DAY_MS, 'INVALID_INPUT', 'period too long');
+    const [fromAt, toAt] = [toInstant(from), toInstant(to)];
+    return this.#deps.uow.run(ctx, async (tx) => {
+      const [recommendations, decisions, analyses] = await Promise.all([
+        tx.listRecommendationDigests(fromAt, toAt, REPORT_MAX_ROWS + 1),
+        tx.listDecisionDigests(fromAt, toAt, REPORT_MAX_ROWS + 1),
+        tx.listAnalyses(10),
+      ]);
+      return buildQualityReport({
+        from: fromAt,
+        to: toAt,
+        now,
+        recommendations: recommendations.slice(0, REPORT_MAX_ROWS),
+        decisions: decisions.slice(0, REPORT_MAX_ROWS),
+        analyses,
+        truncated: recommendations.length > REPORT_MAX_ROWS || decisions.length > REPORT_MAX_ROWS,
+      });
+    });
   }
 }

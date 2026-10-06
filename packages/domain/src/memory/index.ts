@@ -14,6 +14,7 @@ import type {
   RevisionRecord,
 } from '../recommendation.ts';
 import { isOpen } from '../recommendation.ts';
+import type { DecisionDigest, RecommendationDigest } from '../report.ts';
 import type {
   Analysis,
   AuditEvent,
@@ -460,6 +461,45 @@ class MemoryTx implements TenantTx {
     return this.#own(this.#s.decisions)
       .filter((d) => d.recommendationId === recommendationId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  async listRecommendationDigests(
+    from: string,
+    to: string,
+    limit: number,
+  ): Promise<RecommendationDigest[]> {
+    return this.#own(this.#s.recommendations)
+      .filter((r) => r.generatedAt >= from && r.generatedAt <= to)
+      .sort((a, b) => a.generatedAt.localeCompare(b.generatedAt) || a.id.localeCompare(b.id))
+      .slice(0, limit)
+      .map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        status: r.status,
+        generatedAt: r.generatedAt,
+        expiresAt: r.expiresAt,
+      }));
+  }
+  async listDecisionDigests(from: string, to: string, limit: number): Promise<DecisionDigest[]> {
+    const recommendations = new Map(this.#own(this.#s.recommendations).map((r) => [r.id, r]));
+    return this.#own(this.#s.decisions)
+      .filter((d) => d.createdAt >= from && d.createdAt <= to)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+      .slice(0, limit)
+      .flatMap((d) => {
+        const rec = recommendations.get(d.recommendationId);
+        return rec
+          ? [
+              {
+                recommendationId: d.recommendationId,
+                kind: rec.kind,
+                decision: d.decision,
+                quality: d.quality,
+                decidedAt: d.createdAt,
+                generatedAt: rec.generatedAt,
+              },
+            ]
+          : [];
+      });
   }
 
   async insertAnalysis(analysis: Analysis): Promise<void> {

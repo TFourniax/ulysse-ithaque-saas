@@ -521,6 +521,64 @@ describe('decisions over HTTP', () => {
   });
 });
 
+describe('pilot measurement', () => {
+  test('decision quality labels are validated and the report counts only this company', async () => {
+    const gina = await signedIn('gina');
+    const list = await app.inject({
+      method: 'GET',
+      url: '/v1/recommendations',
+      headers: { cookie: gina.cookie },
+    });
+    const rec = list.json<{ items: { id: string; revision: number }[] }>().items[0];
+    assert.ok(rec);
+    const decide = (key: string, quality: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/v1/recommendations/${rec.id}/decisions`,
+        headers: { cookie: gina.cookie, 'x-csrf-token': gina.csrf, 'idempotency-key': key },
+        payload: { decision: 'reject', expectedRevision: rec.revision, quality },
+      });
+    const incoherent = await decide('gina-quality-0001', 'useful');
+    assert.equal(incoherent.statusCode, 422);
+    assert.equal((await decide('gina-quality-0002', 'excellent')).statusCode, 422);
+    assert.equal((await decide('gina-quality-0003', 'not_actionable')).statusCode, 200);
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/v1/recommendations/${rec.id}`,
+      headers: { cookie: gina.cookie },
+    });
+    assert.equal(
+      detail.json<{ decisions: { quality: string }[] }>().decisions[0]?.quality,
+      'not_actionable',
+    );
+
+    type Report = { decisions: { total: number; byQuality: Record<string, number> } };
+    const report = await app.inject({
+      method: 'GET',
+      url: '/v1/reports/quality',
+      headers: { cookie: gina.cookie },
+    });
+    assert.equal(report.statusCode, 200);
+    assert.equal(report.json<Report>().decisions.byQuality.not_actionable, 1);
+    const vera = await signedIn('vera');
+    const other = await app.inject({
+      method: 'GET',
+      url: '/v1/reports/quality',
+      headers: { cookie: vera.cookie },
+    });
+    assert.equal(other.statusCode, 200, 'a viewer can read the report of its company');
+    assert.equal(other.json<Report>().decisions.byQuality.not_actionable, 0);
+    const invalid = await app.inject({
+      method: 'GET',
+      url: '/v1/reports/quality?from=yesterday',
+      headers: { cookie: vera.cookie },
+    });
+    assert.equal(invalid.statusCode, 422);
+    const anonymous = await app.inject({ method: 'GET', url: '/v1/reports/quality' });
+    assert.equal(anonymous.statusCode, 401);
+  });
+});
+
 describe('API hygiene', () => {
   test('connection responses never expose credential references or cursors', async () => {
     const s = await signedIn('alice');

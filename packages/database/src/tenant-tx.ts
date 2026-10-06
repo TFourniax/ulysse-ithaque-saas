@@ -4,6 +4,7 @@ import type {
   CompanyContext,
   Connection,
   CursorKey,
+  DecisionDigest,
   DecisionRecord,
   Doctrine,
   EvidenceLink,
@@ -17,6 +18,7 @@ import type {
   Page,
   PageRequest,
   Recommendation,
+  RecommendationDigest,
   RecommendationFilter,
   RevisionRecord,
   SourceHead,
@@ -32,6 +34,7 @@ import {
   DOCTRINE_STATUSES,
   DomainError,
   encodeCursor,
+  QUALITY_LABELS,
   RECOMMENDATION_KINDS,
   RECOMMENDATION_STATUSES,
   ROLES,
@@ -999,8 +1002,8 @@ export class PgTenantTx implements TenantTx {
 
   async insertDecision(d: DecisionRecord): Promise<void> {
     await this.#exec(
-      `INSERT INTO decisions (tenant_id, id, recommendation_id, revision, content_revision, actor_id, decision, reason, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      `INSERT INTO decisions (tenant_id, id, recommendation_id, revision, content_revision, actor_id, decision, reason, quality, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         d.tenantId,
         d.id,
@@ -1010,6 +1013,7 @@ export class PgTenantTx implements TenantTx {
         d.actorId,
         d.decision,
         d.reason,
+        d.quality,
         d.createdAt,
       ],
     );
@@ -1030,7 +1034,49 @@ export class PgTenantTx implements TenantTx {
       actorId: str(r, 'actor_id'),
       decision: oneOf(r, 'decision', ['approve', 'reject'] as const),
       reason: strOrNull(r, 'reason'),
+      quality: r.quality === null ? null : oneOf(r, 'quality', QUALITY_LABELS),
       createdAt: str(r, 'created_at'),
+    }));
+  }
+
+  async listRecommendationDigests(
+    from: string,
+    to: string,
+    limit: number,
+  ): Promise<RecommendationDigest[]> {
+    return (
+      await this.#rows(
+        `SELECT id, kind, status, generated_at, expires_at FROM recommendations
+          WHERE tenant_id = $1 AND generated_at >= $2 AND generated_at <= $3
+          ORDER BY generated_at, id LIMIT $4`,
+        [this.tenantId, from, to, limit],
+      )
+    ).map((r) => ({
+      id: str(r, 'id'),
+      kind: oneOf(r, 'kind', RECOMMENDATION_KINDS),
+      status: oneOf(r, 'status', RECOMMENDATION_STATUSES),
+      generatedAt: str(r, 'generated_at'),
+      expiresAt: str(r, 'expires_at'),
+    }));
+  }
+
+  async listDecisionDigests(from: string, to: string, limit: number): Promise<DecisionDigest[]> {
+    return (
+      await this.#rows(
+        `SELECT d.recommendation_id, r.kind, d.decision, d.quality, d.created_at, r.generated_at
+           FROM decisions d
+           JOIN recommendations r ON r.tenant_id = d.tenant_id AND r.id = d.recommendation_id
+          WHERE d.tenant_id = $1 AND d.created_at >= $2 AND d.created_at <= $3
+          ORDER BY d.created_at, d.id LIMIT $4`,
+        [this.tenantId, from, to, limit],
+      )
+    ).map((r) => ({
+      recommendationId: str(r, 'recommendation_id'),
+      kind: oneOf(r, 'kind', RECOMMENDATION_KINDS),
+      decision: oneOf(r, 'decision', ['approve', 'reject'] as const),
+      quality: r.quality === null ? null : oneOf(r, 'quality', QUALITY_LABELS),
+      decidedAt: str(r, 'created_at'),
+      generatedAt: str(r, 'generated_at'),
     }));
   }
 

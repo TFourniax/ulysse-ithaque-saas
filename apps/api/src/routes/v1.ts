@@ -17,6 +17,8 @@ import {
   OpportunityPage,
   RecommendationDetail,
   RecommendationListQuery,
+  QualityReport,
+  QualityReportQuery,
   RecommendationPage,
   RevisionBody,
   RuleCatalogEntry,
@@ -222,6 +224,7 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
           actorId: d.actorId,
           decision: d.decision,
           reason: d.reason,
+          quality: d.quality,
           createdAt: d.createdAt,
         })),
         history: detail.history.map((e) => auditDto(e, names)),
@@ -252,7 +255,11 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
       const result = await review.decide(
         ctx,
         request.params.id,
-        { ...request.body, reason: request.body.reason ?? null },
+        {
+          ...request.body,
+          reason: request.body.reason ?? null,
+          quality: request.body.quality ?? null,
+        },
         request.headers['idempotency-key'],
       );
       return {
@@ -328,6 +335,22 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
         analysisDto,
       );
     },
+  );
+
+  app.get(
+    '/reports/quality',
+    {
+      schema: {
+        tags: ['context'],
+        querystring: QualityReportQuery,
+        response: { 200: QualityReport },
+      },
+    },
+    async (request) =>
+      queries.qualityReport(ctxOf(request), {
+        from: request.query.from ?? null,
+        to: request.query.to ?? null,
+      }),
   );
 
   // Connections -----------------------------------------------------------------------

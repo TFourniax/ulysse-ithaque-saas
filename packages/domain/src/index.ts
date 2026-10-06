@@ -9,6 +9,7 @@ export * from './opportunity.ts';
 export * from './ports.ts';
 export * from './recommendation.ts';
 export * from './records.ts';
+export * from './report.ts';
 export * from './rules.ts';
 export * from './time.ts';
 export * from './services/analysis-service.ts';

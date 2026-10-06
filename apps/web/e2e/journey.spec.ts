@@ -62,6 +62,7 @@ test('keyboard navigation reaches every action and pages have no serious accessi
     '/opportunities',
     '/admin',
     '/history',
+    '/measure',
   ]) {
     await page.goto(url);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
@@ -82,13 +83,25 @@ test('approval is recorded, attributed, persistent and executes nothing external
   await login(page, 'bruno');
   await page.goto(acmeRecommendationUrl);
   await page.getByLabel('Motif (facultatif)').fill('Relance prévue avec le contact fictif.');
+  const evaluation = page.getByLabel('Évaluation de la proposition (facultatif)');
+  await evaluation.selectOption({ label: 'Doublon' });
+  await expect(page.getByRole('button', { name: 'Approuver' })).toBeDisabled();
+  await evaluation.selectOption({ label: 'Utile' });
+  await expect(page.getByRole('button', { name: 'Rejeter' })).toBeDisabled();
   await page.getByRole('button', { name: 'Approuver' }).click();
   await expect(page.getByText('Décision enregistrée : proposition approuvée')).toBeVisible();
   await page.reload();
   await expect(page.locator('.detail-head .badge').first()).toHaveText('Approuvée');
   await expect(page.getByText('Proposition approuvée')).toBeVisible();
   await expect(page.getByText(/Bruno Leroy/).first()).toBeVisible();
+  await expect(page.getByText('évaluation : Utile')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approuver' })).toHaveCount(0);
+
+  await page.getByRole('link', { name: 'Mesure' }).click();
+  await expect(page.getByRole('heading', { name: 'Mesure' })).toBeVisible();
+  const evaluations = page.getByRole('table', { name: 'Évaluations des décideurs' });
+  await expect(evaluations.getByRole('row', { name: /^Utile/ })).toContainText('1');
+  await expect(page.getByRole('heading', { name: /Décisions : \d+/ })).toBeVisible();
 });
 
 test('a viewer reads proposals and evidence but cannot decide', async ({ page }) => {

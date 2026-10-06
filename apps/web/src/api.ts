@@ -9,6 +9,7 @@ import type {
   Me,
   MemberDto,
   OpportunityDto,
+  QualityReport,
   RecommendationDetail,
   RecommendationSummary,
   RuleCatalogEntryDto,
@@ -155,6 +156,7 @@ export function useDecision(tenantId: string, id: string) {
       decision: 'approve' | 'reject';
       expectedRevision: number;
       reason: string | null;
+      quality: string | null;
       key: string;
     }) =>
       api<MutationResult>(`/v1/recommendations/${id}/decisions`, {
@@ -163,6 +165,7 @@ export function useDecision(tenantId: string, id: string) {
           decision: input.decision,
           expectedRevision: input.expectedRevision,
           reason: input.reason,
+          quality: input.quality,
         },
         idempotencyKey: input.key,
       }),
@@ -203,6 +206,7 @@ function invalidateRecommendations(
     client.invalidateQueries({ queryKey: ['recommendation', tenantId, id] }),
     client.invalidateQueries({ queryKey: ['recommendations', tenantId] }),
     client.invalidateQueries({ queryKey: ['audit', tenantId] }),
+    client.invalidateQueries({ queryKey: ['quality-report', tenantId] }),
   ]).then(() => undefined);
 }
 
@@ -225,6 +229,18 @@ export function useAnalyses(tenantId: string) {
     queryKey: ['analyses', tenantId],
     queryFn: () => api<AnalysisDto[]>('/v1/analyses?limit=5'),
     refetchInterval: 30_000,
+  });
+}
+
+export function useQualityReport(tenantId: string, days: number) {
+  return useQuery({
+    queryKey: ['quality-report', tenantId, days],
+    queryFn: () => {
+      const to = new Date();
+      const from = new Date(to.getTime() - days * 86_400_000);
+      const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+      return api<QualityReport>(`/v1/reports/quality?${query.toString()}`);
+    },
   });
 }
 

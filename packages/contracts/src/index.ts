@@ -151,6 +151,17 @@ export const AuditEntry = z.object({
 });
 export type AuditEntry = z.infer<typeof AuditEntry>;
 
+/** Reviewer assessment recorded with a decision (pilot measurement). */
+export const QualityLabel = z.enum([
+  'useful',
+  'not_actionable',
+  'duplicate',
+  'outdated',
+  'unfounded',
+  'out_of_scope',
+]);
+export type QualityLabel = z.infer<typeof QualityLabel>;
+
 export const RecommendationDetail = z.object({
   recommendation: RecommendationSummary,
   evidence: z.array(Evidence),
@@ -172,6 +183,7 @@ export const RecommendationDetail = z.object({
       actorId: uuid,
       decision: z.enum(['approve', 'reject']),
       reason: z.string().nullable(),
+      quality: QualityLabel.nullable(),
       createdAt: instant,
     }),
   ),
@@ -200,8 +212,41 @@ export const DecisionBody = z.object({
   decision: z.enum(['approve', 'reject']),
   expectedRevision: z.number().int().positive(),
   reason: z.string().max(1000).nullable().optional(),
+  /** Optional: `useful` with an approval; another label with a rejection. */
+  quality: QualityLabel.nullable().optional(),
 });
 export type DecisionBody = z.infer<typeof DecisionBody>;
+
+export const QualityReportQuery = z.object({
+  from: instant.optional(),
+  to: instant.optional(),
+});
+
+/** Figures computed only from what this company recorded over the period. */
+export const QualityReport = z.object({
+  period: z.object({ from: instant, to: instant }),
+  proposals: z.object({
+    generated: z.number().int(),
+    byKind: z.record(z.string(), z.number().int()),
+    byStatus: z.record(z.string(), z.number().int()),
+  }),
+  decisions: z.object({
+    total: z.number().int(),
+    approved: z.number().int(),
+    rejected: z.number().int(),
+    byQuality: z.record(z.string(), z.number().int()),
+    medianHoursToDecision: z.number().nullable(),
+  }),
+  latestAnalysis: z
+    .object({
+      completedAt: instant,
+      evaluated: z.number().int(),
+      abstentions: z.record(z.string(), z.number().int()),
+    })
+    .nullable(),
+  truncated: z.boolean(),
+});
+export type QualityReport = z.infer<typeof QualityReport>;
 
 export const RevisionBody = z.object({
   expectedRevision: z.number().int().positive(),

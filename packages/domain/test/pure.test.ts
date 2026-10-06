@@ -11,7 +11,13 @@ import {
   validateFields,
   validateNormalizedRecord,
 } from '../src/opportunity.ts';
-import { decide, expiresAtFor } from '../src/recommendation.ts';
+import {
+  decide,
+  expiresAtFor,
+  QUALITY_LABELS,
+  validateDecisionInput,
+} from '../src/recommendation.ts';
+import { buildQualityReport } from '../src/report.ts';
 import {
   defaultRules,
   overdueNextStepRule,
@@ -245,7 +251,7 @@ test('the pure decision function blocks approval on any evidence doubt', () => {
     connectionActive: true,
     doctrineActive: true,
   };
-  const input = { decision: 'approve' as const, expectedRevision: 1, reason: null };
+  const input = { decision: 'approve' as const, expectedRevision: 1, reason: null, quality: null };
   assert.equal(decide(rec, input, ok, 'u', NOW, 'd').next.status, 'approved');
   for (const bad of [
     { currentFingerprint: null },
@@ -270,4 +276,95 @@ test('the pure decision function blocks approval on any evidence doubt', () => {
     ).next.status,
     'rejected',
   );
+});
+
+test('quality labels follow the decision: useful only with an approval', () => {
+  const base = { expectedRevision: 1, reason: null };
+  assert.equal(validateDecisionInput({ ...base, decision: 'approve' }).quality, null);
+  assert.equal(
+    validateDecisionInput({ ...base, decision: 'approve', quality: 'useful' }).quality,
+    'useful',
+  );
+  for (const label of QUALITY_LABELS.filter((l) => l !== 'useful'))
+    assert.equal(
+      validateDecisionInput({ ...base, decision: 'reject', quality: label }).quality,
+      label,
+    );
+  for (const bad of [
+    { decision: 'reject', quality: 'useful' },
+    { decision: 'approve', quality: 'duplicate' },
+    { decision: 'approve', quality: 'great' },
+    { decision: 'reject', quality: 3 },
+  ])
+    assert.throws(() => validateDecisionInput({ ...base, ...bad }), code('INVALID_DECISION'));
+});
+
+test('the quality report only counts what was recorded', () => {
+  const at = (h: number) =>
+    new Date(Date.parse('2026-10-01T00:00:00.000Z') + h * 3_600_000).toISOString();
+  const report = buildQualityReport({
+    from: at(0),
+    to: at(240),
+    now: Date.parse(at(240)),
+    recommendations: [
+      {
+        id: 'a',
+        kind: 'define_next_step',
+        status: 'approved',
+        generatedAt: at(1),
+        expiresAt: at(100),
+      },
+      {
+        id: 'b',
+        kind: 'define_next_step',
+        status: 'rejected',
+        generatedAt: at(2),
+        expiresAt: at(100),
+      },
+      {
+        id: 'c',
+        kind: 'follow_up_overdue_step',
+        status: 'pending',
+        generatedAt: at(3),
+        expiresAt: at(50),
+      },
+      {
+        id: 'd',
+        kind: 'follow_up_overdue_step',
+        status: 'pending',
+        generatedAt: at(4),
+        expiresAt: at(400),
+      },
+    ],
+    decisions: [
+      {
+        recommendationId: 'a',
+        kind: 'define_next_step',
+        decision: 'approve',
+        quality: 'useful',
+        decidedAt: at(3),
+        generatedAt: at(1),
+      },
+      {
+        recommendationId: 'b',
+        kind: 'define_next_step',
+        decision: 'reject',
+        quality: null,
+        decidedAt: at(8),
+        generatedAt: at(2),
+      },
+    ],
+    analyses: [],
+    truncated: false,
+  });
+  assert.equal(report.proposals.generated, 4);
+  assert.deepEqual(report.proposals.byStatus, { approved: 1, rejected: 1, expired: 1, pending: 1 });
+  assert.deepEqual(report.proposals.byKind, { define_next_step: 2, follow_up_overdue_step: 2 });
+  assert.equal(report.decisions.approved, 1);
+  assert.equal(report.decisions.rejected, 1);
+  assert.equal(report.decisions.byQuality.useful, 1);
+  assert.equal(report.decisions.byQuality.unlabeled, 1);
+  assert.equal(report.decisions.byQuality.duplicate, 0);
+  assert.equal(report.decisions.medianHoursToDecision, 4);
+  assert.equal(report.latestAnalysis, null);
 });

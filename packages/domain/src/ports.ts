@@ -2,6 +2,7 @@ import type { CompanyContext } from './company-context.ts';
 import type { Context } from './context.ts';
 import type { Doctrine } from './doctrine.ts';
 import type { Opportunity, SourceHead } from './opportunity.ts';
+import type { DecisionDigest, RecommendationDigest } from './report.ts';
 import type {
   DecisionRecord,
   EvidenceLink,
@@ -100,6 +101,14 @@ export interface TenantTx {
   listRevisions(recommendationId: string): Promise<RevisionRecord[]>;
   insertDecision(decision: DecisionRecord): Promise<void>;
   listDecisions(recommendationId: string): Promise<DecisionRecord[]>;
+  /** Recommendations generated in [from, to] (inclusive), oldest first, at most `limit`. */
+  listRecommendationDigests(
+    from: string,
+    to: string,
+    limit: number,
+  ): Promise<RecommendationDigest[]>;
+  /** Decisions taken in [from, to] (inclusive) with their recommendation's kind and generation time. */
+  listDecisionDigests(from: string, to: string, limit: number): Promise<DecisionDigest[]>;
 
   insertAnalysis(analysis: Analysis): Promise<void>;
   insertModelUsage(usage: ModelUsage): Promise<void>;

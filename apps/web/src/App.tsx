@@ -11,6 +11,7 @@ import { can, SessionContext } from './session.tsx';
 import { AdminPage } from './pages/Admin.tsx';
 import { ConnectionsPage } from './pages/Connections.tsx';
 import { HistoryPage } from './pages/History.tsx';
+import { MeasurePage } from './pages/Measure.tsx';
 import { OpportunitiesPage } from './pages/Opportunities.tsx';
 import { RecommendationDetailPage } from './pages/RecommendationDetail.tsx';
 import { RecommendationsPage } from './pages/Recommendations.tsx';
@@ -144,6 +145,7 @@ function Layout() {
     { to: '/recommendations', label: 'Propositions' },
     { to: '/opportunities', label: 'Opportunités' },
     { to: '/connections', label: 'Connexions' },
+    ...(can(session, 'analysis:read') ? [{ to: '/measure', label: 'Mesure' }] : []),
     ...(can(session, 'audit:read') ? [{ to: '/history', label: 'Historique' }] : []),
     { to: '/admin', label: 'Administration' },
   ];
@@ -197,6 +199,7 @@ const router = createBrowserRouter([
       { path: '/recommendations/:id', element: <RecommendationDetailPage /> },
       { path: '/opportunities', element: <OpportunitiesPage /> },
       { path: '/connections', element: <ConnectionsPage /> },
+      { path: '/measure', element: <MeasurePage /> },
       { path: '/history', element: <HistoryPage /> },
       { path: '/admin', element: <AdminPage /> },
     ],

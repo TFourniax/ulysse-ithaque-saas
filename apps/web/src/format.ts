@@ -44,6 +44,16 @@ export const KIND_LABELS: Record<string, string> = {
   follow_up_overdue_step: 'Prochaine étape échue',
 };
 
+/** Reviewer assessment of a proposal (pilot measurement); `useful` goes with an approval. */
+export const QUALITY_LABELS: Record<string, string> = {
+  useful: 'Utile',
+  not_actionable: 'Correcte mais non actionnable',
+  duplicate: 'Doublon',
+  outdated: 'Obsolète',
+  unfounded: 'Non fondée',
+  out_of_scope: 'Hors périmètre',
+};
+
 export const ROLE_LABELS: Record<string, string> = {
   owner: 'Responsable',
   reviewer: 'Décideur',

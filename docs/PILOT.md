@@ -25,6 +25,7 @@ Statut : **à remplir par le responsable du pilote** (UL-007, UL-014). Ce docume
 - Isolation entre entreprises (RLS forcée, rôles séparés), connexion OIDC côté serveur, révocations effectives à la requête suivante.
 - Doctrine et contexte d'entreprise versionnés avec validation par un owner ; abstention explicite quand une donnée manque ou est périmée.
 - Exploitation : image, stack Compose, sauvegarde chiffrée et restauration vérifiée, commandes d'administration, runbooks ([OPERATIONS](OPERATIONS.md)).
+- Mesure : évaluation de chaque décision et page « Mesure » calculée à partir des seules données enregistrées ; catégories à confirmer (Q-010).
 
 ## 3. Ce qui manque avant un pilote
 
@@ -33,7 +34,6 @@ Statut : **à remplir par le responsable du pilote** (UL-007, UL-014). Ce docume
 | Connecteur de la source réelle choisie, stockage de ses credentials | UL-008, DEBT-011 | oui |
 | Doctrine réelle validée (sinon : règles fictives, inutilisables en pilote) | UL-009 | oui |
 | Environnement dédié avec TLS, IdP de production, collecte des métriques et alertes, sauvegardes hors site | UL-011b | oui |
-| Étiquettes de qualité sur les décisions et rapport de mesure | UL-012b | oui pour mesurer la valeur |
 | ACL par source/dossier si toutes les données ne sont pas visibles par tous les membres | DEBT-010 | selon Q-006 |
 | Appel réel au modèle vérifié, si la formulation assistée est voulue | UL-010 | non (désactivable) |
 
