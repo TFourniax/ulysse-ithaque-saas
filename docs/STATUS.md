@@ -17,7 +17,7 @@ Mis à jour : 2026-10-06. Stade : **V1 de démonstration complète sur données 
 
 ## Vérifié
 
-Branche `claude/quirky-darwin-v4is1f`, [PR #2](https://github.com/TFourniax/ulysse-ithaque-saas/pull/2). Dernière CI complète consignée : commit `67b81cc`, [run 37541517658](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37541517658), 5 jobs verts. Les compteurs ci-dessous incluent UL-012b, vérifié en local (verify, intégration, e2e) ; sa CI est consignée dans le [journal UL-012b](journal/2026-10-06-UL-012b-mesure.md).
+Branche `claude/quirky-darwin-v4is1f`, [PR #2](https://github.com/TFourniax/ulysse-ithaque-saas/pull/2). Au commit `a3160dc` : [CI run 37543605537](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37543605537) (push) et [run 37543609256](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37543609256) (pull request), 5 jobs verts chacun. Les commits suivants ne modifient que la documentation.
 
 | Contrôle | Résultat | Où |
 | --- | --- | --- |

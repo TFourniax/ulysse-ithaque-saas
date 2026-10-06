@@ -2,7 +2,7 @@
 
 Mis à jour : 2026-10-06 (UL-012a). Les preuves ci-dessous ont été exécutées sur **données fictives** (deux entreprises fictives, CRM simulé, doctrine fictive, Keycloak de développement). Elles démontrent le comportement du logiciel, pas sa valeur commerciale réelle.
 
-Référence de preuve : commit `67b81cc`, [CI run 37541517658](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37541517658) (jobs `static-and-unit` Ubuntu/Windows, `integration-postgres`, `e2e-browser`, `container-stack`), plus les exécutions locales consignées dans les journaux. Les suites : `domain` (scénarios exécutés contre l'adaptateur mémoire **et** PostgreSQL), `database`, `api`, `worker`, `ai`, `connectors`, recette navigateur `apps/web/e2e/journey.spec.ts`, test de fumée `scripts/smoke.mjs`.
+Référence de preuve : commit `a3160dc`, [CI run 37543605537](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37543605537) (jobs `static-and-unit` Ubuntu/Windows, `integration-postgres`, `e2e-browser`, `container-stack`), plus les exécutions locales consignées dans les journaux. Les suites : `domain` (scénarios exécutés contre l'adaptateur mémoire **et** PostgreSQL), `database`, `api`, `worker`, `ai`, `connectors`, recette navigateur `apps/web/e2e/journey.spec.ts`, test de fumée `scripts/smoke.mjs`.
 
 ## Parcours SaaS : correspondance avec les preuves
 
