@@ -26,5 +26,9 @@ const Schema = z.object({
 export type WorkerConfig = z.infer<typeof Schema>;
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
-  return Schema.parse(env);
+  const config = Schema.parse(env);
+  // The fictional CRM must never run next to real data or be mistaken for an integration.
+  if (config.NODE_ENV === 'production' && config.ENABLE_FIXTURE_CONNECTOR)
+    throw new Error('ENABLE_FIXTURE_CONNECTOR is forbidden in production');
+  return config;
 }

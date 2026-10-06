@@ -44,22 +44,35 @@ export async function bootstrap(options: BootstrapOptions): Promise<void> {
     await admin.query('GRANT ulysse_runtime TO ulysse_app, ulysse_worker');
     // The migrator must be able to hand function ownership to the definer (PostgreSQL 16+ SET option).
     await admin.query('GRANT ulysse_definer TO ulysse_migrator WITH SET TRUE, INHERIT FALSE');
-    const db = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [
-      options.database,
-    ]);
-    if (!db.rowCount)
-      await admin.query(`CREATE DATABASE ${options.database} OWNER ulysse_migrator`);
   } finally {
     await admin.end();
   }
-  const url = new URL(options.adminUrl);
-  url.pathname = `/${options.database}`;
+  await prepareDatabase(options.adminUrl, options.database);
+}
+
+/**
+ * Creates the database if needed (owned by the migrator) and applies the
+ * database-level privileges. Roles must exist (see bootstrap). Also used before
+ * restoring a backup into a new database.
+ */
+export async function prepareDatabase(adminUrl: string, database: string): Promise<void> {
+  if (!DATABASE_NAME.test(database)) throw new Error('invalid database name');
+  const admin = new pg.Client({ connectionString: adminUrl });
+  await admin.connect();
+  try {
+    const db = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [database]);
+    if (!db.rowCount) await admin.query(`CREATE DATABASE ${database} OWNER ulysse_migrator`);
+  } finally {
+    await admin.end();
+  }
+  const url = new URL(adminUrl);
+  url.pathname = `/${database}`;
   const scoped = new pg.Client({ connectionString: url.toString() });
   await scoped.connect();
   try {
-    await scoped.query(`REVOKE ALL ON DATABASE ${options.database} FROM PUBLIC`);
+    await scoped.query(`REVOKE ALL ON DATABASE ${database} FROM PUBLIC`);
     await scoped.query(
-      `GRANT CONNECT ON DATABASE ${options.database} TO ulysse_migrator, ulysse_app, ulysse_worker`,
+      `GRANT CONNECT ON DATABASE ${database} TO ulysse_migrator, ulysse_app, ulysse_worker`,
     );
     await scoped.query('ALTER SCHEMA public OWNER TO ulysse_migrator');
     await scoped.query('REVOKE CREATE ON SCHEMA public FROM PUBLIC');

@@ -369,7 +369,14 @@ export class WorkerRuntime {
         { singletonKey: row.connection_id, group: { id: row.tenant_id } },
       );
     }
+    await this.refreshQueueMetrics();
     return due.rows.length;
+  }
+
+  /** Publishes queued job counts (ulysse_queue_backlog) once per dispatch cycle. */
+  async refreshQueueMetrics(): Promise<void> {
+    for (const queue of await this.boss.getQueues(Object.values(QUEUES)))
+      this.#deps.metrics.queueBacklog.set({ queue: queue.name }, queue.queuedCount);
   }
 
   async dispatchMaintenance(): Promise<number> {

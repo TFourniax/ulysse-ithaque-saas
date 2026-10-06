@@ -25,9 +25,13 @@
     "@types/pg": "8.23.1"
   },
   "scripts": {
-    "test:integration": "node --env-file-if-exists=../../.env --conditions=ulysse-source --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "test:integration": "node --env-file-if-exists=../../.env --conditions=ulysse-source --test --test-concurrency=1 \"test/postgres.test.ts\"",
     "db:bootstrap": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts bootstrap",
     "db:migrate": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts migrate",
-    "db:recreate": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts recreate"
+    "db:recreate": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts recreate",
+    "db:backup": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts backup",
+    "db:restore": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts restore",
+    "test": "node --conditions=ulysse-source --test \"test/**/*.unit.test.ts\"",
+    "admin": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts"
   }
 }

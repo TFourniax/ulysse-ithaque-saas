@@ -6,9 +6,11 @@ import pg from 'pg';
 import { PgBoss } from 'pg-boss';
 import { PGBOSS_SCHEMA, QUEUE_DEFINITIONS } from './jobs.ts';
 
+const here = path.dirname(fileURLToPath(import.meta.url));
+// Sources run from src/, the build from dist/src/: migrations stay at the package root.
 export const MIGRATIONS_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../migrations',
+  here,
+  path.basename(path.dirname(here)) === 'dist' ? '../../migrations' : '../migrations',
 );
 
 export type MigrationResult = Readonly<{ applied: string[]; alreadyApplied: string[] }>;

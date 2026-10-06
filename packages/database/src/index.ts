@@ -1,4 +1,5 @@
 export * from './admin.ts';
+export * from './backup.ts';
 export * from './bootstrap.ts';
 export * from './jobs.ts';
 export * from './migrate.ts';

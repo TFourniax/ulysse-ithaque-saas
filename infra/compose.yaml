@@ -1,6 +1,22 @@
-# Local development and integration-test services. Fictional data only.
-# Usage: docker compose -f infra/compose.yaml --env-file infra/.env up -d postgres keycloak
+# Local services and a complete local stack. Fictional data only; not a production deployment.
+# Development services: docker compose -f infra/compose.yaml --env-file infra/.env up -d postgres keycloak
+# Complete stack (profile app, image built from ../Dockerfile), see docs/OPERATIONS.md:
+#   docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app up -d
 name: ulysse
+
+# Shared by the application containers. Each process only receives the database
+# password of the role it runs as (the migrator password never reaches the API or worker).
+# Missing values are reported by each process at startup (configuration is validated there),
+# so the development services above still start with infra/.env alone.
+x-app: &app
+  image: ${ULYSSE_IMAGE:-ulysse-app:local}
+  build:
+    context: ..
+  profiles: ['app']
+  read_only: true
+  tmpfs: ['/tmp']
+  security_opt: ['no-new-privileges:true']
+  cap_drop: ['ALL']
 
 services:
   postgres:
@@ -41,6 +57,115 @@ services:
       interval: 5s
       timeout: 5s
       retries: 40
+
+  # One-shot: roles, database, migrations and job queues. Only job holding admin credentials.
+  db-init:
+    <<: *app
+    command:
+      [
+        'sh',
+        '-c',
+        'node packages/database/dist/src/cli.js bootstrap && node packages/database/dist/src/cli.js migrate',
+      ]
+    environment:
+      ULYSSE_DB_HOST: postgres
+      ULYSSE_DB_PORT: '5432'
+      ULYSSE_DB_NAME: ${STACK_DB_NAME:-ulysse_stack}
+      ULYSSE_DB_ADMIN_USER: ${POSTGRES_ADMIN_USER:-postgres}
+      ULYSSE_DB_ADMIN_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-}
+      ULYSSE_DB_MIGRATOR_PASSWORD: ${ULYSSE_DB_MIGRATOR_PASSWORD:-}
+      ULYSSE_DB_APP_PASSWORD: ${ULYSSE_DB_APP_PASSWORD:-}
+      ULYSSE_DB_WORKER_PASSWORD: ${ULYSSE_DB_WORKER_PASSWORD:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: 'no'
+
+  # One-shot, development only: fictional companies, users, doctrine and CRM fixture.
+  demo-seed:
+    <<: *app
+    command: ['node', 'apps/worker/dist/src/dev/seed.js']
+    environment:
+      NODE_ENV: development
+      OIDC_ISSUER: http://localhost:8080/realms/ulysse
+      ULYSSE_DB_HOST: postgres
+      ULYSSE_DB_PORT: '5432'
+      ULYSSE_DB_NAME: ${STACK_DB_NAME:-ulysse_stack}
+      ULYSSE_DB_MIGRATOR_PASSWORD: ${ULYSSE_DB_MIGRATOR_PASSWORD:-}
+      ULYSSE_DB_WORKER_PASSWORD: ${ULYSSE_DB_WORKER_PASSWORD:-}
+    depends_on:
+      db-init: { condition: service_completed_successfully }
+    restart: 'no'
+
+  api:
+    <<: *app
+    command: ['node', 'apps/api/dist/src/main.js']
+    environment:
+      # Local stack over plain HTTP: production mode refuses insecure HTTP and non-secure cookies.
+      NODE_ENV: development
+      API_HOST: 0.0.0.0
+      API_PORT: '3000'
+      PUBLIC_ORIGIN: http://localhost:3000
+      OIDC_ISSUER: http://localhost:8080/realms/ulysse
+      # Split horizon: browsers use localhost:8080, the API reaches Keycloak on the compose network.
+      OIDC_INTERNAL_BASE_URL: http://keycloak:8080
+      OIDC_CLIENT_ID: ulysse-web
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_ALLOW_INSECURE_HTTP: 'true'
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      COOKIE_SECURE: 'false'
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      ULYSSE_DB_HOST: postgres
+      ULYSSE_DB_PORT: '5432'
+      ULYSSE_DB_NAME: ${STACK_DB_NAME:-ulysse_stack}
+      ULYSSE_DB_APP_PASSWORD: ${ULYSSE_DB_APP_PASSWORD:-}
+    ports:
+      - '127.0.0.1:${STACK_API_PORT:-3000}:3000'
+    depends_on:
+      db-init: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  worker:
+    <<: *app
+    command: ['node', 'apps/worker/dist/src/main.js']
+    environment:
+      NODE_ENV: development
+      ENABLE_FIXTURE_CONNECTOR: 'true'
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-none}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      MODEL_ID: ${MODEL_ID:-}
+      MODEL_TENANT_MONTHLY_BUDGET_USD: ${MODEL_TENANT_MONTHLY_BUDGET_USD:-0}
+      ULYSSE_DB_HOST: postgres
+      ULYSSE_DB_PORT: '5432'
+      ULYSSE_DB_NAME: ${STACK_DB_NAME:-ulysse_stack}
+      ULYSSE_DB_WORKER_PASSWORD: ${ULYSSE_DB_WORKER_PASSWORD:-}
+    depends_on:
+      db-init: { condition: service_completed_successfully }
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3001/health/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    stop_grace_period: 45s
+    restart: unless-stopped
 
 volumes:
   postgres-data:

@@ -10,7 +10,7 @@ import {
   MemoryFixtureStore,
 } from '@ulysse/connectors';
 import type { Pool } from '@ulysse/database';
-import { AdminClient, createPool, PgUnitOfWork } from '@ulysse/database';
+import { AdminClient, createPool, PgUnitOfWork, QUEUES } from '@ulysse/database';
 import type { TestDatabase } from '@ulysse/database/testing';
 import { createTestDatabase } from '@ulysse/database/testing';
 import type { ServiceDeps } from '@ulysse/domain';
@@ -62,6 +62,7 @@ function runtimeWith(
     faults?: FaultHooks;
     env?: Record<string, string>;
     model?: ModelSettings;
+    metrics?: ReturnType<typeof createMetrics>;
   } = {},
 ) {
   return new WorkerRuntime({
@@ -78,7 +79,7 @@ function runtimeWith(
     rules: defaultRules,
     clock: systemClock,
     logger: createLogger('worker-test', { level: 'silent' }),
-    metrics: createMetrics('worker-test'),
+    metrics: options.metrics ?? createMetrics('worker-test'),
     ...(options.faults ? { faults: options.faults } : {}),
     ...(options.model ? { model: options.model } : {}),
   });
@@ -356,6 +357,20 @@ describe('background ingestion with pg-boss', () => {
         'no new access after revocation',
       );
       assert.equal((await runtime.dispatchSyncs(new Date(Date.now() + 86_400_000))) >= 0, true);
+    } finally {
+      await runtime.stop(5000);
+    }
+  });
+
+  test('each dispatch cycle publishes the queued job count per queue', async () => {
+    const metrics = createMetrics('worker-test');
+    const runtime = runtimeWith({ metrics });
+    await runtime.start({ schedule: false });
+    try {
+      await runtime.dispatchSyncs();
+      const backlog = await metrics.registry.getSingleMetricAsString('ulysse_queue_backlog');
+      for (const queue of Object.values(QUEUES))
+        assert.match(backlog, new RegExp(`queue="${queue.replaceAll('.', '\\.')}"`), queue);
     } finally {
       await runtime.stop(5000);
     }

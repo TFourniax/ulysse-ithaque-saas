@@ -25,7 +25,8 @@
   "scripts": {
     "dev": "node --env-file-if-exists=../../.env --conditions=ulysse-source --watch src/main.ts",
     "start": "node dist/src/main.js",
-    "test:integration": "node --env-file-if-exists=../../.env --conditions=ulysse-source --test --test-concurrency=1 \"test/**/*.test.ts\"",
-    "openapi": "node --conditions=ulysse-source src/openapi.ts"
+    "test:integration": "node --env-file-if-exists=../../.env --conditions=ulysse-source --test --test-concurrency=1 \"test/api.test.ts\"",
+    "openapi": "node --conditions=ulysse-source src/openapi.ts",
+    "test": "node --conditions=ulysse-source --test \"test/**/*.unit.test.ts\""
   }
 }

@@ -104,3 +104,43 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: apps/web
       - run: npm run test:e2e
+
+  container-stack:
+    # Builds the image, runs the complete compose stack (profile app) with fictional
+    # data, then checks login/proposals, restart, and an encrypted backup/restore drill.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Throwaway configuration from the committed examples
+        run: |
+          cp .env.example .env
+          cp infra/.env.example infra/.env
+      - run: docker build -t ulysse-app:local .
+      - name: Start the stack and load the fictional demo data
+        run: |
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait --wait-timeout 600 postgres keycloak api worker
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app run --rm demo-seed
+      - run: npm ci
+      - name: Login through Keycloak and see background proposals
+        run: node scripts/smoke.mjs --user alice --password ulysse-demo-alice --expect-recommendations 1 --session-file "$RUNNER_TEMP/session.json"
+      - name: Restart API and worker; the session and data survive
+        run: |
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app restart api worker
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait --wait-timeout 300 api worker
+          node scripts/smoke.mjs --reuse-session --session-file "$RUNNER_TEMP/session.json" --expect-recommendations 1
+      - name: Encrypted backup and verified restore drill
+        run: |
+          export BACKUP_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+          export ULYSSE_PG_EXEC="docker compose -f $PWD/infra/compose.yaml --env-file $PWD/infra/.env exec -T postgres"
+          npm run db:backup -- --database ulysse_stack --out "$RUNNER_TEMP"
+          npm run db:restore -- --file "$(ls "$RUNNER_TEMP"/ulysse_stack-*.dump.enc)" --target ulysse_test_restore_drill --drop-after
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app logs --tail 200

@@ -48,6 +48,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     if (!config.COOKIE_SECURE) throw new Error('COOKIE_SECURE must be true in production');
     if (!config.PUBLIC_ORIGIN.startsWith('https://'))
       throw new Error('PUBLIC_ORIGIN must use https in production');
+    if (config.ENABLE_FIXTURE_CONNECTOR)
+      throw new Error('ENABLE_FIXTURE_CONNECTOR is forbidden in production');
   }
   return config;
 }
