@@ -20,6 +20,22 @@ const required = [
   'docs/adr/0001-architecture-initiale.md',
   'docs/adr/0002-validation-humaine.md',
   'docs/adr/0003-continuite-developpement.md',
+  'docs/adr/0004-postgresql-roles-rls.md',
+  'docs/adr/0005-outillage-et-stack.md',
+  'docs/adr/0006-identite-oidc-bff.md',
+  'docs/adr/0007-worker-outbox.md',
+  'docs/adr/0008-contrat-connecteur.md',
+  'docs/adr/0009-formulation-assistee.md',
+  'docs/adr/0010-image-et-sauvegardes.md',
+  'docs/OPERATIONS.md',
+  'docs/PILOT.md',
+  'docs/CONNECTORS.md',
+  'docs/api/openapi.json',
+  'docs/journal/2026-10-06-UL-002-v1-demo.md',
+  'docs/journal/2026-10-06-UL-011-exploitation.md',
+  '.env.example',
+  'Dockerfile',
+  'infra/compose.yaml',
 ];
 const failures = [];
 for (const file of required) {

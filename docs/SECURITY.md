@@ -1,6 +1,27 @@
 # Sécurité et protection des données
 
-Statut : exigences de mise en œuvre et critères de revue. La fondation mémoire ne met pas en place ces contrôles d'infrastructure.
+Statut : exigences et critères de revue. Mise à jour 2026-10-06 : la V1 met en œuvre les contrôles marqués ci-dessous, vérifiés par tests ; les autres restent à faire.
+
+## État de mise en œuvre (V1)
+
+| Contrôle | État | Preuve / référence |
+| --- | --- | --- |
+| Session serveur, membership relue à chaque requête, tenant/rôle navigateur ignorés | fait | tests API ; [ADR-0006](adr/0006-identite-oidc-bff.md) |
+| OIDC : signature, émetteur, audience, expiration, nonce, PKCE, anti login-CSRF | fait | tests API avec IdP de test |
+| CSRF sur mutations + contrôle d'origine ; cookies HttpOnly/SameSite, `__Host-`/Secure en production | fait | tests API, garde de configuration |
+| RLS forcée USING/WITH CHECK, rôles sans BYPASSRLS, compte de migration distinct, non-fuite du pool | fait | tests PostgreSQL ; [ADR-0004](adr/0004-postgresql-roles-rls.md) |
+| Identité de service des jobs limitée à une entreprise/connexion | fait | tests worker (job forgé) ; [ADR-0007](adr/0007-worker-outbox.md) |
+| Révocation membership / utilisateur / connexion, purge des données de connexion | fait | tests API, worker, domaine |
+| Contenu source non fiable, aucun outil fourni au modèle, sorties validées côté serveur | fait (simulation) | tests `packages/ai` ; [ADR-0009](adr/0009-formulation-assistee.md) |
+| Journaux sans jeton, cookie, code OIDC, corps ni contenu source | fait | tests observability, vérification des journaux |
+| Limites de débit, tailles de corps, budget modèle par entreprise | fait | tests API et worker |
+| Sauvegardes chiffrées et authentifiées, restauration vérifiée | fait (local, CI) | [OPERATIONS](OPERATIONS.md) §8 |
+| Connecteur fictif interdit en production | fait | tests de configuration API/worker |
+| ACL par source/dossier | à faire | DEBT-010, Q-006 |
+| Stockage chiffré des credentials de connecteurs, rotation OAuth | à faire | DEBT-011, UL-008 |
+| Stockage de fichiers (S3), URL signées | non nécessaire en V1 | aucun fichier stocké |
+| Protection SSRF des connecteurs réels | à faire avec le premier connecteur | UL-008 |
+| TLS, IdP de production, secrets en coffre, alerting | à faire | UL-011b, UL-014 |
 
 ## Frontières
 

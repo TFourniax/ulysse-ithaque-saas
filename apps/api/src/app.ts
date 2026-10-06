@@ -7,7 +7,7 @@ import swagger from '@fastify/swagger';
 import { API_VERSION, Health } from '@ulysse/contracts';
 import { correlationIdFrom } from '@ulysse/observability';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import {
   hasZodFastifySchemaValidationErrors,
@@ -32,7 +32,7 @@ export async function buildApp(deps: ApiDeps): Promise<FastifyInstance> {
     bodyLimit: BODY_LIMIT_BYTES,
     trustProxy: config.NODE_ENV === 'production',
     genReqId: (req) => correlationIdFrom(req.headers['x-correlation-id']),
-    requestIdLogLabel: 'correlationId',
+    logController: new LogController({ requestIdLogLabel: 'correlationId' }),
   }).withTypeProvider<ZodTypeProvider>();
 
   app.setValidatorCompiler(validatorCompiler);
