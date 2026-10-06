@@ -417,3 +417,24 @@ export const Health = z.object({
   status: z.enum(['ok', 'unavailable']),
   checks: z.record(z.string(), z.enum(['ok', 'failed'])),
 });
+
+export type OpportunityDto = z.infer<typeof Opportunity>;
+export type DoctrineDto = z.infer<typeof Doctrine>;
+export type MemberDto = z.infer<typeof Member>;
+export type AnalysisDto = z.infer<typeof Analysis>;
+export type SyncRunDto = z.infer<typeof SyncRun>;
+export type CompanyContextDto = z.infer<typeof CompanyContext>;
+export type CompanyContextContentDto = z.infer<typeof CompanyContextContent>;
+export type RuleCatalogEntryDto = z.infer<typeof RuleCatalogEntry>;
+export type EvidenceDto = z.infer<typeof Evidence>;
+export type RecommendationPageDto = z.infer<typeof RecommendationPage>;
+
+export type ConnectorInfo = {
+  provider: string;
+  displayName: string;
+  kind: 'fixture' | 'live';
+  scopes: string[];
+  authorization: string;
+  capabilities: Record<string, unknown>;
+  fields: Record<string, { source: string; meaning: string; unit?: string }>;
+};

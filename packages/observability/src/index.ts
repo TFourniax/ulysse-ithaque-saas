@@ -27,6 +27,13 @@ export const REDACT_PATHS = [
   '*.content',
 ];
 
+/** Drops query strings: they may carry OAuth codes, state values or user-entered filters. */
+export function pathOnly(url: unknown): string {
+  return typeof url === 'string' ? (url.split('?')[0] ?? '') : '';
+}
+
+type RequestLike = { method?: unknown; url?: unknown; routeOptions?: { url?: unknown } };
+
 export function createLogger(
   service: string,
   options: { level?: string; pretty?: boolean } = {},
@@ -36,6 +43,9 @@ export function createLogger(
     base: { service },
     redact: { paths: REDACT_PATHS, censor: '[redacted]' },
     timestamp: pino.stdTimeFunctions.isoTime,
+    serializers: {
+      req: (req: RequestLike) => ({ method: req.method, path: pathOnly(req.url), route: req.routeOptions?.url }),
+    },
   };
   return pino(config);
 }

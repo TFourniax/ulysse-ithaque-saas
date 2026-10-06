@@ -27,6 +27,7 @@
   "scripts": {
     "test:integration": "node --env-file-if-exists=../../.env --conditions=ulysse-source --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "db:bootstrap": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts bootstrap",
-    "db:migrate": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts migrate"
+    "db:migrate": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts migrate",
+    "db:recreate": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts recreate"
   }
 }

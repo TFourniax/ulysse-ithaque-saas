@@ -70,7 +70,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<void> {
 
 /** Drops a disposable database (tests only). */
 export async function dropDatabase(adminUrl: string, database: string): Promise<void> {
-  if (!DATABASE_NAME.test(database) || !database.startsWith('ulysse_test_'))
+  if (!DATABASE_NAME.test(database) || !/^ulysse_(e2e|test_)/.test(database))
     throw new Error('refusing to drop non-test database');
   const admin = new pg.Client({ connectionString: adminUrl });
   await admin.connect();

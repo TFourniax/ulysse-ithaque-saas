@@ -68,3 +68,39 @@ jobs:
       - run: npm run db:bootstrap
       - run: npm run db:migrate
       - run: npm run test:integration
+
+  e2e-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Throwaway credentials of ephemeral CI services; not secrets of any environment.
+      ULYSSE_DB_HOST: 127.0.0.1
+      ULYSSE_DB_PORT: '55432'
+      ULYSSE_DB_ADMIN_USER: postgres
+      ULYSSE_DB_ADMIN_PASSWORD: ci-admin-password-only-for-ci
+      ULYSSE_DB_MIGRATOR_PASSWORD: ci-migrator-password-only
+      ULYSSE_DB_APP_PASSWORD: ci-app-password-only-ci
+      ULYSSE_DB_WORKER_PASSWORD: ci-worker-password-only
+      OIDC_ISSUER: http://localhost:8080/realms/ulysse
+      OIDC_CLIENT_ID: ulysse-web
+      OIDC_CLIENT_SECRET: dev-only-ulysse-web-client-secret
+      OIDC_ALLOW_INSECURE_HTTP: 'true'
+      SESSION_SECRET: ci-session-secret-only-for-ephemeral-runs-0123
+      COOKIE_SECURE: 'false'
+      ENABLE_FIXTURE_CONNECTOR: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Start PostgreSQL and Keycloak
+        run: |
+          printf 'POSTGRES_ADMIN_PASSWORD=%s\nKEYCLOAK_ADMIN_PASSWORD=ci-keycloak-admin-only\n' "$ULYSSE_DB_ADMIN_PASSWORD" > infra/.env
+          docker compose -f infra/compose.yaml --env-file infra/.env up -d --wait postgres keycloak
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: npm run test:e2e

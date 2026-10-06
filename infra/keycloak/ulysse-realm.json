@@ -28,12 +28,15 @@
       "frontchannelLogout": true,
       "redirectUris": [
         "http://localhost:3000/auth/callback",
-        "http://localhost:5173/auth/callback"
+        "http://localhost:5173/auth/callback",
+        "http://localhost:3100/auth/callback"
       ],
-      "webOrigins": ["+"],
+      "webOrigins": [
+        "+"
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:3000/##http://localhost:5173/",
+        "post.logout.redirect.uris": "http://localhost:3000/##http://localhost:5173/##http://localhost:3100/",
         "id.token.signed.response.alg": "RS256"
       }
     }
@@ -45,7 +48,7 @@
       "email": "alice.owner@acme.example",
       "emailVerified": true,
       "firstName": "Alice",
-      "lastName": "Martin (fictive)",
+      "lastName": "Martin",
       "enabled": true,
       "credentials": [
         {
@@ -61,7 +64,7 @@
       "email": "bruno.reviewer@acme.example",
       "emailVerified": true,
       "firstName": "Bruno",
-      "lastName": "Leroy (fictif)",
+      "lastName": "Leroy",
       "enabled": true,
       "credentials": [
         {
@@ -77,7 +80,7 @@
       "email": "vera.viewer@acme.example",
       "emailVerified": true,
       "firstName": "Vera",
-      "lastName": "Petit (fictive)",
+      "lastName": "Petit",
       "enabled": true,
       "credentials": [
         {
@@ -93,7 +96,7 @@
       "email": "gina.owner@globex.example",
       "emailVerified": true,
       "firstName": "Gina",
-      "lastName": "Moreau (fictive)",
+      "lastName": "Moreau",
       "enabled": true,
       "credentials": [
         {
@@ -109,7 +112,7 @@
       "email": "dan.dual@example.test",
       "emailVerified": true,
       "firstName": "Dan",
-      "lastName": "Roux (fictif)",
+      "lastName": "Roux",
       "enabled": true,
       "credentials": [
         {

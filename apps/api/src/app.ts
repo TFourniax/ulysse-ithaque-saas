@@ -188,7 +188,15 @@ export async function buildApp(deps: ApiDeps): Promise<FastifyInstance> {
       root: webDist,
       prefix: '/',
       index: ['index.html'],
-      wildcard: false,
+      // Hashed build assets are immutable; the HTML entry point is always revalidated.
+      setHeaders: (res, filePath) => {
+        void res.header(
+          'cache-control',
+          filePath.includes(`${path.sep}assets${path.sep}`)
+            ? 'public, max-age=31536000, immutable'
+            : 'no-cache',
+        );
+      },
     });
     app.setNotFoundHandler((request, reply) => {
       const isApi =

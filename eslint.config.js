@@ -1,5 +1,7 @@
 import js from '@eslint/js';
 import globals from 'globals';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
+import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 const domainForbidden = [
@@ -56,7 +58,21 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/test/**/*.ts', '**/src/testing/**/*.ts', '**/src/testing.ts'],
+    files: ['apps/web/src/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks, 'jsx-a11y': jsxA11y },
+    languageOptions: { globals: globals.browser },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+      ...jsxA11y.flatConfigs.recommended.rules,
+    },
+  },
+  {
+    files: [
+      '**/test/**/*.ts',
+      '**/src/testing/**/*.ts',
+      '**/src/testing.ts',
+      'apps/web/e2e/**/*.ts',
+    ],
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',
       '@typescript-eslint/no-floating-promises': [

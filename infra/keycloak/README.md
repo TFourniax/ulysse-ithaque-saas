@@ -14,4 +14,4 @@
 
 Les identifiants Keycloak (`id`) sont fixes : ce sont les `sub` que `npm run db:seed` associe aux utilisateurs internes et à leurs memberships. Une identité Keycloak non provisionnée dans la base est refusée à la connexion.
 
-Client `ulysse-web` : confidentiel, Authorization Code avec PKCE S256 obligatoire, sans flux implicite ni mot de passe direct. URI de retour : `http://localhost:3000/auth/callback` (API servant le web) et `http://localhost:5173/auth/callback` (serveur Vite).
+Client `ulysse-web` : confidentiel, Authorization Code avec PKCE S256 obligatoire, sans flux implicite ni mot de passe direct. URI de retour : `http://localhost:3000/auth/callback` (API servant le web) et `http://localhost:5173/auth/callback` (serveur Vite) et `http://localhost:3100/auth/callback` (recette Playwright).
