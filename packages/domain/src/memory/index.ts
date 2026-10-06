@@ -191,6 +191,10 @@ class MemoryTx implements TenantTx {
     this.#s = state;
   }
 
+  async lock(_scope: string): Promise<void> {
+    // Memory transactions are already fully serialized.
+  }
+
   #own<T extends { tenantId: string }>(rows: T[]): T[] {
     return rows.filter((r) => r.tenantId === this.tenantId);
   }

@@ -41,6 +41,9 @@ export type RecommendationFilter = Readonly<{
 export interface TenantTx {
   readonly tenantId: string;
 
+  /** Serializes transactions of this tenant on `scope` until commit (e.g. one analysis at a time). */
+  lock(scope: string): Promise<void>;
+
   getConnection(id: string, opts?: { forUpdate?: boolean }): Promise<Connection | null>;
   listConnections(): Promise<Connection[]>;
   insertConnection(connection: Connection): Promise<void>;

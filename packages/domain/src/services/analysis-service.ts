@@ -30,6 +30,7 @@ export class AnalysisService {
     requireScope(ctx, 'analysis:run');
     const { uow, clock, ids, rules } = this.#deps;
     return uow.run(ctx, async (tx) => {
+      await tx.lock('analysis');
       const now = clock.now().getTime();
       const at = toInstant(now);
       const doctrine = await tx.getActiveDoctrine();

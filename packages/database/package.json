@@ -1,0 +1,32 @@
+{
+  "name": "@ulysse/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PostgreSQL migrations, RLS tenant context and transactional repositories.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "ulysse-source": "./src/index.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./testing": {
+      "types": "./src/testing.ts",
+      "ulysse-source": "./src/testing.ts",
+      "default": "./dist/src/testing.js"
+    }
+  },
+  "dependencies": {
+    "@ulysse/domain": "0.1.0",
+    "pg": "8.23.1",
+    "pg-boss": "12.37.0"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
+  },
+  "scripts": {
+    "test:integration": "node --env-file-if-exists=../../.env --conditions=ulysse-source --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "db:bootstrap": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts bootstrap",
+    "db:migrate": "node --env-file-if-exists=../../.env --conditions=ulysse-source src/cli.ts migrate"
+  }
+}
