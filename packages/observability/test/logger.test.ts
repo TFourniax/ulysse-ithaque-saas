@@ -18,7 +18,13 @@ test('secrets and source content are redacted from structured logs', () => {
     },
   });
   const logger = pino({ redact: { paths: REDACT_PATHS, censor: '[redacted]' } }, sink);
-  logger.info({ connection: { token: 'SECRET-TOKEN', payload: 'PRIVATE-EMAIL-BODY' }, req: { headers: { cookie: 'ulysse_session=abc' } } }, 'x');
+  logger.info(
+    {
+      connection: { token: 'SECRET-TOKEN', payload: 'PRIVATE-EMAIL-BODY' },
+      req: { headers: { cookie: 'ulysse_session=abc' } },
+    },
+    'x',
+  );
   const output = lines.join('');
   assert.doesNotMatch(output, /SECRET-TOKEN|PRIVATE-EMAIL-BODY|ulysse_session=abc/);
 });

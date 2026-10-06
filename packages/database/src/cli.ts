@@ -16,7 +16,8 @@ if (command === 'bootstrap') {
 } else if (command === 'recreate') {
   // Disposable databases only (end-to-end runs): drop, bootstrap and migrate from scratch.
   const database = process.env.ULYSSE_DB_NAME ?? '';
-  if (!/^ulysse_(e2e|test_[a-z0-9_]+)$/.test(database)) throw new Error('recreate is limited to ulysse_e2e or ulysse_test_* databases');
+  if (!/^ulysse_(e2e|test_[a-z0-9_]+)$/.test(database))
+    throw new Error('recreate is limited to ulysse_e2e or ulysse_test_* databases');
   await dropDatabase(databaseUrl('admin'), database);
   await bootstrap({ adminUrl: databaseUrl('admin'), database, passwords: rolePasswords() });
   const result = await migrate(databaseUrl('migrator'));

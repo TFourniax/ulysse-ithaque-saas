@@ -44,7 +44,11 @@ export function createLogger(
     redact: { paths: REDACT_PATHS, censor: '[redacted]' },
     timestamp: pino.stdTimeFunctions.isoTime,
     serializers: {
-      req: (req: RequestLike) => ({ method: req.method, path: pathOnly(req.url), route: req.routeOptions?.url }),
+      req: (req: RequestLike) => ({
+        method: req.method,
+        path: pathOnly(req.url),
+        route: req.routeOptions?.url,
+      }),
     },
   };
   return pino(config);
