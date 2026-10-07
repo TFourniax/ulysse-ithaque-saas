@@ -26,3 +26,17 @@ export async function waitForProposals(page: Page, count: number): Promise<void>
     ).toHaveCount(count, { timeout: 2000 });
   }).toPass({ timeout: 60_000, intervals: [1000, 2000, 3000] });
 }
+
+/**
+ * Waits until data has loaded and entrance animations have finished, so visual checks
+ * (such as color contrast) evaluate the settled interface rather than a fade in progress.
+ */
+export async function settle(page: Page): Promise<void> {
+  await page.waitForLoadState('networkidle');
+  await page.evaluate(async () => {
+    const finite = document
+      .getAnimations()
+      .filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity);
+    await Promise.all(finite.map((animation) => animation.finished.catch(() => undefined)));
+  });
+}

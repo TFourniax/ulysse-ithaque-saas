@@ -3,6 +3,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApiError } from './api.ts';
 import { App } from './App.tsx';
+import '@fontsource-variable/mona-sans/wdth.css';
 import './styles.css';
 
 const client = new QueryClient({

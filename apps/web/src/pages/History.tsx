@@ -1,6 +1,6 @@
 import { useAudit } from '../api.ts';
 import { can, useSession } from '../session.tsx';
-import { Banner, ErrorBanner, Loading } from '../components/ui.tsx';
+import { Banner, ErrorBanner, Loading, PageHeader, TableScroll } from '../components/ui.tsx';
 import { EVENT_LABELS, formatDateTime } from '../format.ts';
 
 export function HistoryPage() {
@@ -16,14 +16,15 @@ export function HistoryPage() {
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   return (
     <>
-      <h1>Historique</h1>
-      <p className="muted">
-        Journal d&apos;audit métier de l&apos;entreprise : qui a fait quoi, quand, sur quelle
-        révision. Il ne contient aucun contenu des sources.
-      </p>
+      <PageHeader title="Historique">
+        <p>
+          Journal d&apos;audit métier de l&apos;entreprise : qui a fait quoi, quand, sur quelle
+          révision. Il ne contient aucun contenu des sources.
+        </p>
+      </PageHeader>
       {query.isPending && <Loading />}
       {query.error && <ErrorBanner error={query.error} />}
-      <div className="table-wrap">
+      <TableScroll label="Journal d’audit" framed>
         <table>
           <caption className="visually-hidden">Journal d&apos;audit</caption>
           <thead>
@@ -54,11 +55,13 @@ export function HistoryPage() {
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
       {query.hasNextPage && (
-        <button type="button" className="button" onClick={() => void query.fetchNextPage()}>
-          Afficher plus
-        </button>
+        <div className="list-more">
+          <button type="button" className="button" onClick={() => void query.fetchNextPage()}>
+            Afficher plus
+          </button>
+        </div>
       )}
     </>
   );

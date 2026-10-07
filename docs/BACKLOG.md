@@ -1,6 +1,6 @@
 # Backlog canonique
 
-Mis à jour le 6 octobre 2026. Ce fichier fait foi tant qu'un passage documenté vers GitHub Issues n'a pas eu lieu. Pas de calendrier client implicite. Responsable non attribué = un contributeur doit prendre la tâche avant de modifier.
+Mis à jour le 7 octobre 2026. Ce fichier fait foi tant qu'un passage documenté vers GitHub Issues n'a pas eu lieu. Pas de calendrier client implicite. Responsable non attribué = un contributeur doit prendre la tâche avant de modifier.
 
 États : **done** (livrable vérifiable + preuve + limites), **partial** (une partie vérifiée, le reste nommé), **blocked** (dépend d'un accès, d'une donnée ou d'un arbitrage absent), **proposed** (proposition non engagée).
 
@@ -20,6 +20,7 @@ Mis à jour le 6 octobre 2026. Ce fichier fait foi tant qu'un passage documenté
 | UL-012 | Recette pilote et alpha contrôlée | partial | UL-006, UL-008, UL-009, UL-011 | **UL-012a done** : [ACCEPTANCE](ACCEPTANCE.md) reliée aux preuves au commit testé (données fictives). **UL-012b done** : évaluation structurée des décisions et rapport de mesure observée ([ADR-0011](adr/0011-mesure-pilote.md)). **UL-012c blocked** : pilote réel annoté |
 | UL-013 | Réconcilier la pièce jointe initiale | blocked | Fichier lisible | Lire le document exact, comparer exigences/stack, conserver arbitrages explicites |
 | UL-014 | Licence, hébergement et conditions d'exploitation | blocked | Arbitrages responsables | Décisions consignées dans OPEN-QUESTIONS/ADR sans inventer contrat, coûts ou droits ; questions préparées dans [PILOT](PILOT.md) |
+| UL-015 | Refonte visuelle « tech minimaliste » de l'interface | partial | UL-006 | Fait : jetons clair/sombre, Mona Sans auto-hébergée, rail, jauges, transitions, `TableScroll`, axe 0 violation sérieuse sur 48 combinaisons (API simulée), CSP de production vérifiée ([journal](journal/2026-10-07-UL-015-interface.md)). Reste : recette Playwright verte en CI au commit livré, captures régénérées (DEBT-019) |
 
 UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre convenu. Une intégration réelle et des utilisateurs pilotes le sont pour qualifier la valeur réelle.
 
@@ -52,3 +53,4 @@ UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre c
 | DEBT-016 | Avertissement de dépréciation Fastify `requestIdLogLabel` (option retirée en Fastify 6) | fermée — `LogController` ; journaux toujours corrélés par `correlationId` |
 | DEBT-017 | Recette navigateur sur Chromium seulement | ouverte — ajouter Firefox/WebKit si le pilote l'exige |
 | DEBT-018 | Coût de la formulation assistée sur des données réelles inconnu | ouverte — UL-010 |
+| DEBT-019 | Captures de `docs/evidence` antérieures à la refonte visuelle | ouverte — UL-015, à régénérer depuis la stack réelle |

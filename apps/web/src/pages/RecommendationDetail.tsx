@@ -9,13 +9,24 @@ import {
   useRevision,
 } from '../api.ts';
 import { useSession } from '../session.tsx';
-import { Banner, ErrorBanner, FictionalBadge, Loading, StatusBadge } from '../components/ui.tsx';
+import { ChevronLeft } from '../components/icons.tsx';
+import {
+  Banner,
+  ErrorBanner,
+  FictionalBadge,
+  Loading,
+  Meter,
+  PriorityGauge,
+  StatusBadge,
+  TableScroll,
+} from '../components/ui.tsx';
 import {
   CLOSED_REASON_LABELS,
   EVENT_LABELS,
   formatDateTime,
   formatFactValue,
   formatRelative,
+  frenchSpacing,
   KIND_LABELS,
   QUALITY_LABELS,
 } from '../format.ts';
@@ -131,15 +142,15 @@ function DecisionPanel({ detail }: { detail: RecommendationDetail }) {
   );
   if (!detail.permissions.canDecide) {
     return (
-      <section className="panel" aria-labelledby="decision-title">
+      <section className="panel panel-decision" aria-labelledby="decision-title">
         <h2 id="decision-title">Décision</h2>
-        <p className="muted">
+        <p className="muted small">
           {rec.status === 'pending' || rec.status === 'draft'
             ? 'Votre rôle permet la consultation uniquement : la décision revient à un décideur ou au responsable.'
             : 'Cette proposition est close.'}
         </p>
         {detail.decisions.map((d) => (
-          <p key={d.id} className="small">
+          <p key={d.id} className="small decision-record">
             {d.decision === 'approve' ? 'Approuvée' : 'Rejetée'} le {formatDateTime(d.createdAt)}
             {' · évaluation : '}
             {d.quality ? (QUALITY_LABELS[d.quality] ?? d.quality) : 'non évaluée'}
@@ -151,7 +162,7 @@ function DecisionPanel({ detail }: { detail: RecommendationDetail }) {
     );
   }
   return (
-    <section className="panel" aria-labelledby="decision-title">
+    <section className="panel panel-decision" aria-labelledby="decision-title">
       <h2 id="decision-title">Décision</h2>
       <p className="muted small">
         Approuver enregistre votre décision ; Ulysse n&apos;envoie rien et ne modifie aucun outil
@@ -256,6 +267,7 @@ function RevisionEditor({ detail }: { detail: RecommendationDetail }) {
         </button>
       ) : (
         <form
+          className="reveal"
           onSubmit={(e) => {
             e.preventDefault();
             save(true);
@@ -309,6 +321,15 @@ function RevisionEditor({ detail }: { detail: RecommendationDetail }) {
   );
 }
 
+function BackLink() {
+  return (
+    <Link className="back-link" to="/recommendations" viewTransition>
+      <ChevronLeft />
+      Propositions
+    </Link>
+  );
+}
+
 export function RecommendationDetailPage() {
   const { id = '' } = useParams();
   const session = useSession();
@@ -318,9 +339,7 @@ export function RecommendationDetailPage() {
     const notFound = query.error instanceof ApiError && query.error.status === 404;
     return (
       <>
-        <p>
-          <Link to="/recommendations">← Propositions</Link>
-        </p>
+        <BackLink />
         <ErrorBanner
           error={query.error}
           title={notFound ? 'Proposition introuvable ou non accessible' : 'Chargement impossible'}
@@ -332,18 +351,15 @@ export function RecommendationDetailPage() {
   const rec = detail.recommendation;
   return (
     <article className="detail">
-      <p>
-        <Link to="/recommendations">← Propositions</Link>
-      </p>
+      <BackLink />
       <header className="detail-head">
-        <div className="card-head">
+        <div className="tag-row">
           <StatusBadge status={rec.effectiveStatus} />
-          <span className="priority">Priorité {rec.priority.score}</span>
           {rec.doctrine.fictional && <FictionalBadge />}
-          <span className="muted small">Révision {rec.revision}</span>
+          <span className="kind">Révision {rec.revision}</span>
         </div>
-        <h1>{rec.title}</h1>
-        <p className="muted">
+        <h1>{frenchSpacing(rec.title)}</h1>
+        <p className="detail-subject">
           {KIND_LABELS[rec.kind] ?? rec.kind} · {rec.subject.label} ({rec.subject.externalId})
         </p>
       </header>
@@ -366,12 +382,35 @@ export function RecommendationDetailPage() {
         </Banner>
       )}
       <div className="detail-grid">
-        <div>
-          <section className="panel" aria-labelledby="why-title">
+        <div className="detail-main">
+          <section className="section priority-block" aria-labelledby="priority-title">
+            <div className="priority-figure">
+              <h2 id="priority-title" className="priority-label">
+                Priorité
+              </h2>
+              <span className="priority-value">{rec.priority.score}</span>
+              <span className="priority-scale">sur 100</span>
+            </div>
+            <PriorityGauge score={rec.priority.score} ticks={40} />
+            <div className="reasons">
+              <h3 className="visually-hidden">Raison de la priorité</h3>
+              {rec.priority.reasons.map((r) => (
+                <div key={r.label} className="reason">
+                  <span className="reason-label">{r.label}</span>
+                  <span className="reason-points">+{r.points}</span>
+                  <Meter ratio={r.points / 100} />
+                </div>
+              ))}
+            </div>
+            <p className="muted small">Le score est une priorité calculée, pas une probabilité.</p>
+          </section>
+          <section className="section" aria-labelledby="why-title">
             <h2 id="why-title">Pourquoi maintenant</h2>
-            <p>{rec.whyNow}</p>
-            <h3>Prochaine étape proposée</h3>
-            <p className="proposed">{rec.proposedAction}</p>
+            <p className="why">{rec.whyNow}</p>
+            <div className="next-step">
+              <h3>Prochaine étape proposée</h3>
+              <p className="proposed">{rec.proposedAction}</p>
+            </div>
             {rec.supersedesId && (
               <p className="muted small">
                 Remplace{' '}
@@ -379,9 +418,9 @@ export function RecommendationDetailPage() {
               </p>
             )}
           </section>
-          <section className="panel" aria-labelledby="facts-title">
+          <section className="section" aria-labelledby="facts-title">
             <h2 id="facts-title">Faits et sources</h2>
-            <div className="table-wrap">
+            <TableScroll label="Faits utilisés par la proposition" framed>
               <table>
                 <caption className="visually-hidden">Faits utilisés par la proposition</caption>
                 <thead>
@@ -401,8 +440,12 @@ export function RecommendationDetailPage() {
                           ? (STAGE_LABELS[e.value] ?? e.value)
                           : formatFactValue(e.state, e.value)}
                       </td>
-                      <td>{e.material ? 'Déterminant' : 'Contexte'}</td>
-                      <td className="small">
+                      <td>
+                        <span className={e.material ? 'role role-material' : 'role'}>
+                          {e.material ? 'Déterminant' : 'Contexte'}
+                        </span>
+                      </td>
+                      <td className="small muted">
                         Révision {e.sourceRevision}, observée {formatDateTime(e.observedAt)}
                         {e.sourceModifiedAt && (
                           <>, modifiée à la source {formatDateTime(e.sourceModifiedAt)}</>
@@ -415,15 +458,15 @@ export function RecommendationDetailPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TableScroll>
             <p className="muted small">
               Données confirmées au {formatDateTime(rec.dataAsOf)} ({formatRelative(rec.dataAsOf)})
               · âge maximal accepté : {rec.maxSourceAgeHours} h.
             </p>
           </section>
-          <section className="panel" aria-labelledby="limits-title">
+          <section className="section" aria-labelledby="limits-title">
             <h2 id="limits-title">Hypothèses et limites</h2>
-            <ul>
+            <ul className="plain-list">
               {rec.assumptions.map((a) => (
                 <li key={a}>{a}</li>
               ))}
@@ -431,32 +474,23 @@ export function RecommendationDetailPage() {
             {rec.missingInformation.length > 0 && (
               <>
                 <h3>Informations manquantes</h3>
-                <ul>
+                <ul className="plain-list">
                   {rec.missingInformation.map((m) => (
                     <li key={m}>{m}</li>
                   ))}
                 </ul>
               </>
             )}
-            <h3>Raison de la priorité</h3>
-            <ul>
-              {rec.priority.reasons.map((r) => (
-                <li key={r.label}>
-                  {r.label} : +{r.points}
-                </li>
-              ))}
-            </ul>
-            <p className="muted small">
+            <p className="muted small provenance">
               Règle {rec.ruleId} v{rec.ruleVersion} · doctrine « {rec.doctrine.key} » v
               {rec.doctrine.version}
               {rec.doctrine.fictional && ' (fictive, non validée métier)'} · contexte v
               {rec.contextVersion ?? '—'} · formulation :{' '}
-              {rec.formulation === 'model' ? 'assistée par modèle' : 'règles déterministes'}. Le
-              score est une priorité calculée, pas une probabilité.
+              {rec.formulation === 'model' ? 'assistée par modèle' : 'règles déterministes'}.
             </p>
           </section>
         </div>
-        <div>
+        <aside className="detail-aside" aria-label="Décision et historique">
           <DecisionPanel key={rec.id} detail={detail} />
           <RevisionEditor key={`rev:${rec.id}:${String(rec.revision)}`} detail={detail} />
           <section className="panel" aria-labelledby="history-title">
@@ -465,9 +499,8 @@ export function RecommendationDetailPage() {
               {detail.history.map((event) => (
                 <li key={event.id}>
                   <strong>{EVENT_LABELS[event.eventType] ?? event.eventType}</strong>
-                  <span className="muted small">
-                    {' '}
-                    — {event.actorName ?? event.actorId}, {formatDateTime(event.createdAt)}
+                  <span className="timeline-meta">
+                    {event.actorName ?? event.actorId}, {formatDateTime(event.createdAt)}
                     {event.revision !== null && <>, révision {event.revision}</>}
                   </span>
                 </li>
@@ -476,7 +509,7 @@ export function RecommendationDetailPage() {
             {detail.revisions.length > 1 && (
               <>
                 <h3>Versions du contenu</h3>
-                <ol>
+                <ol className="versions">
                   {detail.revisions.map((r) => (
                     <li key={r.contentRevision}>
                       v{r.contentRevision} ({r.createdBy ? 'modification humaine' : 'générée'},{' '}
@@ -488,7 +521,7 @@ export function RecommendationDetailPage() {
               </>
             )}
           </section>
-        </div>
+        </aside>
       </div>
     </article>
   );

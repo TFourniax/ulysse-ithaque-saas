@@ -10,7 +10,14 @@ import {
   useUpdateContext,
 } from '../api.ts';
 import { can, useSession } from '../session.tsx';
-import { Banner, ErrorBanner, FictionalBadge, Loading } from '../components/ui.tsx';
+import {
+  Banner,
+  ErrorBanner,
+  FictionalBadge,
+  Loading,
+  PageHeader,
+  TableScroll,
+} from '../components/ui.tsx';
 import { formatDateTime, ROLE_LABELS } from '../format.ts';
 
 function Members() {
@@ -31,7 +38,7 @@ function Members() {
       </p>
       {members.isPending && <Loading />}
       {members.error && <ErrorBanner error={members.error} />}
-      <div className="table-wrap">
+      <TableScroll label="Membres de l’entreprise">
         <table>
           <caption className="visually-hidden">Membres de l&apos;entreprise</caption>
           <thead>
@@ -94,7 +101,7 @@ function Members() {
             ))}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
       {actions.changeRole.error && <ErrorBanner error={actions.changeRole.error} />}
       {actions.revoke.error && <ErrorBanner error={actions.revoke.error} />}
     </section>
@@ -119,7 +126,7 @@ function DoctrineEditor({ base }: { base: DoctrineDto }) {
     setContent({ ...content, policy: { ...content.policy, [key]: value } });
   return (
     <form
-      className="panel"
+      className="panel panel-nested reveal"
       onSubmit={(e) => {
         e.preventDefault();
         actions.draft.mutate(
@@ -267,7 +274,7 @@ function Doctrines() {
       <ul className="cards">
         {doctrines.data?.map((d) => (
           <li key={d.id} className="card">
-            <div className="card-head">
+            <div className="tag-row">
               <span className={`badge badge-doctrine-${d.status}`}>
                 {d.status === 'validated'
                   ? 'En vigueur'
@@ -285,7 +292,7 @@ function Doctrines() {
               {d.validatedAt && <> · validée {formatDateTime(d.validatedAt)}</>}
               {d.validationNote && <> · « {d.validationNote} »</>}
             </p>
-            <ul className="small">
+            <ul className="small plain-list">
               {d.content.rules.map((r) => (
                 <li key={r.ruleId}>
                   {r.ruleId} {r.enabled ? '' : '(désactivée)'} —{' '}
@@ -461,7 +468,9 @@ function ContextSection() {
 export function AdminPage() {
   return (
     <>
-      <h1>Administration</h1>
+      <PageHeader title="Administration">
+        <p>Membres, doctrine et contexte de l&apos;entreprise active.</p>
+      </PageHeader>
       <Members />
       <Doctrines />
       <ContextSection />

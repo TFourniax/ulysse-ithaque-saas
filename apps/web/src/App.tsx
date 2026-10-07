@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { createBrowserRouter, Navigate, NavLink, Outlet, useLocation } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { ApiError, loginUrl, logout, useMe, useSelectTenant } from './api.ts';
-import { ErrorBanner, Loading } from './components/ui.tsx';
+import { BannerIcons, BrandMark, ChevronRight, LogoutIcon, NavIcons } from './components/icons.tsx';
+import { ErrorBanner, Instrument, Loading } from './components/ui.tsx';
 import { ROLE_LABELS } from './format.ts';
 import type { Session } from './session.tsx';
 import { can, SessionContext } from './session.tsx';
@@ -26,26 +27,47 @@ const LOGIN_ERRORS: Record<string, string> = {
   invalid_request: 'Requête de connexion invalide.',
 };
 
+function Wordmark() {
+  return (
+    <span className="brand">
+      <BrandMark />
+      <span className="brand-name">Ulysse</span>
+    </span>
+  );
+}
+
 function Landing() {
   const params = new URLSearchParams(useLocation().search);
   const error = params.get('login_error');
   return (
-    <main id="main" className="landing">
-      <h1>Ulysse</h1>
-      <p className="lead">
-        Des propositions commerciales prioritaires, expliquées et sourcées, préparées en
-        arrière-plan à partir de vos données autorisées. Vous décidez.
-      </p>
-      {error && (
-        <div className="banner banner-error" role="alert">
-          {LOGIN_ERRORS[error] ?? 'La connexion a échoué.'}
+    <div className="landing">
+      <header className="landing-top">
+        <Wordmark />
+      </header>
+      <main id="main" className="landing-main">
+        <div className="landing-copy">
+          <h1>Des propositions commerciales prioritaires, expliquées et sourcées.</h1>
+          <p className="lead">
+            Ulysse les prépare en arrière-plan à partir de vos données autorisées. Vous décidez.
+          </p>
+          {error && (
+            <div className="banner banner-error" role="alert">
+              {BannerIcons.error}
+              <div className="banner-body">{LOGIN_ERRORS[error] ?? 'La connexion a échoué.'}</div>
+            </div>
+          )}
+          <div className="landing-actions">
+            <a className="button button-primary button-lg" href={loginUrl('/recommendations')}>
+              Se connecter
+            </a>
+            <p className="landing-note">
+              Environnement de démonstration : données et doctrine fictives.
+            </p>
+          </div>
         </div>
-      )}
-      <a className="button button-primary" href={loginUrl('/recommendations')}>
-        Se connecter
-      </a>
-      <p className="muted small">Environnement de démonstration : données et doctrine fictives.</p>
-    </main>
+        <Instrument className="instrument-hero" />
+      </main>
+    </div>
   );
 }
 
@@ -53,35 +75,52 @@ function TenantPicker({ me }: { me: Me }) {
   const select = useSelectTenant();
   if (me.tenants.length === 0) {
     return (
-      <main id="main" className="landing">
-        <h1>Aucune entreprise active</h1>
-        <p>
-          Votre compte n&apos;est membre actif d&apos;aucune entreprise. Contactez le responsable de
-          votre entreprise.
-        </p>
-        <LogoutButton />
-      </main>
+      <div className="landing">
+        <header className="landing-top">
+          <Wordmark />
+        </header>
+        <main id="main" className="landing-main landing-narrow">
+          <div className="landing-copy">
+            <h1>Aucune entreprise active</h1>
+            <p className="lead">
+              Votre compte n&apos;est membre actif d&apos;aucune entreprise. Contactez le
+              responsable de votre entreprise.
+            </p>
+            <LogoutButton />
+          </div>
+        </main>
+      </div>
     );
   }
   return (
-    <main id="main" className="landing">
-      <h1>Choisissez une entreprise</h1>
-      <ul className="tenant-list">
-        {me.tenants.map((t) => (
-          <li key={t.id}>
-            <button
-              type="button"
-              className="button"
-              disabled={select.isPending}
-              onClick={() => select.mutate(t.id)}
-            >
-              {t.name} <span className="muted">({ROLE_LABELS[t.role] ?? t.role})</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {select.error && <ErrorBanner error={select.error} />}
-    </main>
+    <div className="landing">
+      <header className="landing-top">
+        <Wordmark />
+      </header>
+      <main id="main" className="landing-main landing-narrow">
+        <div className="landing-copy">
+          <h1>Choisissez une entreprise</h1>
+          <p className="lead">Les données de chaque entreprise restent strictement séparées.</p>
+          <ul className="tenant-list">
+            {me.tenants.map((t) => (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  className="tenant-option"
+                  disabled={select.isPending}
+                  onClick={() => select.mutate(t.id)}
+                >
+                  <span className="tenant-option-name">{t.name}</span>{' '}
+                  <span className="tenant-option-role">({ROLE_LABELS[t.role] ?? t.role})</span>
+                  <ChevronRight />
+                </button>
+              </li>
+            ))}
+          </ul>
+          {select.error && <ErrorBanner error={select.error} />}
+        </div>
+      </main>
+    </div>
   );
 }
 
@@ -92,9 +131,10 @@ function LogoutButton() {
     <>
       <button
         type="button"
-        className="button button-ghost"
+        className="button button-ghost button-sm logout"
         onClick={() => void logout(client).catch(setError)}
       >
+        <LogoutIcon />
         Se déconnecter
       </button>
       {error !== null && <ErrorBanner error={error} />}
@@ -154,29 +194,39 @@ function Layout() {
       <a className="skip-link" href="#main">
         Aller au contenu
       </a>
-      <header className="topbar">
-        <div className="brand">Ulysse</div>
-        <nav aria-label="Navigation principale">
-          <ul>
-            {nav.map((item) => (
-              <li key={item.to}>
-                <NavLink to={item.to}>{item.label}</NavLink>
-              </li>
-            ))}
-          </ul>
-        </nav>
-        <div className="account">
-          <TenantSwitcher session={session} />
-          <span className="muted small">
-            {session.user.displayName} ·{' '}
-            {ROLE_LABELS[session.activeTenant.role] ?? session.activeTenant.role}
-          </span>
-          <LogoutButton />
-        </div>
-      </header>
-      <main id="main" tabIndex={-1} key={session.activeTenant.id}>
-        <Outlet />
-      </main>
+      <div className="shell">
+        <header className="rail">
+          <Wordmark />
+          <nav aria-label="Navigation principale">
+            <ul>
+              {nav.map((item) => (
+                <li key={item.to}>
+                  <NavLink to={item.to} className="nav-link" viewTransition>
+                    {({ isActive }) => (
+                      <>
+                        {isActive && <span className="nav-indicator" aria-hidden="true" />}
+                        {NavIcons[item.to]}
+                        <span>{item.label}</span>
+                      </>
+                    )}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </nav>
+          <div className="account">
+            <TenantSwitcher session={session} />
+            <span className="account-user">
+              {session.user.displayName} ·{' '}
+              {ROLE_LABELS[session.activeTenant.role] ?? session.activeTenant.role}
+            </span>
+            <LogoutButton />
+          </div>
+        </header>
+        <main id="main" tabIndex={-1} key={session.activeTenant.id}>
+          <Outlet />
+        </main>
+      </div>
     </SessionContext>
   );
 }

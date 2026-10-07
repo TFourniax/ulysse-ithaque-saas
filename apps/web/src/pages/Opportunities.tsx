@@ -1,6 +1,6 @@
 import { useOpportunities } from '../api.ts';
 import { useSession } from '../session.tsx';
-import { EmptyState, ErrorBanner, Loading } from '../components/ui.tsx';
+import { EmptyState, ErrorBanner, Loading, PageHeader, TableScroll } from '../components/ui.tsx';
 import { formatDateTime, formatFactValue } from '../format.ts';
 
 const STAGES: Record<string, string> = { open: 'Ouverte', won: 'Gagnée', lost: 'Perdue' };
@@ -26,18 +26,19 @@ export function OpportunitiesPage() {
   ];
   return (
     <>
-      <h1>Opportunités</h1>
-      <p className="muted">
-        Projection normalisée des sources autorisées (lecture seule). « Non fourni par la source »
-        signale une information que la source n&apos;expose pas ; Ulysse ne la devine pas.
-      </p>
+      <PageHeader title="Opportunités">
+        <p>
+          Projection normalisée des sources autorisées (lecture seule). « Non fourni par la source »
+          signale une information que la source n&apos;expose pas ; Ulysse ne la devine pas.
+        </p>
+      </PageHeader>
       {query.isPending && <Loading />}
       {query.error && <ErrorBanner error={query.error} />}
       {query.isSuccess && items.length === 0 && (
         <EmptyState title="Aucune opportunité synchronisée" />
       )}
       {items.length > 0 && (
-        <div className="table-wrap">
+        <TableScroll label="Opportunités synchronisées" framed>
           <table>
             <caption className="visually-hidden">Opportunités synchronisées</caption>
             <thead>
@@ -57,12 +58,14 @@ export function OpportunitiesPage() {
                 <tr key={o.id}>
                   <th scope="row">
                     {o.name}
-                    <span className="muted small">
+                    <span className="muted small cell-sub">
                       {' '}
                       ({o.externalId}, rév. {o.revision})
                     </span>
                   </th>
-                  <td>{STAGES[o.stage] ?? o.stage}</td>
+                  <td>
+                    <span className={`stage stage-${o.stage}`}>{STAGES[o.stage] ?? o.stage}</span>
+                  </td>
                   {columns.map(([key]) => {
                     const c = cell(o.fields[key]);
                     return (
@@ -76,12 +79,14 @@ export function OpportunitiesPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       )}
       {query.hasNextPage && (
-        <button type="button" className="button" onClick={() => void query.fetchNextPage()}>
-          Afficher plus
-        </button>
+        <div className="list-more">
+          <button type="button" className="button" onClick={() => void query.fetchNextPage()}>
+            Afficher plus
+          </button>
+        </div>
       )}
     </>
   );

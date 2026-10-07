@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import { login, newSession, waitForProposals } from './support.ts';
+import { login, newSession, settle, waitForProposals } from './support.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const ACME_TOP = 'Renouvellement — Client Témoin';
@@ -66,6 +66,7 @@ test('keyboard navigation reaches every action and pages have no serious accessi
   ]) {
     await page.goto(url);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await settle(page);
     const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
     const serious = results.violations.filter(
       (v) => v.impact === 'serious' || v.impact === 'critical',

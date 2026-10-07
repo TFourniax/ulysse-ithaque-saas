@@ -2,7 +2,14 @@ import type { Connection } from '@ulysse/contracts';
 import { useId, useState } from 'react';
 import { useConnectionActions, useConnections, useConnectors, useSyncRuns } from '../api.ts';
 import { can, useSession } from '../session.tsx';
-import { Banner, EmptyState, ErrorBanner, FictionalBadge, Loading } from '../components/ui.tsx';
+import {
+  Banner,
+  EmptyState,
+  ErrorBanner,
+  FictionalBadge,
+  Loading,
+  PageHeader,
+} from '../components/ui.tsx';
 import { formatDateTime, formatRelative } from '../format.ts';
 
 const STATUS: Record<string, string> = {
@@ -21,7 +28,7 @@ function SyncRuns({ tenantId, connection }: { tenantId: string; connection: Conn
       {runs.isPending && open && <Loading />}
       {runs.error && <ErrorBanner error={runs.error} />}
       {runs.data && (
-        <ul className="small">
+        <ul className="small run-list">
           {runs.data.map((r) => (
             <li key={r.id}>
               {formatDateTime(r.startedAt)} — {r.trigger} — {r.status} — {r.pages} page(s),{' '}
@@ -127,11 +134,12 @@ export function ConnectionsPage() {
   const [confirming, setConfirming] = useState<string | null>(null);
   return (
     <>
-      <h1>Connexions</h1>
-      <p className="muted">
-        Sources autorisées, état de synchronisation et fraîcheur des données. Les synchronisations
-        continuent sans navigateur ouvert.
-      </p>
+      <PageHeader title="Connexions">
+        <p>
+          Sources autorisées, état de synchronisation et fraîcheur des données. Les synchronisations
+          continuent sans navigateur ouvert.
+        </p>
+      </PageHeader>
       {connections.isPending && <Loading />}
       {connections.error && <ErrorBanner error={connections.error} />}
       {connections.isSuccess && connections.data.length === 0 && (
@@ -140,7 +148,7 @@ export function ConnectionsPage() {
       <ul className="cards">
         {connections.data?.map((c) => (
           <li key={c.id} className="card">
-            <div className="card-head">
+            <div className="tag-row">
               <span className={`badge badge-conn-${c.status}`}>{STATUS[c.status] ?? c.status}</span>
               {c.kind === 'fixture' && <FictionalBadge />}
             </div>

@@ -1,3 +1,11 @@
+/**
+ * French typography for display: a narrow no-break space keeps « : ; ! ? » and guillemets
+ * attached to their word, so a title never wraps with the colon at the start of a line.
+ */
+export function frenchSpacing(text: string): string {
+  return text.replace(/ ([:;!?»])/g, '\u202f$1').replace(/« /g, '«\u202f');
+}
+
 const dateTime = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short' });
 const dateOnly = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium' });
 const relative = new Intl.RelativeTimeFormat('fr-FR', { numeric: 'auto' });
