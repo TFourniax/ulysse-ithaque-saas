@@ -250,7 +250,7 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
   });
   test('source changes during execution prevent publication and retry after a completed run cannot duplicate', async () => {
     const w = await world('agent-obsolete');
-    const runner = new AgentRuntime(workerPool, liveTestConfig(), {
+    const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
       execute: async (request) => {
         await runner.tool(request.capability, 'get_opportunity', { subjectId: w.o.id });
         await runner.tool(request.capability, 'get_active_doctrine', {});
@@ -296,7 +296,7 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
         { status: 200 },
       );
     });
-    const runner = new AgentRuntime(workerPool, liveTestConfig(), {
+    const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
       execute: async (request) => {
         await runner.tool(request.capability, 'get_opportunity', { subjectId: w.o.id });
         await runner.tool(request.capability, 'get_active_doctrine', {});
@@ -350,7 +350,7 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     await w.agent.analyze(w.ctx, 'scheduled');
     assert.equal((await w.open()).length, 1);
     const invalid = await world('agent-invalid-citation');
-    const runner = new AgentRuntime(workerPool, liveTestConfig(), {
+    const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
       execute: async (request) => {
         await runner.tool(request.capability, 'get_opportunity', { subjectId: invalid.o.id });
         await runner.tool(request.capability, 'get_active_doctrine', {});
