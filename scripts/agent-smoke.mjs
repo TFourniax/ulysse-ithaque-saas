@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { chromium } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 
 const origin = process.env.ULYSSE_SMOKE_ORIGIN ?? 'http://localhost:3000';
 const output = process.env.ULYSSE_EVIDENCE_DIR ?? 'test-results/ul016';
@@ -22,6 +23,19 @@ async function until(probe, timeout = 60000) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   throw new Error('agent smoke condition timeout');
+}
+async function checkAccessibility() {
+  const analysis = await new AxeBuilder({ page }).analyze();
+  const violations = analysis.violations.filter(
+    (v) => v.impact === 'serious' || v.impact === 'critical',
+  );
+  assert.deepEqual(violations.map((v) => v.id), [], 'new agent pages remain accessible');
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overflows = await page.evaluate(
+    () => document.documentElement.scrollWidth > window.innerWidth,
+  );
+  assert.equal(overflows, false, 'new agent pages fit mobile width');
+  await page.setViewportSize({ width: 1280, height: 900 });
 }
 async function login(username) {
   await page.goto(origin);
@@ -68,6 +82,7 @@ try {
     );
     assert.ok(baseline);
     const before = (await json(`/v1/recommendations/${baseline.id}`)).recommendation.proposedAction;
+    await checkAccessibility();
     await page.screenshot({ path: `${output}/sources.png`, fullPage: true });
     await page.getByLabel('Événement source').selectOption('positive_reply');
     await page.getByRole('button', { name: 'Injecter et synchroniser' }).click();
@@ -85,12 +100,14 @@ try {
     assert.ok(detail.evidence.some((e) => e.factType === 'commercial_context'));
     await page.goto(`${origin}/analyses#${evolved.id}`);
     await page.getByText('Agentique simulé', { exact: false }).first().waitFor();
+    await checkAccessibility();
     await page.screenshot({ path: `${output}/analyses.png`, fullPage: true });
     await page.goto(`${origin}/recommendations/${next.id}`);
     await page.getByRole('button', { name: 'Approuver', exact: true }).click();
     await page
       .getByText('Décision enregistrée : proposition approuvée', { exact: false })
       .waitFor();
+    await checkAccessibility();
     await page.screenshot({ path: `${output}/decision.png`, fullPage: true });
     await context.storageState({ path: `${output}/session.json` });
     // Evidence excludes session cookies, prompts and internal reasoning.
@@ -117,6 +134,7 @@ try {
       ),
     );
     console.log('UL016_SIMULATED_JOURNEY=passed');
+    console.log('UL016_ACCESSIBILITY_AND_MOBILE=passed');
     const viewer = await browser.newContext();
     const viewerPage = await viewer.newPage();
     await viewerPage.goto(origin);

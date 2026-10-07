@@ -2379,3 +2379,7 @@ details[open]::details-content {
   overflow-wrap: anywhere;
   max-width: 100%;
 }
+
+.section code {
+  overflow-wrap: anywhere;
+}

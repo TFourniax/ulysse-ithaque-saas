@@ -11,6 +11,15 @@ export const MODE_LABELS = {
   simulated: 'Agentique simulé — aucun appel modèle',
   'hermes-live': 'Hermes live — modèle réel',
 };
+const TOOL_LABELS: Record<string, string> = {
+  get_opportunity: 'Consultation des données CRM',
+  list_activities: 'Consultation des activités et échanges',
+  search_documents: 'Recherche des documents autorisés',
+  read_document_excerpt: "Lecture d'un extrait autorisé",
+  get_company_context: "Consultation du contexte de l'entreprise",
+  get_active_doctrine: 'Consultation de la doctrine fictive',
+  list_related_recommendations: 'Consultation des propositions et décisions précédentes',
+};
 const STATUSES: Record<string, string> = {
   running: 'Analyse en cours',
   validating: 'Validation du résultat',
@@ -66,7 +75,7 @@ export function RunCard({ run }: { run: AgentRunDto }) {
       <ol>
         {events.data?.map((e) => (
           <li key={e.sequence}>
-            <span>{e.label}</span>
+            <span>{TOOL_LABELS[e.label] ?? e.label}</span>
             {e.references.length > 0 && (
               <details>
                 <summary>Références consultées</summary>
