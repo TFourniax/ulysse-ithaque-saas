@@ -13,18 +13,20 @@ function cell(field: Field): { text: string; muted: boolean } {
   return { text: formatFactValue(field.state, field.value), muted: field.state !== 'present' };
 }
 
+export const OPPORTUNITY_FIELDS: Array<[string, string]> = [
+  ['lastInteractionAt', 'Dernière interaction'],
+  ['nextStep', 'Prochaine étape'],
+  ['nextStepDueAt', 'Échéance'],
+  ['amount', 'Montant'],
+  ['ownerName', 'Responsable'],
+  ['segment', 'Segment'],
+];
+
 export function OpportunitiesPage() {
   const session = useSession();
   const query = useOpportunities(session.activeTenant.id);
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
-  const columns: Array<[string, string]> = [
-    ['lastInteractionAt', 'Dernière interaction'],
-    ['nextStep', 'Prochaine étape'],
-    ['nextStepDueAt', 'Échéance'],
-    ['amount', 'Montant'],
-    ['ownerName', 'Responsable'],
-    ['segment', 'Segment'],
-  ];
+  const columns = OPPORTUNITY_FIELDS;
   return (
     <>
       <PageHeader title="Opportunités">

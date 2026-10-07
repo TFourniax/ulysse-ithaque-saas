@@ -211,7 +211,8 @@
                       "enum": [
                         "rules",
                         "simulated",
-                        "hermes-live"
+                        "hermes-live",
+                        "hermes-stub"
                       ]
                     },
                     "demoEnabled": {
@@ -232,11 +233,20 @@
                             "format": "uuid",
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                           },
+                          "subject_label": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "subject_external_id": {
+                            "nullable": true,
+                            "type": "string"
+                          },
                           "mode": {
                             "type": "string",
                             "enum": [
                               "simulated",
-                              "hermes-live"
+                              "hermes-live",
+                              "hermes-stub"
                             ]
                           },
                           "status": {
@@ -333,6 +343,8 @@
                         "required": [
                           "id",
                           "subject_id",
+                          "subject_label",
+                          "subject_external_id",
                           "mode",
                           "status",
                           "trigger",

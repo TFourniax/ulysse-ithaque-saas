@@ -10,6 +10,7 @@ export const MODE_LABELS = {
   rules: 'Historique / règles',
   simulated: 'Agentique simulé — aucun appel modèle',
   'hermes-live': 'Hermes live — modèle réel',
+  'hermes-stub': 'Hermes réel — modèle simulé, aucun appel fournisseur',
 };
 const TOOL_LABELS: Record<string, string> = {
   get_opportunity: 'Consultation des données CRM',
@@ -48,8 +49,14 @@ export function RunCard({ run }: { run: AgentRunDto }) {
     <section className="section" id={run.id} aria-label={`Analyse ${run.id}`}>
       <h2>{STATUSES[run.status] ?? run.status}</h2>
       <p>
-        <strong>{MODE_LABELS[run.mode]}</strong> · {formatDateTime(run.started_at)} ·{' '}
-        <Link to={`/opportunities/${run.subject_id}`}>Ouvrir l’opportunité</Link>
+        <Link to={`/opportunities/${run.subject_id}`}>
+          {run.subject_label
+            ? `${run.subject_external_id ?? ''} · ${run.subject_label}`
+            : 'Opportunité retirée de la source'}
+        </Link>
+      </p>
+      <p>
+        <strong>{MODE_LABELS[run.mode]}</strong> · {formatDateTime(run.started_at)}
       </p>
       <p className="muted small">
         {run.model} · Hermes {run.hermes_version.slice(0, 12)} · instructions{' '}

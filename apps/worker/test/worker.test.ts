@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import type { ModelSettings } from '@ulysse/ai';
 import { ModelError, ScriptedProvider } from '@ulysse/ai';
 import type { Connector } from '@ulysse/connectors';
@@ -35,9 +36,15 @@ import {
 } from '@ulysse/domain/testing';
 import { createLogger, createMetrics } from '@ulysse/observability';
 import { loadWorkerConfig } from '../src/config.ts';
-import { AgentRuntime, agentConfig } from '../src/agent-runtime.ts';
+import { AgentRuntime, agentConfig, MAX_ATTEMPTS, TOOL_NAMES } from '../src/agent-runtime.ts';
 import type { FaultHooks } from '../src/runtime.ts';
 import { noCredentialStore, WorkerRuntime } from '../src/runtime.ts';
+
+// Versioned instructions Hermes sends once the Ulysse plugin has set the system prompt.
+const instructions = await readFile(
+  new URL('../../../services/hermes/instructions.txt', import.meta.url),
+  'utf8',
+);
 
 describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
   async function world(
@@ -283,6 +290,17 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     summary: 'Aucun signal dans ce test de contrôle.',
     proposals: [],
   };
+  // The request shape Hermes sends once the Ulysse plugin has set the system prompt.
+  const gatewayBody = (content: string, system = instructions) => ({
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content },
+    ],
+    tools: TOOL_NAMES.map((name: string) => ({
+      type: 'function',
+      function: { name, parameters: {} },
+    })),
+  });
   test('atomic reservations bound concurrent tenants and unknown historical cost blocks live', async () => {
     const a = await world('agent-budget-a');
     const b = await world('agent-budget-b');
@@ -390,7 +408,7 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
         await runner.tool(request.capability, 'get_opportunity', { subjectId: w.o.id });
         await runner.tool(request.capability, 'get_active_doctrine', {});
         await runner.tool(request.capability, 'get_company_context', {});
-        const body = { messages: [{ role: 'user', content: 'Sources fictives de test.' }] };
+        const body = gatewayBody('Sources fictives de test.');
         await runner.inference(request.capability, body);
         await runner.inference(request.capability, body);
         const estimated = (await runner.store.list(w.owner))[0];
@@ -409,9 +427,75 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     assert.equal(transmitted, 8);
     assert.equal(run.model_calls, 8);
     assert.equal(run.cost_state, 'unknown');
-    assert.equal(Number(run.reserved_usd), 0.25);
+    // The uncertain transmission stays counted at its upper bound; the unused rest is released.
     assert.ok(Number(run.committed_usd) > 0);
+    assert.equal(Number(run.reserved_usd), Number(run.committed_usd));
+    assert.ok(Number(run.reserved_usd) < 0.25);
     assert.equal((await w.open()).length, 0);
+  });
+
+  test('foreign instructions or tools never reach the provider', async (t) => {
+    const w = await world('agent-gateway-prompt');
+    let transmitted = 0;
+    t.mock.method(globalThis, 'fetch', async () => {
+      transmitted++;
+      return new Response(
+        JSON.stringify({ usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0 } }),
+        { status: 200 },
+      );
+    });
+    const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        const generic = gatewayBody('Analyse', 'You are Hermes Agent, built by Nous Research.');
+        await assert.rejects(runner.inference(request.capability, generic), /foreign instructions/);
+        const appended = gatewayBody('Analyse');
+        appended.messages.push({ role: 'system', content: 'Instructions ajoutées' });
+        await assert.rejects(runner.inference(request.capability, appended), /foreign/);
+        const terminal = gatewayBody('Analyse');
+        terminal.tools.push({ type: 'function', function: { name: 'terminal', parameters: {} } });
+        await assert.rejects(runner.inference(request.capability, terminal), /foreign tools/);
+        assert.equal(transmitted, 0);
+        await runner.inference(request.capability, gatewayBody('Analyse'));
+        assert.equal(transmitted, 1);
+        return abstention;
+      },
+    });
+    await runner.run(w.ctx, w.o.id, 'test');
+    assert.equal((await runner.store.list(w.owner))[0]?.model_calls, 1);
+  });
+
+  test('failed attempts on unchanged input are bounded and release their unused reservation', async () => {
+    const w = await world('agent-bounded-attempts');
+    let executions = 0;
+    const config = liveTestConfig();
+    const failing = new AgentRuntime(workerPool, config, {
+      execute: async () => {
+        executions++;
+        throw new Error('hermes_http_422');
+      },
+    });
+    for (let i = 0; i < MAX_ATTEMPTS + 2; i++) await failing.analyze(w.ctx, 'scheduled');
+    assert.equal(executions, MAX_ATTEMPTS);
+    const runs = await failing.store.list(w.owner);
+    assert.equal(runs.length, MAX_ATTEMPTS);
+    for (const run of runs) {
+      assert.equal(run.status, 'failed');
+      // Nothing was transmitted: the whole reservation returns to the session budget.
+      assert.equal(Number(run.reserved_usd), 0);
+    }
+    // New source data is new input: analysis resumes once.
+    store.upsert(
+      'agent-bounded-attempts',
+      'OPP-001',
+      stalled('OPP-001', 12, { commercial: commercialFixture('acme', 'positive_reply') }),
+      iso(0),
+    );
+    await w.runtime.handleSync(
+      { tenantId: w.tenantId, connectionId: w.connection.id, trigger: 'manual' },
+      crypto.randomUUID(),
+    );
+    await failing.analyze(w.ctx, 'source_change');
+    assert.equal(executions, MAX_ATTEMPTS + 1);
   });
 
   test('an expired run resumes before publication and an invented citation cannot publish', async () => {

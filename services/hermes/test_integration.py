@@ -8,6 +8,7 @@ import os
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from uuid import uuid4
 
 from server import isolated_run
@@ -15,6 +16,7 @@ from server import isolated_run
 
 class Endpoint(BaseHTTPRequestHandler):
     calls = []
+    systems = []
     lock = threading.Lock()
 
     def log_message(self, *_args):
@@ -34,6 +36,8 @@ class Endpoint(BaseHTTPRequestHandler):
             names = [t["function"]["name"] for t in body.get("tools", [])]
             if names:
                 self.assert_tools(names)
+            with self.lock:
+                self.systems.append([m.get("content") for m in body["messages"] if m.get("role") in ("system", "developer")])
             print(json.dumps({"path": self.path, "model": body.get("model"), "tools": names, "roles": [m.get("role") for m in body.get("messages", [])]}), flush=True)
             if not any(m.get("role") == "tool" for m in body["messages"]):
                 message = {"role": "assistant", "content": None, "tool_calls": [{"id": "call_fixture", "type": "function", "function": {"name": "get_opportunity", "arguments": json.dumps({"subjectId": str(uuid4())})}}]}
@@ -56,6 +60,17 @@ class Endpoint(BaseHTTPRequestHandler):
             raise AssertionError(f"unexpected tools: {names}")
 
 
+class FinalResponse(unittest.TestCase):
+    def test_only_a_surrounding_code_fence_is_tolerated(self):
+        from runner import parse_final
+        closed = {"version": "ulysse-agent-v1", "outcome": "abstained", "summary": "s", "proposals": []}
+        self.assertEqual(parse_final(json.dumps(closed)), closed)
+        self.assertEqual(parse_final("```json\n" + json.dumps(closed) + "\n```"), closed)
+        for invalid in ("Voici le résultat : " + json.dumps(closed), "[]", None, "x" * 20001):
+            with self.assertRaises(RuntimeError):
+                parse_final(invalid)
+
+
 class HermesIntegration(unittest.TestCase):
     def test_real_loop_uses_custom_tools_and_isolates_two_processes(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
@@ -73,6 +88,12 @@ class HermesIntegration(unittest.TestCase):
                 calls = [path for path, authorization in Endpoint.calls if authorization == f"Bearer {token}"]
                 self.assertIn("/agent/tools/get_opportunity", calls)
                 self.assertGreaterEqual(calls.count("/agent/v1/chat/completions"), 2)
+            # The model receives the versioned Ulysse instructions only: no generic Hermes identity,
+            # coding guidance, host details or out-of-band steering channel.
+            instructions = Path(__file__).with_name("instructions.txt").read_text(encoding="utf-8")
+            self.assertGreaterEqual(len(Endpoint.systems), 4)
+            for system in Endpoint.systems:
+                self.assertEqual(system, [instructions])
         finally:
             server.shutdown()
             server.server_close()

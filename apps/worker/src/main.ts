@@ -30,7 +30,7 @@ if (
 const agent =
   agentSettings.ULYSSE_ANALYSIS_MODE === 'rules'
     ? undefined
-    : new AgentRuntime(pool, agentSettings);
+    : new AgentRuntime(pool, agentSettings, undefined, logger);
 if (config.ENABLE_FIXTURE_CONNECTOR)
   connectors.push(new FixtureConnector(new PgFixtureStore(pool)));
 

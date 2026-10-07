@@ -16,7 +16,9 @@ services:
       AGENT_SESSION_BUDGET_USD: ${AGENT_SESSION_BUDGET_USD:-}
       AGENT_MONTH_BUDGET_USD: ${AGENT_MONTH_BUDGET_USD:-}
       AGENT_SESSION_ID: ${AGENT_SESSION_ID:-}
-    networks: [default, agent-private]
+      # hermes-stub only (empty otherwise; refused in hermes-live).
+      AGENT_STUB_PROVIDER_URL: ${AGENT_STUB_PROVIDER_URL:-}
+    networks: [default, agent-private, stub-private]
   hermes:
     profiles: [agent]
     image: ulysse-hermes:ul016
@@ -45,6 +47,32 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
+  # hermes-stub: SIMULATED OpenAI-compatible model for acceptance without a provider.
+  # No credential, no outbound network; reachable by the worker gateway only.
+  model-stub:
+    profiles: [agent-stub]
+    image: ulysse-hermes:ul016
+    command: [/opt/hermes/.venv/bin/python, /opt/ulysse/model_stub.py, '8091']
+    networks: [stub-private]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    pids_limit: 32
+    healthcheck:
+      test:
+        [
+          CMD,
+          /opt/hermes/.venv/bin/python,
+          -c,
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health',timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
 networks:
   agent-private:
+    internal: true
+  stub-private:
     internal: true

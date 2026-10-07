@@ -57,6 +57,11 @@ export const NavIcons: Record<string, ReactNode> = {
       <path d="m3.5 13.5 6.5 3.25 6.5-3.25" />
     </Icon>
   ),
+  '/analyses': (
+    <Icon>
+      <path d="M3.5 10h3l2-4.5 3 9 2-4.5h3" />
+    </Icon>
+  ),
   '/connections': (
     <Icon>
       <path d="M8.5 11.5a3 3 0 0 0 4.24 0l2.5-2.5a3 3 0 0 0-4.24-4.24l-.75.75" />

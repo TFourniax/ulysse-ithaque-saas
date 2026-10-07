@@ -359,6 +359,7 @@ describe('definer function privileges', () => {
         demo_update_source: 'ulysse_app',
         agent_slot_available: 'ulysse_worker',
         reserve_agent_budget: 'ulysse_worker',
+        reserve_agent_run_budget: 'ulysse_worker',
         resolve_agent_capability: 'ulysse_worker',
         due_connections: 'ulysse_worker',
         active_tenants: 'ulysse_worker',

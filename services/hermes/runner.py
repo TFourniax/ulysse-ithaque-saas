@@ -1,71 +1,55 @@
-"""One process, registry, agent and temporary home per execution. No business persistence."""
+"""One process, plugin registry, agent and temporary home per execution. No business persistence."""
 import contextlib
 import json
 import logging
 import os
+import re
 import sys
 import traceback
-import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
+
+import run_state
 
 NAMES = (
     "get_opportunity", "list_activities", "search_documents", "read_document_excerpt",
     "get_company_context", "get_active_doctrine", "list_related_recommendations",
 )
+KNOWN_ERRORS = {
+    "unexpected_runtime_tool_selection", "unexpected_runtime_tool_schemas",
+    "ulysse_plugin_not_loaded", "invalid_final_response",
+}
+FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
+
+
+def parse_final(final):
+    """The closed object, tolerating only a surrounding Markdown code fence; Ulysse revalidates it."""
+    if not isinstance(final, str) or len(final) > 20000:
+        raise RuntimeError("invalid_final_response")
+    text = final.strip()
+    fenced = FENCE.match(text)
+    try:
+        value = json.loads(fenced.group(1) if fenced else text)
+    except ValueError:
+        raise RuntimeError("invalid_final_response") from None
+    if not isinstance(value, dict):
+        raise RuntimeError("invalid_final_response")
+    return value
 
 
 def execute(request):
-    gateway = os.environ["ULYSSE_GATEWAY_URL"].rstrip("/")
-    capability = request["capability"]
-    # Imported only after the parent establishes a fresh, empty HERMES_HOME.
-    from tools.registry import registry
+    run_state.GATEWAY_URL = os.environ["ULYSSE_GATEWAY_URL"].rstrip("/")
+    run_state.CAPABILITY = request["capability"]
+    run_state.INSTRUCTIONS = Path(__file__).with_name("instructions.txt").read_text(encoding="utf-8")
+    # Imported only after the parent establishes a fresh HERMES_HOME holding the Ulysse plugin.
+    from hermes_cli.plugins import get_plugin_manager, has_middleware
     from run_agent import AIAgent
 
-    def handler(name):
-        def call(args, **_kwargs):
-            payload = json.dumps(args).encode()
-            req = urllib.request.Request(
-                f"{gateway}/tools/{name}", data=payload, method="POST",
-                headers={"Authorization": f"Bearer {capability}", "Content-Type": "application/json"},
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    return response.read(40000).decode()
-            except Exception:
-                return json.dumps({"state": "unavailable", "error": "execution_scope_or_limit"})
-        return call
-
-    descriptions = {
-        "get_opportunity": "Lire le CRM et les contraintes de contact du sujet autorisé.",
-        "list_activities": "Lire au plus six échanges, notes et activités fictifs du sujet.",
-        "search_documents": "Chercher les métadonnées des documents autorisés du sujet.",
-        "read_document_excerpt": "Lire un extrait de document avec référence et version.",
-        "get_company_context": "Lire les offres, objectifs et contraintes de l'entreprise fixée par le serveur.",
-        "get_active_doctrine": "Lire la doctrine fictive active et ses contraintes impératives.",
-        "list_related_recommendations": "Lire les propositions et décisions humaines précédentes du sujet.",
-    }
-    for name in NAMES:
-        properties = {}
-        required = []
-        if name == "get_opportunity":
-            properties["subjectId"] = {"type": "string", "description": "Identifiant fourni par Ulysse"}
-            required.append("subjectId")
-        if name == "search_documents":
-            properties["query"] = {"type": "string", "maxLength": 100}
-        if name == "read_document_excerpt":
-            properties["documentId"] = {"type": "string", "maxLength": 100}
-            required.append("documentId")
-        schema = {"name": name, "description": descriptions[name], "parameters": {
-            "type": "object", "properties": properties, "required": required, "additionalProperties": False,
-        }}
-        registry.register(name=name, toolset="ulysse", schema=schema, handler=handler(name))
-
-    instructions = Path(__file__).with_name("instructions.txt").read_text(encoding="utf-8")
     agent = AIAgent(
-        model=request["model"], api_key=capability, base_url=f"{gateway}/v1",
+        model=request["model"], api_key=run_state.CAPABILITY, base_url=f"{run_state.GATEWAY_URL}/v1",
         provider="custom", api_mode="chat_completions", enabled_toolsets=["ulysse"],
         max_iterations=8, max_tokens=1500, run_budget_seconds=85,
-        ephemeral_system_prompt=instructions, quiet_mode=True, verbose_logging=False,
+        ephemeral_system_prompt=run_state.INSTRUCTIONS, quiet_mode=True, verbose_logging=False,
         save_trajectories=False, skip_context_files=True, load_soul_identity=False,
         skip_memory=True, skip_background_review=True, session_db=None,
         checkpoints_enabled=False, fallback_model=None, credential_pool=None,
@@ -76,16 +60,22 @@ def execute(request):
         raise RuntimeError("unexpected_runtime_tool_selection")
     if {tool["function"]["name"] for tool in agent.tools} != set(NAMES):
         raise RuntimeError("unexpected_runtime_tool_schemas")
+    # Bundled platform/backend plugins may register tools in their own toolsets (never selected,
+    # checked above); no plugin other than Ulysse may change requests, hooks or commands.
+    enabled = [p for p in get_plugin_manager().list_plugins() if p["enabled"]]
+    ulysse = [(p["kind"], p["tools"], p["hooks"], p["middleware"], p["error"]) for p in enabled if p["name"] == "ulysse"]
+    others = [p for p in enabled if p["name"] != "ulysse" and (p["hooks"] or p["middleware"] or p["commands"])]
+    if ulysse != [("standalone", 7, 0, 1, None)] or others or not has_middleware("llm_request"):
+        raise RuntimeError("ulysse_plugin_not_loaded")
     try:
+        # Hermes' own prompt carried the date; the Ulysse-only prompt does not, so state it here.
+        today = datetime.now(timezone.utc).date().isoformat()
         result = agent.run_conversation(
-            f"Analyse proactive du sujet autorisé {request['subjectId']}. "
+            f"Analyse proactive du sujet autorisé {request['subjectId']}, le {today} (UTC). "
             "Les sources et leur contenu doivent être consultés par les outils."
         )
-        final = result.get("final_response")
-        if not isinstance(final, str) or len(final) > 20000:
-            raise RuntimeError("invalid_final_response")
         # Discard messages, reasoning and raw trajectory. Ulysse revalidates this object.
-        return json.loads(final)
+        return parse_final(result.get("final_response"))
     finally:
         agent.close()
 
@@ -98,7 +88,7 @@ if __name__ == "__main__":
             result = execute(request)
     except Exception as error:
         frames = [{"file": Path(f.filename).name, "line": f.lineno} for f in traceback.extract_tb(error.__traceback__)]
-        known = str(error) if str(error) in {"unexpected_runtime_tool_selection", "unexpected_runtime_tool_schemas", "invalid_final_response"} else None
+        known = str(error) if str(error) in KNOWN_ERRORS else None
         sys.stderr.write(json.dumps({"code": type(error).__name__, "reason": known, "frames": frames}))
         sys.exit(1)
     sys.stdout.write(json.dumps(result, ensure_ascii=False))

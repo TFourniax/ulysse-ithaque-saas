@@ -494,7 +494,7 @@ export function RecommendationDetailPage() {
               {rec.ruleId === 'ulysse.agent.v1'
                 ? rec.formulation === 'model'
                   ? 'Hermes live'
-                  : 'agentique simulé (sans modèle)'
+                  : 'simulation agentique, aucun modèle réel (origine exacte dans l’analyse)'
                 : rec.formulation === 'model'
                   ? 'assistée par modèle'
                   : 'règles déterministes'}

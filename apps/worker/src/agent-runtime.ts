@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { DomainError } from '@ulysse/domain';
 import type {
   AgentExecutor,
   AgentResult,
@@ -31,6 +32,13 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
+/** sha256 of services/hermes/instructions.txt (LF); a unit test keeps both identical. */
+export const AGENT_INSTRUCTIONS_SHA256 =
+  'b7abcb4abab635ac8798fb095a3e0185f5e63dad8090a06f2c219f621fd93a58';
+export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
+/** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
+export const MAX_ATTEMPTS = 2;
+const LIVE_PROVIDER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export const TOOL_NAMES = [
   'get_opportunity',
   'list_activities',
@@ -41,7 +49,9 @@ export const TOOL_NAMES = [
   'list_related_recommendations',
 ] as const;
 const Config = z.object({
-  ULYSSE_ANALYSIS_MODE: z.enum(['rules', 'simulated', 'hermes-live']).default('rules'),
+  ULYSSE_ANALYSIS_MODE: z
+    .enum(['rules', 'simulated', 'hermes-live', 'hermes-stub'])
+    .default('rules'),
   HERMES_URL: z.url().default('http://hermes:8090'),
   HERMES_SERVICE_TOKEN: z.string().min(32).optional(),
   OPENROUTER_API_KEY: z.string().min(16).optional(),
@@ -50,16 +60,19 @@ const Config = z.object({
   AGENT_SESSION_BUDGET_USD: z.coerce.number().positive().max(2).optional(),
   AGENT_MONTH_BUDGET_USD: z.coerce.number().positive().max(10).optional(),
   AGENT_SESSION_ID: z.string().min(8).max(100).optional(),
+  /** hermes-stub only: OpenAI-compatible simulated model endpoint of the local stack or CI. */
+  AGENT_STUB_PROVIDER_URL: z.url().optional(),
 });
 export type AgentConfig = z.infer<typeof Config>;
 export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
   // Empty optional values in Compose mean absent, never automatic paid activation.
   const cleaned = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ''));
   const c = Config.parse(cleaned);
-  if (c.ULYSSE_ANALYSIS_MODE === 'hermes-live') {
+  if (c.ULYSSE_ANALYSIS_MODE === 'hermes-live' || c.ULYSSE_ANALYSIS_MODE === 'hermes-stub') {
+    const live = c.ULYSSE_ANALYSIS_MODE === 'hermes-live';
     if (
       !c.HERMES_SERVICE_TOKEN ||
-      !c.OPENROUTER_API_KEY ||
+      (live && !c.OPENROUTER_API_KEY) ||
       !c.AGENT_MODEL_ID ||
       !c.AGENT_RUN_BUDGET_USD ||
       !c.AGENT_SESSION_BUDGET_USD ||
@@ -74,6 +87,17 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
     const url = new URL(c.HERMES_URL);
     if (url.hostname !== 'hermes' || url.port !== '8090' || url.protocol !== 'http:')
       throw new Error('Hermes must use the private stack endpoint');
+    // A live run can only reach OpenRouter; a simulated endpoint is never labelled live.
+    if (live && c.AGENT_STUB_PROVIDER_URL)
+      throw new Error('AGENT_STUB_PROVIDER_URL is reserved to hermes-stub');
+    if (!live) {
+      const stub = new URL(c.AGENT_STUB_PROVIDER_URL ?? 'invalid:');
+      if (
+        stub.protocol !== 'http:' ||
+        !['model-stub', '127.0.0.1', 'localhost'].includes(stub.hostname)
+      )
+        throw new Error('hermes-stub requires the private simulated model endpoint');
+    }
   }
   return c;
 }
@@ -82,7 +106,7 @@ const Run = z.object({
   id: z.uuid(),
   subject_id: z.uuid(),
   input_hash: z.string(),
-  mode: z.enum(['simulated', 'hermes-live']),
+  mode: z.enum(['simulated', 'hermes-live', 'hermes-stub']),
   status: z.string(),
   expires_at: z.string(),
   retrieved: z.array(z.string()),
@@ -102,6 +126,21 @@ const Args = z
     limit: z.number().int().min(1).max(6).optional(),
   })
   .strict();
+/** Minimized diagnostics: fixed codes and identifiers only, never payloads or secrets. */
+export type AgentLog = Readonly<{ warn: (fields: object, message: string) => void }>;
+const reasonOf = (error: unknown): string =>
+  error instanceof DomainError
+    ? `${error.code}${error.detail ? `:${error.detail}` : ''}`
+    : error instanceof Error &&
+        /^hermes_http_\d{3}$|^hermes_version_mismatch$|^agent_concurrency_limit$/.test(
+          error.message,
+        )
+      ? error.message
+      : error instanceof Error
+        ? error.name
+        : 'unknown';
+const sha256 = (text: string) =>
+  createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex');
 const oppRef = (o: Opportunity) => `opportunity:${o.id}:r${String(o.revision)}`;
 const materialRef = (o: Opportunity, id: string, version: number) =>
   `material:${o.id}:${id}:v${String(version)}:r${String(o.revision)}`;
@@ -115,6 +154,20 @@ export class HermesExecutor implements AgentExecutor {
     request: Parameters<AgentExecutor['execute']>[0],
     signal?: AbortSignal,
   ): Promise<unknown> {
+    // A run records the pinned Hermes commit and instructions: check the service runs them
+    // (an image rebuilt on one side only would otherwise fail on every model call).
+    const health = await fetch(`${this.config.HERMES_URL}/health`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    const running = z
+      .object({ hermesCommit: z.string(), instructionsSha256: z.string() })
+      .safeParse(health.ok ? await health.json() : null);
+    if (
+      !running.success ||
+      running.data.hermesCommit !== HERMES_COMMIT ||
+      running.data.instructionsSha256 !== AGENT_INSTRUCTIONS_SHA256
+    )
+      throw new Error('hermes_version_mismatch');
     const response = await fetch(`${this.config.HERMES_URL}/v1/runs`, {
       method: 'POST',
       headers: {
@@ -134,14 +187,17 @@ export class AgentRuntime {
   readonly store: PgAgentStore;
   readonly config: AgentConfig;
   readonly executor: AgentExecutor;
+  readonly log: AgentLog | undefined;
   constructor(
     pool: Pool,
     config: AgentConfig,
     executor: AgentExecutor = new HermesExecutor(config),
+    log?: AgentLog,
   ) {
     this.store = new PgAgentStore(pool);
     this.config = config;
     this.executor = executor;
+    this.log = log;
   }
 
   async analyze(ctx: Context, trigger: string, signal?: AbortSignal): Promise<void> {
@@ -170,16 +226,19 @@ export class AgentRuntime {
     const accepted = await this.store.transaction(ctx, async (tx, sql) => {
       await tx.lock('analysis');
       await sql.query(
-        "UPDATE agent_runs SET status='interrupted',completed_at=clock_timestamp(),error_code='lease_expired' WHERE tenant_id=$1 AND status IN ('running','validating') AND expires_at<=clock_timestamp()",
+        "UPDATE agent_runs SET status='interrupted',completed_at=clock_timestamp(),error_code='lease_expired',reserved_usd=committed_usd WHERE tenant_id=$1 AND status IN ('running','validating') AND expires_at<=clock_timestamp()",
         [ctx.tenantId],
       );
       const { opportunity: o, doctrine: d, context: c } = await this.current(tx, subjectId);
       const input = agentInputHash(o, d, c);
-      const previous = await sql.query(
-        "SELECT 1 FROM agent_runs WHERE tenant_id=$1 AND subject_id=$2 AND input_hash=$3 AND mode=$4 AND status IN ('running','validating','completed','abstained')",
-        [ctx.tenantId, subjectId, input, mode],
+      // At-least-once jobs and the periodic resume re-enter here: settled input is never
+      // re-run, and failed attempts on unchanged input are bounded so they cannot drain budgets.
+      const previous = await sql.query<{ settled: boolean }>(
+        "SELECT status IN ('running','validating','completed','abstained') AS settled FROM agent_runs WHERE tenant_id=$1 AND subject_id=$2 AND input_hash=$3 AND mode=$4 AND (status IN ('running','validating','completed','abstained') OR (status IN ('failed','interrupted','budget_reached') AND session_id=$5))",
+        [ctx.tenantId, subjectId, input, mode, this.config.AGENT_SESSION_ID ?? 'simulation'],
       );
-      if (previous.rowCount) return false;
+      if (previous.rows.some((r) => r.settled) || previous.rows.length >= MAX_ATTEMPTS)
+        return false;
       const slots = await sql.query<{ available: boolean }>(
         'SELECT app.agent_slot_available() AS available',
       );
@@ -203,13 +262,13 @@ export class AgentRuntime {
           this.config.AGENT_SESSION_ID ?? 'simulation',
           this.config.AGENT_MODEL_ID ?? 'simulation',
           HERMES_COMMIT,
-          AGENT_VERSION,
+          INSTRUCTIONS_VERSION,
           ctx.correlationId,
         ],
       );
-      if (mode === 'hermes-live') {
+      if (mode !== 'simulated') {
         const reservation = await sql.query<{ accepted: boolean }>(
-          'SELECT app.reserve_agent_budget($1,$2,$3,$4) AS accepted',
+          'SELECT app.reserve_agent_run_budget($1,$2,$3,$4) AS accepted',
           [
             id,
             this.config.AGENT_RUN_BUDGET_USD,
@@ -231,7 +290,11 @@ export class AgentRuntime {
         ctx.tenantId,
         id,
         'started',
-        mode === 'hermes-live' ? 'Hermes live démarré' : 'Analyse agentique simulée démarrée',
+        mode === 'hermes-live'
+          ? 'Hermes live démarré'
+          : mode === 'hermes-stub'
+            ? 'Hermes démarré avec le modèle simulé'
+            : 'Analyse agentique simulée démarrée',
       );
       return true;
     });
@@ -254,16 +317,22 @@ export class AgentRuntime {
       const result = validateAgentResult(raw);
       await this.publish(ctx, id, result);
     } catch (error) {
+      this.log?.warn({ runId: id, mode, reason: reasonOf(error) }, 'agent run not published');
       const code = signal?.aborted
         ? 'interrupted'
         : error instanceof Error && /budget|limit/.test(error.message)
           ? 'budget_reached'
           : 'failed';
+      const errorCode =
+        error instanceof Error && error.message === 'hermes_version_mismatch'
+          ? error.message
+          : code;
       await this.store.transaction(ctx, async (_tx, sql) => {
-        // Never release an uncertain provider reservation merely because our request stopped.
+        // committed_usd already holds every uncertain transmission at its upper bound and the
+        // gateway refuses calls once the run has stopped: keep that, release the unused rest.
         await sql.query(
-          "UPDATE agent_runs SET status=$3,completed_at=clock_timestamp(),error_code=$3 WHERE tenant_id=$1 AND id=$2 AND status IN ('running','validating')",
-          [ctx.tenantId, id, code],
+          "UPDATE agent_runs SET status=$3,completed_at=clock_timestamp(),error_code=$4,reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status IN ('running','validating')",
+          [ctx.tenantId, id, code, errorCode],
         );
         await this.store.event(
           sql,
@@ -304,7 +373,7 @@ export class AgentRuntime {
     ensure((TOOL_NAMES as readonly string[]).includes(name), 'FORBIDDEN');
     const args = Args.parse(rawArgs);
     const ctx = await this.store.resolve(hash(capability));
-    ensure(ctx, 'FORBIDDEN');
+    ensure(ctx, 'FORBIDDEN', 'inactive capability');
     return this.store.transaction(ctx, async (tx, sql) => {
       const query = await sql.query(
         'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
@@ -499,7 +568,7 @@ export class AgentRuntime {
       } = await this.current(tx, run.subject_id);
       if (agentInputHash(o, d, c) !== run.input_hash) {
         await sql.query(
-          "UPDATE agent_runs SET status='obsolete',completed_at=clock_timestamp(),error_code='versions_changed' WHERE tenant_id=$1 AND id=$2",
+          "UPDATE agent_runs SET status='obsolete',completed_at=clock_timestamp(),error_code='versions_changed',reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2",
           [ctx.tenantId, id],
         );
         await this.store.event(
@@ -519,7 +588,7 @@ export class AgentRuntime {
         const previous = await tx.getRecommendation(match[1], { forUpdate: true });
         if (!previous || previous.subject.id !== o.id || previous.revision !== Number(match[2])) {
           await sql.query(
-            "UPDATE agent_runs SET status='obsolete',completed_at=clock_timestamp(),error_code='history_changed' WHERE tenant_id=$1 AND id=$2",
+            "UPDATE agent_runs SET status='obsolete',completed_at=clock_timestamp(),error_code='history_changed',reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2",
             [ctx.tenantId, id],
           );
           await this.store.event(
@@ -545,7 +614,7 @@ export class AgentRuntime {
       );
       if (result.outcome === 'technical_error') {
         await sql.query(
-          "UPDATE agent_runs SET status='failed',error_code='agent_reported_error',result=$3,completed_at=clock_timestamp(),reserved_usd=CASE WHEN cost_state='unknown' THEN reserved_usd ELSE committed_usd END WHERE tenant_id=$1 AND id=$2",
+          "UPDATE agent_runs SET status='failed',error_code='agent_reported_error',result=$3,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2",
           [ctx.tenantId, id, JSON.stringify(result)],
         );
         await this.store.event(
@@ -722,7 +791,7 @@ export class AgentRuntime {
         errorCode: null,
       });
       await sql.query(
-        "UPDATE agent_runs SET status=$3,result=$4,completed_at=clock_timestamp(),reserved_usd=CASE WHEN cost_state='unknown' THEN reserved_usd ELSE committed_usd END WHERE tenant_id=$1 AND id=$2",
+        'UPDATE agent_runs SET status=$3,result=$4,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2',
         [ctx.tenantId, id, generated ? 'completed' : 'abstained', JSON.stringify(result)],
       );
       await this.store.event(
@@ -737,29 +806,48 @@ export class AgentRuntime {
 
   async inference(capability: string, input: unknown): Promise<unknown> {
     const ctx = await this.store.resolve(hash(capability));
-    ensure(ctx, 'FORBIDDEN');
+    ensure(ctx, 'FORBIDDEN', 'inactive capability');
     const body = record(input);
     ensure(
       Array.isArray(body.messages) &&
         body.messages.length <= 32 &&
-        (body.tools === undefined || (Array.isArray(body.tools) && body.tools.length <= 7)),
+        (body.tools === undefined || Array.isArray(body.tools)),
       'INVALID_INPUT',
     );
+    // Deterministic authority over what reaches the provider: the versioned Ulysse
+    // instructions as the only system message, and only the Ulysse tools.
+    const messages = body.messages.map((m: unknown) => record(m));
+    const system = messages.filter((m) => m.role === 'system' || m.role === 'developer');
+    ensure(
+      system.length === 1 &&
+        messages[0] === system[0] &&
+        typeof system[0]?.content === 'string' &&
+        sha256(system[0].content) === AGENT_INSTRUCTIONS_SHA256,
+      'FORBIDDEN',
+      'foreign instructions',
+    );
+    if (Array.isArray(body.tools)) {
+      const names = body.tools.map((t: unknown) => record(record(t).function).name);
+      ensure(
+        names.length === TOOL_NAMES.length && TOOL_NAMES.every((name) => names.includes(name)),
+        'FORBIDDEN',
+        'foreign tools',
+      );
+    }
     const bytes = Buffer.byteLength(JSON.stringify(body));
     ensure(bytes <= 80000, 'INVALID_INPUT', 'context limit');
     // byte count is a conservative upper bound on text tokens; schema/role overhead is included.
     // Fixed model, no provider/model fallback, maximum prices pinned in request routing.
     const upperCost = ((bytes + 2048) * 0.4 + 1500 * 1.6) / 1_000_000;
-    let runId = '';
-    await this.store.transaction(ctx, async (tx, sql) => {
+    const { runId, mode } = await this.store.transaction(ctx, async (tx, sql) => {
       const query = await sql.query(
         'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
         [ctx.tenantId, hash(capability)],
       );
       const run = Run.parse(query.rows[0]);
-      runId = run.id;
       ensure(
-        run.mode === 'hermes-live' &&
+        run.mode !== 'simulated' &&
+          run.mode === this.config.ULYSSE_ANALYSIS_MODE &&
           run.status === 'running' &&
           run.model_calls < 8 &&
           Date.parse(run.expires_at) > Date.now(),
@@ -778,31 +866,39 @@ export class AgentRuntime {
         ctx.tenantId,
         run.id,
         'model',
-        'Appel modèle réservé et transmis',
+        run.mode === 'hermes-live'
+          ? 'Appel modèle réservé et transmis'
+          : 'Appel au modèle simulé (aucun fournisseur)',
       );
+      return { runId: run.id, mode: run.mode };
     });
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${this.config.OPENROUTER_API_KEY ?? ''}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: this.config.AGENT_MODEL_ID,
-        messages: body.messages,
-        tools: body.tools,
-        tool_choice: 'auto',
-        stream: false,
-        max_tokens: 1500,
-        temperature: 0.2,
-        provider: {
-          allow_fallbacks: false,
-          require_parameters: true,
-          max_price: { prompt: 0.4, completion: 1.6 },
+    const live = mode === 'hermes-live';
+    // The provider key only ever leaves for OpenRouter; the stub endpoint receives none.
+    const response = await fetch(
+      live ? LIVE_PROVIDER_URL : (this.config.AGENT_STUB_PROVIDER_URL ?? 'invalid:'),
+      {
+        method: 'POST',
+        headers: {
+          authorization: live ? `Bearer ${this.config.OPENROUTER_API_KEY ?? ''}` : 'Bearer none',
+          'content-type': 'application/json',
         },
-      }),
-      signal: AbortSignal.timeout(45000),
-    });
+        body: JSON.stringify({
+          model: this.config.AGENT_MODEL_ID,
+          messages: body.messages,
+          tools: body.tools,
+          tool_choice: body.tools === undefined ? undefined : 'auto',
+          stream: false,
+          max_tokens: 1500,
+          temperature: 0.2,
+          provider: {
+            allow_fallbacks: false,
+            require_parameters: true,
+            max_price: { prompt: 0.4, completion: 1.6 },
+          },
+        }),
+        signal: AbortSignal.timeout(45000),
+      },
+    );
     ensure(response.ok, 'INVALID_INPUT', 'provider failed');
     const payload = record(await response.json());
     const usage = z
@@ -815,7 +911,7 @@ export class AgentRuntime {
     if (usage.success) {
       const u = usage.data;
       const actual = u.cost ?? (u.prompt_tokens * 0.4 + u.completion_tokens * 1.6) / 1_000_000;
-      ensure(actual <= upperCost, 'INVALID_INPUT', 'provider exceeded reservation');
+      // Record what was charged even above the bound, then refuse to continue.
       await this.store.transaction(ctx, async (_tx, sql) => {
         await sql.query(
           "UPDATE agent_runs SET committed_usd=committed_usd-$3+$4,uncertain_calls=uncertain_calls-1,estimated_calls=estimated_calls+CASE WHEN $5='estimated' THEN 1 ELSE 0 END,cost_state=CASE WHEN uncertain_calls>1 THEN 'unknown' WHEN estimated_calls>0 OR $5='estimated' THEN 'estimated' ELSE 'declared' END,input_tokens=input_tokens+$6,output_tokens=output_tokens+$7 WHERE tenant_id=$1 AND id=$2",
@@ -830,13 +926,18 @@ export class AgentRuntime {
           ],
         );
       });
+      ensure(actual <= upperCost, 'INVALID_INPUT', 'provider exceeded reservation');
     }
     // Internal reasoning is never persisted; only structured tool events and final result are kept.
     return payload;
   }
   async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
-      ensure(req.method === 'POST' && typeof req.headers.authorization === 'string', 'FORBIDDEN');
+      ensure(
+        req.method === 'POST' && typeof req.headers.authorization === 'string',
+        'FORBIDDEN',
+        'method or credential',
+      );
       const token = req.headers.authorization.replace(/^Bearer /, '');
       let size = 0;
       const chunks: Buffer[] = [];
@@ -857,7 +958,15 @@ export class AgentRuntime {
             })();
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(output));
-    } catch {
+    } catch (error) {
+      this.log?.warn(
+        {
+          method: req.method,
+          path: req.url?.split('?')[0],
+          reason: reasonOf(error),
+        },
+        'agent gateway refused a call',
+      );
       res.writeHead(403, { 'content-type': 'application/json' });
       res.end(
         '{"error":{"message":"execution unavailable, invalid or limited","type":"permission_error"}}',

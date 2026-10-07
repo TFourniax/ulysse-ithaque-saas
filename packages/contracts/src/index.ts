@@ -337,7 +337,9 @@ export const CommercialData = z.object({
 export const AgentRun = z.object({
   id: uuid,
   subject_id: uuid,
-  mode: z.enum(['simulated', 'hermes-live']),
+  subject_label: z.string().nullable(),
+  subject_external_id: z.string().nullable(),
+  mode: z.enum(['simulated', 'hermes-live', 'hermes-stub']),
   status: z.enum([
     'running',
     'validating',
@@ -390,7 +392,7 @@ export const DemoScenarioBody = z
   .strict();
 export const AgentStatus = z.object({
   version: z.literal('ulysse-agent-v1'),
-  configuredMode: z.enum(['rules', 'simulated', 'hermes-live']),
+  configuredMode: z.enum(['rules', 'simulated', 'hermes-live', 'hermes-stub']),
   demoEnabled: z.boolean(),
   runs: z.array(AgentRun),
 });
