@@ -51,13 +51,20 @@ AGENT_MONTH_BUDGET_USD=10
 AGENT_SESSION_ID=ul016-validation-thomas-20261007
 ```
 
-Ne pas changer l'identifiant de session pour contourner un budget atteint. Une clé OpenRouter dédiée à la démo avec plafond fournisseur est adaptée. `AGENT_SESSION_ID` est un identifiant de comptabilité, pas un secret. Le secret Hermes peut être généré sans affichage :
+Ne pas changer l'identifiant de session pour contourner un budget atteint. Une clé OpenRouter dédiée à la démo avec plafond fournisseur est adaptée. `AGENT_SESSION_ID` est un identifiant de comptabilité, pas un secret. Le secret Hermes peut être généré sans affichage, sous Windows PowerShell 5.1 ou PowerShell 7 :
 
 ```powershell
-$taskToken = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+$taskTokenBytes = New-Object byte[] 32
+$taskTokenGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
+try {
+    $taskTokenGenerator.GetBytes($taskTokenBytes)
+    $taskToken = [Convert]::ToBase64String($taskTokenBytes)
+} finally {
+    $taskTokenGenerator.Dispose()
+}
 # À utiliser uniquement si cette variable n'existe pas déjà dans .env :
 Add-Content -LiteralPath .env -Value ("HERMES_SERVICE_TOKEN=" + $taskToken)
-Remove-Variable taskToken
+Remove-Variable taskToken, taskTokenBytes, taskTokenGenerator
 .\scripts\demo-agentique.ps1 -Mode hermes-live
 if ($LASTEXITCODE -ne 0) { throw 'live startup failed' }
 ```
