@@ -45,16 +45,17 @@ export async function checkEvidence(
   const doctrineActive =
     doctrine !== null && doctrine.status === 'validated' && active?.id === doctrine.id;
   return {
-    currentFingerprint: rec.ruleId === AGENT_RULE_ID && opportunity && doctrine && !opportunity.deletedAt
-      ? agentFingerprint(opportunity, doctrine, context, rec.kind)
-      : currentFingerprintFor({
-      recommendation: rec,
-      opportunity,
-      doctrine,
-      rules,
-      context,
-      now,
-    }),
+    currentFingerprint:
+      rec.ruleId === AGENT_RULE_ID && opportunity && doctrine && !opportunity.deletedAt
+        ? agentFingerprint(opportunity, doctrine, context, rec.kind)
+        : currentFingerprintFor({
+            recommendation: rec,
+            opportunity,
+            doctrine,
+            rules,
+            context,
+            now,
+          }),
     dataAsOf: connection?.dataAsOf ?? null,
     connectionActive: connection?.status === 'active',
     doctrineActive,

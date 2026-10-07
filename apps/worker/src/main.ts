@@ -21,8 +21,16 @@ const pool = createPool({
 
 const connectors: Connector[] = [];
 const agentSettings = agentConfig();
-if (process.env.MODEL_PROVIDER && process.env.MODEL_PROVIDER !== 'none' && agentSettings.ULYSSE_ANALYSIS_MODE === 'rules') throw new Error('Legacy paid wording is disabled: use the bounded hermes-live execution path');
-const agent = agentSettings.ULYSSE_ANALYSIS_MODE === 'rules' ? undefined : new AgentRuntime(pool, agentSettings);
+if (
+  process.env.MODEL_PROVIDER &&
+  process.env.MODEL_PROVIDER !== 'none' &&
+  agentSettings.ULYSSE_ANALYSIS_MODE === 'rules'
+)
+  throw new Error('Legacy paid wording is disabled: use the bounded hermes-live execution path');
+const agent =
+  agentSettings.ULYSSE_ANALYSIS_MODE === 'rules'
+    ? undefined
+    : new AgentRuntime(pool, agentSettings);
 if (config.ENABLE_FIXTURE_CONNECTOR)
   connectors.push(new FixtureConnector(new PgFixtureStore(pool)));
 

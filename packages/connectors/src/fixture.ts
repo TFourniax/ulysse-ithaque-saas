@@ -235,7 +235,16 @@ export class FixtureConnector implements Connector {
       fields,
     };
     try {
-      return { ok: true, record: validateNormalizedRecord({ ...candidate, fields: { ...fields, ...(p.commercial === undefined ? {} : { commercial: p.commercial }) } }) };
+      return {
+        ok: true,
+        record: validateNormalizedRecord({
+          ...candidate,
+          fields: {
+            ...fields,
+            ...(p.commercial === undefined ? {} : { commercial: p.commercial }),
+          },
+        }),
+      };
     } catch {
       return { ok: false, reason: 'normalized_validation' };
     }

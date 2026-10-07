@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+import traceback
 import urllib.request
 from pathlib import Path
 
@@ -92,6 +93,12 @@ def execute(request):
 if __name__ == "__main__":
     request = json.loads(sys.stdin.read(8192))
     logging.disable(logging.CRITICAL)
-    with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-        result = execute(request)
+    try:
+        with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            result = execute(request)
+    except Exception as error:
+        frames = [{"file": Path(f.filename).name, "line": f.lineno} for f in traceback.extract_tb(error.__traceback__)]
+        known = str(error) if str(error) in {"unexpected_runtime_tool_selection", "unexpected_runtime_tool_schemas", "invalid_final_response"} else None
+        sys.stderr.write(json.dumps({"code": type(error).__name__, "reason": known, "frames": frames}))
+        sys.exit(1)
     sys.stdout.write(json.dumps(result, ensure_ascii=False))

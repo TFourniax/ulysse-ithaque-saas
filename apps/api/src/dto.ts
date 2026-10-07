@@ -131,7 +131,14 @@ export function opportunityDto(o: Opportunity) {
     name,
     stage,
     fields: Object.fromEntries(Object.entries(rest).map(([k, v]) => [k, { ...v }])),
-    ...(commercial ? { commercial: { materials: commercial.materials.map((m) => ({ ...m })), contactPolicy: { ...commercial.contactPolicy } } } : {}),
+    ...(commercial
+      ? {
+          commercial: {
+            materials: commercial.materials.map((m) => ({ ...m })),
+            contactPolicy: { ...commercial.contactPolicy },
+          },
+        }
+      : {}),
     sourceModifiedAt: o.sourceModifiedAt,
     observedAt: o.observedAt,
     deletedAt: o.deletedAt,

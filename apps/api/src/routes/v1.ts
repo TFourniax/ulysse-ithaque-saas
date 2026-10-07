@@ -119,38 +119,116 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
 
   const ctxOf = (request: FastifyRequest): Context => contextFor(authOf(request), request.id);
   const agentStore = new PgAgentStore(deps.pool);
-  app.get('/agent-runs', { schema: { tags: ['analyses'], response: { 200: AgentStatus } } }, async (request) => {
-    const ctx = ctxOf(request); requirePermission(ctx, 'analysis:read');
-    return AgentStatus.parse({ version: 'ulysse-agent-v1', configuredMode: config.ULYSSE_ANALYSIS_MODE, demoEnabled: config.ENABLE_DEMO_SCENARIOS && config.ENABLE_FIXTURE_CONNECTOR && config.NODE_ENV !== 'production', runs: await agentStore.list(ctx) });
-  });
-  app.get('/agent-runs/:id/events', { schema: { tags: ['analyses'], params: IdParam, response: { 200: z.array(AgentEvent) } } }, async (request) => {
-    const ctx = ctxOf(request); requirePermission(ctx, 'analysis:read');
-    return z.array(AgentEvent).parse(await agentStore.events(ctx, request.params.id));
-  });
-  app.get('/opportunities/:id', { schema: { tags: ['opportunities'], params: IdParam, response: { 200: OpportunityDetailDto } } }, async (request) => {
-    const ctx = ctxOf(request); requirePermission(ctx, 'opportunity:read');
-    return uow.run(ctx, async (tx) => {
-      const o = await tx.getOpportunity(request.params.id); ensure(o && !o.deletedAt, 'NOT_FOUND');
-      const connection = await tx.getConnection(o.connectionId); ensure(connection?.status === 'active', 'FORBIDDEN');
-      const recs = await tx.listRecommendations({ view: 'all', now: new Date().toISOString(), subjectId: o.id }, { limit: 100, cursor: null });
-      return { opportunity: opportunityDto(o), recommendations: recs.items.map((r) => ({ id: r.id, title: r.title, status: r.status, analysisId: r.analysisId })) };
-    });
-  });
-  app.post('/demo/opportunities/:id/source-event', { schema: { tags: ['demo'], params: IdParam, body: DemoScenarioBody, response: { 202: z.object({ status: z.literal('queued') }) } } }, async (request, reply) => {
-    const ctx = ctxOf(request); requirePermission(ctx, 'connection:manage');
-    ensure(config.ENABLE_DEMO_SCENARIOS && config.ENABLE_FIXTURE_CONNECTOR && config.NODE_ENV !== 'production', 'FORBIDDEN');
-    const connectionId = await agentStore.transaction(ctx, async (tx, sql) => {
-      const o = await tx.getOpportunity(request.params.id); ensure(o && !o.deletedAt, 'NOT_FOUND');
-      const connection = await tx.getConnection(o.connectionId); ensure(connection?.status === 'active' && connection.provider === 'fixture-crm', 'FORBIDDEN');
-      ensure(connection.config.dataset === 'acme-demo' || connection.config.dataset === 'globex-demo', 'FORBIDDEN');
-      const data = commercialFixture(connection.config.dataset === 'acme-demo' ? 'acme' : 'globex', request.body.scenario);
-      await sql.query('SELECT app.demo_update_source($1,$2)', [o.id, JSON.stringify(data)]);
-      await tx.appendAudit({ tenantId: ctx.tenantId, id: ids.next(), actorType: 'user', actorId: requirePermission(ctx, 'connection:manage').userId, eventType: 'demo.source_changed', resourceType: 'opportunity', resourceId: o.id, revision: o.revision, correlationId: ctx.correlationId, metadata: { scenario: request.body.scenario }, createdAt: new Date().toISOString() });
-      return o.connectionId;
-    });
-    await connections.requestSync(ctx, connectionId, { replay: false });
-    return reply.status(202).send({ status: 'queued' as const });
-  });
+  app.get(
+    '/agent-runs',
+    { schema: { tags: ['analyses'], response: { 200: AgentStatus } } },
+    async (request) => {
+      const ctx = ctxOf(request);
+      requirePermission(ctx, 'analysis:read');
+      return AgentStatus.parse({
+        version: 'ulysse-agent-v1',
+        configuredMode: config.ULYSSE_ANALYSIS_MODE,
+        demoEnabled:
+          config.ENABLE_DEMO_SCENARIOS &&
+          config.ENABLE_FIXTURE_CONNECTOR &&
+          config.NODE_ENV !== 'production',
+        runs: await agentStore.list(ctx),
+      });
+    },
+  );
+  app.get(
+    '/agent-runs/:id/events',
+    { schema: { tags: ['analyses'], params: IdParam, response: { 200: z.array(AgentEvent) } } },
+    async (request) => {
+      const ctx = ctxOf(request);
+      requirePermission(ctx, 'analysis:read');
+      return z.array(AgentEvent).parse(await agentStore.events(ctx, request.params.id));
+    },
+  );
+  app.get(
+    '/opportunities/:id',
+    {
+      schema: { tags: ['opportunities'], params: IdParam, response: { 200: OpportunityDetailDto } },
+    },
+    async (request) => {
+      const ctx = ctxOf(request);
+      requirePermission(ctx, 'opportunity:read');
+      return uow.run(ctx, async (tx) => {
+        const o = await tx.getOpportunity(request.params.id);
+        ensure(o && !o.deletedAt, 'NOT_FOUND');
+        const connection = await tx.getConnection(o.connectionId);
+        ensure(connection?.status === 'active', 'FORBIDDEN');
+        const recs = await tx.listRecommendations(
+          { view: 'all', now: new Date().toISOString(), subjectId: o.id },
+          { limit: 100, cursor: null },
+        );
+        return {
+          opportunity: opportunityDto(o),
+          recommendations: recs.items.map((r) => ({
+            id: r.id,
+            title: r.title,
+            status: r.status,
+            analysisId: r.analysisId,
+          })),
+        };
+      });
+    },
+  );
+  app.post(
+    '/demo/opportunities/:id/source-event',
+    {
+      schema: {
+        tags: ['demo'],
+        params: IdParam,
+        body: DemoScenarioBody,
+        response: { 202: z.object({ status: z.literal('queued') }) },
+      },
+    },
+    async (request, reply) => {
+      const ctx = ctxOf(request);
+      requirePermission(ctx, 'connection:manage');
+      ensure(
+        config.ENABLE_DEMO_SCENARIOS &&
+          config.ENABLE_FIXTURE_CONNECTOR &&
+          config.NODE_ENV !== 'production',
+        'FORBIDDEN',
+      );
+      const connectionId = await agentStore.transaction(ctx, async (tx, sql) => {
+        const o = await tx.getOpportunity(request.params.id);
+        ensure(o && !o.deletedAt, 'NOT_FOUND');
+        const connection = await tx.getConnection(o.connectionId);
+        ensure(
+          connection?.status === 'active' && connection.provider === 'fixture-crm',
+          'FORBIDDEN',
+        );
+        ensure(
+          connection.config.dataset === 'acme-demo' || connection.config.dataset === 'globex-demo',
+          'FORBIDDEN',
+        );
+        const data = commercialFixture(
+          connection.config.dataset === 'acme-demo' ? 'acme' : 'globex',
+          request.body.scenario,
+        );
+        await sql.query('SELECT app.demo_update_source($1,$2)', [o.id, JSON.stringify(data)]);
+        await tx.appendAudit({
+          tenantId: ctx.tenantId,
+          id: ids.next(),
+          actorType: 'user',
+          actorId: requirePermission(ctx, 'connection:manage').userId,
+          eventType: 'demo.source_changed',
+          resourceType: 'opportunity',
+          resourceId: o.id,
+          revision: o.revision,
+          correlationId: ctx.correlationId,
+          metadata: { scenario: request.body.scenario },
+          createdAt: new Date().toISOString(),
+        });
+        return o.connectionId;
+      });
+      await connections.requestSync(ctx, connectionId, { replay: false });
+      return reply.status(202).send({ status: 'queued' as const });
+    },
+  );
 
   async function memberNames(ctx: Context): Promise<Map<string, string>> {
     return uow.run(

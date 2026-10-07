@@ -25,6 +25,9 @@ class Endpoint(BaseHTTPRequestHandler):
         token = self.headers.get("Authorization", "")
         with self.lock:
             self.calls.append((self.path, token))
+        if self.path == '/agent/api/show':
+            self.send_error(404)  # Hermes local-provider metadata probe: no inference.
+            return
         if self.path.startswith("/agent/tools/"):
             output = {"state": "present", "reference": f"fixture:{token[-3:]}", "content": "Sources fictives isolées"}
         else:

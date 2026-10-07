@@ -136,8 +136,18 @@ export function validateDoctrineContent(
     );
     return { ruleId: rule.ruleId, enabled: rule.enabled, parameters };
   });
-  ensure(raw.agentGuidance === undefined || typeof raw.agentGuidance === 'string' && raw.agentGuidance.length > 0 && raw.agentGuidance.length <= 4000, 'INVALID_POLICY');
-  return { rules, policy: validatePolicy(raw.policy), ...(typeof raw.agentGuidance === 'string' ? { agentGuidance: raw.agentGuidance } : {}) };
+  ensure(
+    raw.agentGuidance === undefined ||
+      (typeof raw.agentGuidance === 'string' &&
+        raw.agentGuidance.length > 0 &&
+        raw.agentGuidance.length <= 4000),
+    'INVALID_POLICY',
+  );
+  return {
+    rules,
+    policy: validatePolicy(raw.policy),
+    ...(typeof raw.agentGuidance === 'string' ? { agentGuidance: raw.agentGuidance } : {}),
+  };
 }
 
 export function doctrineContentHash(content: DoctrineContent): string {

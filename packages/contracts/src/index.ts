@@ -319,15 +319,81 @@ const FieldState = z.object({
 });
 
 export const CommercialData = z.object({
-  materials: z.array(z.object({ id: z.string(), version: z.number().int(), type: z.enum(['activity', 'email', 'note', 'document']), title: z.string(), text: z.string(), author: z.string(), occurredAt: instant })).max(12),
+  materials: z
+    .array(
+      z.object({
+        id: z.string(),
+        version: z.number().int(),
+        type: z.enum(['activity', 'email', 'note', 'document']),
+        title: z.string(),
+        text: z.string(),
+        author: z.string(),
+        occurredAt: instant,
+      }),
+    )
+    .max(12),
   contactPolicy: z.object({ opposed: z.boolean(), pauseUntil: nullableInstant }),
 });
 export const AgentRun = z.object({
-  id: uuid, subject_id: uuid, mode: z.enum(['simulated', 'hermes-live']), status: z.enum(['running','validating','completed','abstained','obsolete','budget_reached','failed','interrupted']), trigger: z.string(), snapshot: z.record(z.string(), z.unknown()), model: z.string(), hermes_version: z.string(), instructions_version: z.string(), started_at: instant, completed_at: nullableInstant, result: z.unknown().nullable(), error_code: z.string().nullable(), retrieved: z.array(z.string()), tool_calls: z.number().int(), model_calls: z.number().int(), input_tokens: z.number().int(), output_tokens: z.number().int(), reserved_usd: z.coerce.number(), committed_usd: z.coerce.number(), cost_state: z.enum(['declared','estimated','unknown']), correlation_id: z.string(),
+  id: uuid,
+  subject_id: uuid,
+  mode: z.enum(['simulated', 'hermes-live']),
+  status: z.enum([
+    'running',
+    'validating',
+    'completed',
+    'abstained',
+    'obsolete',
+    'budget_reached',
+    'failed',
+    'interrupted',
+  ]),
+  trigger: z.string(),
+  snapshot: z.record(z.string(), z.unknown()),
+  model: z.string(),
+  hermes_version: z.string(),
+  instructions_version: z.string(),
+  started_at: instant,
+  completed_at: nullableInstant,
+  result: z.unknown().nullable(),
+  error_code: z.string().nullable(),
+  retrieved: z.array(z.string()),
+  tool_calls: z.number().int(),
+  model_calls: z.number().int(),
+  input_tokens: z.number().int(),
+  output_tokens: z.number().int(),
+  reserved_usd: z.coerce.number(),
+  committed_usd: z.coerce.number(),
+  cost_state: z.enum(['declared', 'estimated', 'unknown']),
+  correlation_id: z.string(),
 });
-export const AgentEvent = z.object({ sequence: z.number().int(), kind: z.string(), label: z.string(), references: z.array(z.string()), created_at: instant });
-export const DemoScenarioBody = z.object({ scenario: z.enum(['baseline','positive_reply','pause','contradiction','insufficient','complementary','opposition','injection']) }).strict();
-export const AgentStatus = z.object({ version: z.literal('ulysse-agent-v1'), configuredMode: z.enum(['rules','simulated','hermes-live']), demoEnabled: z.boolean(), runs: z.array(AgentRun) });
+export const AgentEvent = z.object({
+  sequence: z.number().int(),
+  kind: z.string(),
+  label: z.string(),
+  references: z.array(z.string()),
+  created_at: instant,
+});
+export const DemoScenarioBody = z
+  .object({
+    scenario: z.enum([
+      'baseline',
+      'positive_reply',
+      'pause',
+      'contradiction',
+      'insufficient',
+      'complementary',
+      'opposition',
+      'injection',
+    ]),
+  })
+  .strict();
+export const AgentStatus = z.object({
+  version: z.literal('ulysse-agent-v1'),
+  configuredMode: z.enum(['rules', 'simulated', 'hermes-live']),
+  demoEnabled: z.boolean(),
+  runs: z.array(AgentRun),
+});
 
 export const Opportunity = z.object({
   id: uuid,
@@ -343,7 +409,12 @@ export const Opportunity = z.object({
   deletedAt: nullableInstant,
 });
 export const OpportunityPage = pageOf(Opportunity);
-export const OpportunityDetail = z.object({ opportunity: Opportunity, recommendations: z.array(z.object({ id: uuid, title: z.string(), status: RecommendationStatus, analysisId: uuid })) });
+export const OpportunityDetail = z.object({
+  opportunity: Opportunity,
+  recommendations: z.array(
+    z.object({ id: uuid, title: z.string(), status: RecommendationStatus, analysisId: uuid }),
+  ),
+});
 export type OpportunityDetailDto = z.infer<typeof OpportunityDetail>;
 export type AgentRunDto = z.infer<typeof AgentRun>;
 export type AgentEventDto = z.infer<typeof AgentEvent>;

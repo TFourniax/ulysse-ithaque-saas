@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
+import { createHash } from 'node:crypto';
 import type { ModelSettings } from '@ulysse/ai';
 import { ModelError, ScriptedProvider } from '@ulysse/ai';
 import type { Connector } from '@ulysse/connectors';
 import {
   ConnectorError,
   createRegistry,
+  commercialFixture,
   FixtureConnector,
   MemoryFixtureStore,
 } from '@ulysse/connectors';
@@ -20,18 +22,122 @@ import {
   defaultRules,
   DoctrineService,
   QueryService,
+  ReviewService,
   systemClock,
+  agentInputHash,
 } from '@ulysse/domain';
 import {
   FIXTURE_CONTEXT,
   FIXTURE_DOCTRINE,
   fixtureCatalog,
+  serviceContext,
   userContext,
 } from '@ulysse/domain/testing';
 import { createLogger, createMetrics } from '@ulysse/observability';
 import { loadWorkerConfig } from '../src/config.ts';
+import { AgentRuntime, agentConfig } from '../src/agent-runtime.ts';
 import type { FaultHooks } from '../src/runtime.ts';
 import { noCredentialStore, WorkerRuntime } from '../src/runtime.ts';
+
+describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
+  async function world(name: string, company: 'acme' | 'globex' = 'acme', scenario: Parameters<typeof commercialFixture>[1] = 'baseline') {
+    const data = commercialFixture(company, scenario);
+    store.upsert(name, 'OPP-001', stalled('OPP-001', 12, { commercial: data }), iso(-1000));
+    const w = await tenantWorld(name, name);
+    const connection = await w.connect();
+    const agent = new AgentRuntime(workerPool, agentConfig({ ULYSSE_ANALYSIS_MODE: 'simulated' }));
+    const runtime = runtimeWith({ agent });
+    await runtime.handleSync({ tenantId: w.tenantId, connectionId: connection.id, trigger: 'initial' }, crypto.randomUUID());
+    const ctx = serviceContext(w.tenantId, ['analysis:run']);
+    const o = await agent.store.transaction(ctx, (tx) => tx.getOpportunityByExternalId(connection.id, 'OPP-001'));
+    assert.ok(o);
+    return { ...w, agent, runtime, ctx, o, connection };
+  }
+  test('two tenants with the same external identifier use tools and publish separate references; replay is idempotent', async () => {
+    const a = await world('agent-acme'); const b = await world('agent-globex', 'globex');
+    await Promise.all([a.agent.analyze(a.ctx, 'source_change'), b.agent.analyze(b.ctx, 'source_change')]);
+    for (const w of [a, b]) {
+      const recs = await w.open(); assert.equal(recs.length, 1); assert.equal(recs[0]?.ruleId, 'ulysse.agent.v1');
+      const runs = await w.agent.store.list(w.owner); assert.equal(runs[0]?.status, 'completed'); assert.ok(Number(runs[0]?.tool_calls) >= 6);
+      await w.agent.analyze(w.ctx, 'source_change'); assert.equal((await w.open()).length, 1); assert.equal((await w.agent.store.list(w.owner)).length, 1);
+      const detail = await w.queries.getRecommendation(w.owner, recs[0]?.id ?? '');
+      assert.ok(detail.evidence.every((e) => e.tenantId === w.tenantId));
+      assert.ok(detail.evidence.some((e) => e.factType === 'commercial_context'));
+    }
+    assert.equal(await a.agent.store.transaction(a.owner, (tx) => tx.getOpportunity(b.o.id)), null);
+  });
+  test('pause, opposition and absent exchanges produce no contact recommendation', async () => {
+    for (const scenario of ['pause', 'opposition', 'insufficient'] as const) {
+      const w = await world(`agent-${scenario}`, 'acme', scenario);
+      await w.agent.analyze(w.ctx, 'source_change'); assert.equal((await w.open()).length, 0);
+      assert.equal((await w.agent.store.list(w.owner))[0]?.status, 'abstained');
+    }
+  });
+  test('human decisions persist, viewer cannot decide, and rejection suppresses regeneration', async () => {
+    const w = await world('agent-review'); await w.agent.analyze(w.ctx, 'source_change');
+    const rec = (await w.open())[0]; assert.ok(rec);
+    const review = new ReviewService({ uow: new PgUnitOfWork(appPool), clock: systemClock, ids: { next: () => crypto.randomUUID() }, rules: defaultRules });
+    await assert.rejects(review.decide({ ...w.owner, actor: { kind: 'user', userId: w.owner.actor.kind === 'user' ? w.owner.actor.userId : '', role: 'viewer' } }, rec.id, { expectedRevision: rec.revision, decision: 'approve', reason: null }, crypto.randomUUID()));
+    const key = crypto.randomUUID();
+    const decision = await review.decide(w.owner, rec.id, { expectedRevision: rec.revision, decision: 'reject', reason: 'À clarifier' }, key);
+    assert.equal(decision.decision.decision, 'reject');
+    assert.equal((await review.decide(w.owner, rec.id, { expectedRevision: rec.revision, decision: 'reject', reason: 'À clarifier' }, key)).replayed, true);
+    await w.agent.analyze(w.ctx, 'manual'); assert.equal((await w.open()).length, 0);
+  });
+  test('capabilities reject foreign subjects, unavailable tools, expired leases and revoked connections', async () => {
+    const w = await world('agent-capability'); const other = await world('agent-other');
+    const capability = 'test-run-capability'; const runId = crypto.randomUUID();
+    await w.agent.store.transaction(w.ctx, async (tx, sql) => {
+      const d = await tx.getActiveDoctrine(); assert.ok(d);
+      const c = await tx.getCurrentContext();
+      await sql.query("INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id) VALUES($1,$2,$3,$4,'simulated','running','test','{}',$5,clock_timestamp()+interval '90 seconds','test','simulation','test','test','test')", [w.tenantId, runId, w.o.id, agentInputHash(w.o, d, c), createHash('sha256').update(capability).digest('hex')]);
+    });
+    await assert.rejects(w.agent.tool(capability, 'get_opportunity', { subjectId: other.o.id }));
+    await assert.rejects(w.agent.tool(capability, 'terminal', {}));
+    assert.ok(await w.agent.tool(capability, 'get_opportunity', { subjectId: w.o.id }));
+    await w.connections.revoke(w.owner, w.connection.id);
+    await assert.rejects(w.agent.tool(capability, 'get_opportunity', {}));
+    await w.agent.store.transaction(w.ctx, async (_tx, sql) => { await sql.query("UPDATE agent_runs SET expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id=$1 AND id=$2", [w.tenantId, runId]); });
+    await assert.rejects(w.agent.tool(capability, 'get_active_doctrine', {}));
+  });
+  const liveTestConfig = () => agentConfig({ ULYSSE_ANALYSIS_MODE: 'hermes-live', ENABLE_FIXTURE_CONNECTOR: 'true', HERMES_SERVICE_TOKEN: 'x'.repeat(32), OPENROUTER_API_KEY: 'test-only-never-transmitted', AGENT_MODEL_ID: 'openai/gpt-4.1-mini', AGENT_RUN_BUDGET_USD: '.25', AGENT_SESSION_BUDGET_USD: '2', AGENT_MONTH_BUDGET_USD: '10', AGENT_SESSION_ID: `test-${crypto.randomUUID()}` });
+  const abstention = { version: 'ulysse-agent-v1', outcome: 'no_signal', summary: 'Aucun signal dans ce test de contrôle.', proposals: [] };
+  test('atomic reservations bound concurrent tenants and unknown historical cost blocks live', async () => {
+    const a = await world('agent-budget-a'); const b = await world('agent-budget-b'); const c = await world('agent-budget-c');
+    const releases: Array<() => void> = [];
+    const blocked = { execute: () => new Promise<unknown>((resolve) => { releases.push(() => resolve(abstention)); }) };
+    const config = liveTestConfig();
+    const runners = [a, b, c].map(() => new AgentRuntime(workerPool, config, blocked));
+    const ra = runners[0]; const rb = runners[1]; const rc = runners[2]; assert.ok(ra && rb && rc);
+    const pending = [ra.run(a.ctx, a.o.id, 'test'), rb.run(b.ctx, b.o.id, 'test')];
+    await waitFor(async () => releases.length === 2);
+    try { await assert.rejects(rc.run(c.ctx, c.o.id, 'test'), /concurrency/); }
+    finally { releases.forEach((release) => release()); await Promise.all(pending); }
+    const unknown = await world('agent-unknown-cost');
+    await unknown.agent.store.transaction(unknown.ctx, async (tx) => {
+      await tx.insertModelUsage({ tenantId: unknown.tenantId, id: crypto.randomUUID(), recommendationId: null, provider: 'test', model: 'test', promptVersion: 'test', inputTokens: 100, outputTokens: 20, costUsd: null, latencyMs: 1, outcome: 'failed', errorCode: 'unknown', createdAt: new Date().toISOString() });
+    });
+    let invoked = false;
+    const runtime = new AgentRuntime(workerPool, liveTestConfig(), { execute: async () => { invoked = true; return abstention; } });
+    await runtime.run(unknown.ctx, unknown.o.id, 'test'); assert.equal(invoked, false);
+    assert.equal((await runtime.store.list(unknown.owner))[0]?.status, 'budget_reached');
+  });
+  test('source changes during execution prevent publication and retry after a completed run cannot duplicate', async () => {
+    const w = await world('agent-obsolete');
+    let runner: AgentRuntime;
+    runner = new AgentRuntime(workerPool, liveTestConfig(), { execute: async (request) => {
+      await runner.tool(request.capability, 'get_opportunity', { subjectId: w.o.id });
+      await runner.tool(request.capability, 'get_active_doctrine', {});
+      store.upsert('agent-obsolete', 'OPP-001', stalled('OPP-001', 12, { commercial: commercialFixture('acme', 'positive_reply') }), iso(0));
+      await w.runtime.handleSync({ tenantId: w.tenantId, connectionId: w.connection.id, trigger: 'manual' }, crypto.randomUUID());
+      return abstention;
+    } });
+    await runner.run(w.ctx, w.o.id, 'test'); assert.equal((await runner.store.list(w.owner))[0]?.status, 'obsolete'); assert.equal((await w.open()).length, 0);
+    await w.agent.analyze(w.ctx, 'source_change'); const recs = await w.open(); assert.equal(recs.length, 1);
+    // Equivalent to a crash after publication, before the pg-boss acknowledgement.
+    await w.agent.analyze(w.ctx, 'source_change'); assert.equal((await w.open())[0]?.id, recs[0]?.id);
+  });
+});
 
 let db: TestDatabase;
 let admin: AdminClient;
@@ -63,6 +169,7 @@ function runtimeWith(
     env?: Record<string, string>;
     model?: ModelSettings;
     metrics?: ReturnType<typeof createMetrics>;
+    agent?: AgentRuntime;
   } = {},
 ) {
   return new WorkerRuntime({
@@ -82,6 +189,7 @@ function runtimeWith(
     metrics: options.metrics ?? createMetrics('worker-test'),
     ...(options.faults ? { faults: options.faults } : {}),
     ...(options.model ? { model: options.model } : {}),
+    ...(options.agent ? { agent: options.agent } : {}),
   });
 }
 

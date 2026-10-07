@@ -36,8 +36,12 @@ def isolated_run(request):
         completed = subprocess.run(
             [sys.executable, str(Path(__file__).with_name("runner.py"))],
             input=json.dumps(request), capture_output=True, text=True, env=env, cwd=home,
-            timeout=min(int(request.get("timeoutMs", 90000)), 90000) / 1000, check=True,
+            timeout=min(int(request.get("timeoutMs", 90000)), 90000) / 1000, check=False,
         )
+        if completed.returncode:
+            # Runner diagnostics contain class names and source locations only.
+            diagnostic = json.loads(completed.stderr)
+            raise RuntimeError(json.dumps(diagnostic))
         if len(completed.stdout) > 20000:
             raise ValueError("result_size")
         return json.loads(completed.stdout)

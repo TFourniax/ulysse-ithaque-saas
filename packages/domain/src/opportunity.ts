@@ -245,6 +245,8 @@ export function factsOf(fields: OpportunityFields): FactValue[] {
     asFact('amount', 'fields.amount', fields.amount),
     asFact('owner_name', 'fields.ownerName', fields.ownerName),
     asFact('segment', 'fields.segment', fields.segment),
-    ...(fields.commercial === undefined ? [] : [asFact('commercial_context', 'fields.commercial', present(fields.commercial))]),
+    ...(fields.commercial === undefined
+      ? []
+      : [asFact('commercial_context', 'fields.commercial', present(fields.commercial))]),
   ];
 }

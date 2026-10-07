@@ -2374,3 +2374,4 @@ details[open]::details-content {
     animation: none !important;
   }
 }
+.agent-json { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }

@@ -356,6 +356,10 @@ describe('definer function privileges', () => {
       );
       const expected: Record<string, string> = {
         find_user_by_subject: 'ulysse_app',
+        demo_update_source: 'ulysse_app',
+        agent_slot_available: 'ulysse_worker',
+        reserve_agent_budget: 'ulysse_worker',
+        resolve_agent_capability: 'ulysse_worker',
         due_connections: 'ulysse_worker',
         active_tenants: 'ulysse_worker',
         claim_outbox: 'ulysse_worker',

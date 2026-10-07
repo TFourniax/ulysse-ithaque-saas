@@ -41,3 +41,40 @@ jobs:
       - run: docker build -f services/hermes/Dockerfile -t ulysse-hermes:ul016 .
       - name: Python checks and actual Hermes loop, simulated model endpoint
         run: docker run --rm --tmpfs /tmp:rw,size=128m,uid=10001,gid=10001 --entrypoint /opt/hermes/.venv/bin/python ulysse-hermes:ul016 -m unittest -v test_integration
+  simulated-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ULYSSE_ANALYSIS_MODE: simulated
+      ENABLE_DEMO_SCENARIOS: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: |
+          cp .env.example .env
+          cp infra/.env.example infra/.env
+          docker build -t ulysse-app:local .
+          docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait --wait-timeout 600 postgres keycloak api worker
+          docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app run --rm demo-seed
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/agent-smoke.mjs
+      - run: |
+          docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app restart api worker
+          node scripts/agent-smoke.mjs --resume
+      - name: Diagnostic logs
+        if: failure()
+        run: docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --profile app logs --tail=100 api worker
+      - name: Structured proof and browser captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ul016-simulated-evidence
+          path: |
+            test-results/ul016/proof.json
+            test-results/ul016/*.png
