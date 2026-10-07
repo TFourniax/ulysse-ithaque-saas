@@ -2,7 +2,7 @@
 
 ## UL-016 — analyse agentique fictive
 
-Lot **partial** sur `codex/ul-016-hermes-demo`, [PR draft #3](https://github.com/TFourniax/ulysse-ithaque-saas/pull/3). Base UL-015 exacte `598f082ab33fb87faf5ff357285dc95b536bb1b3`, interface conservée. Intégration et recette en cours ; live non validé sans clé. Voir [guide](DEMO-AGENTIQUE.md), [rapport](VALIDATION-UL-016.md), [journal](journal/2026-10-07-UL-016-hermes-demo.md). Les sources réelles, la doctrine réelle et le pilote restent ouverts.
+Lot **partial** sur `codex/ul-016-hermes-demo`, [PR draft #3](https://github.com/TFourniax/ulysse-ithaque-saas/pull/3). Base UL-015 exacte `598f082ab33fb87faf5ff357285dc95b536bb1b3`, interface conservée. Intégration et recette simulée vertes au `562cf83` : vraie boucle Hermes avec endpoint simulé, deux entreprises, budgets, reprise, stack neuve et upgrade UL-015. Live non validé sans clé ; revue de pertinence et lancement Docker Desktop personnel attendus. Voir [guide](DEMO-AGENTIQUE.md), [rapport](VALIDATION-UL-016.md), [journal](journal/2026-10-07-UL-016-hermes-demo.md). Les sources réelles, la doctrine réelle et le pilote restent ouverts.
 
 Mis à jour : 2026-10-07. Stade : **V1 de démonstration complète sur données fictives** (Résultat A). Pas de pilote réel : aucune source réelle, doctrine validée, utilisateur pilote ni environnement d'hébergement n'est disponible (Résultat B partiel).
 
@@ -10,16 +10,18 @@ Mis à jour : 2026-10-07. Stade : **V1 de démonstration complète sur données 
 
 - **Parcours** : une source autorisée (CRM fictif) est synchronisée en arrière-plan ; les faits normalisés produisent des propositions priorisées, expliquées et sourcées, sans question à un chatbot ; un humain approuve, rejette ou modifie ; tout est historisé et audité ; aucune action externe n'est exécutée.
 - **Identité** : connexion OIDC réelle (Keycloak de développement) côté serveur, sessions serveur, CSRF, deux entreprises fictives, rôles owner/reviewer/viewer relus à chaque requête ([ADR-0006](adr/0006-identite-oidc-bff.md)).
-- **Données** : PostgreSQL 18.6, 8 migrations, rôles séparés (le compte de migration n'est jamais le compte applicatif), RLS forcée, clés composites, tables en ajout seul ([ADR-0004](adr/0004-postgresql-roles-rls.md)).
+- **Données** : PostgreSQL 18.6, 10 migrations, rôles séparés (le compte de migration n'est jamais le compte applicatif), RLS forcée, clés composites, tables en ajout seul ([ADR-0004](adr/0004-postgresql-roles-rls.md)).
 - **Worker** : pg-boss, outbox transactionnelle, synchronisations planifiées, analyse, expiration, purge, reprise sur crash, équité entre entreprises ([ADR-0007](adr/0007-worker-outbox.md)).
 - **Connecteurs** : contrat versionné et suite de tests de contrat ; seul le connecteur **fictif** existe ([ADR-0008](adr/0008-contrat-connecteur.md)).
 - **Doctrine et contexte** : doctrine fictive versionnée (brouillon → validation par un owner → retrait), contexte d'entreprise versionné ; une nouvelle version remplace les propositions concernées.
 - **Interface** : React/Vite accessible (clavier, axe, mobile) : propositions, détail et preuves, décisions, révisions, sources, opportunités, analyses, audit, doctrine, contexte, membres. Direction visuelle « tech minimaliste » (UL-015) : thèmes clair et sombre, police auto-hébergée, jauges de priorité, transitions respectant `prefers-reduced-motion`.
 - **Mesure** : évaluation facultative de chaque décision (utile, non actionnable, doublon, obsolète, non fondée, hors périmètre) et page « Mesure » calculée uniquement à partir des données enregistrées ([ADR-0011](adr/0011-mesure-pilote.md)).
-- **Formulation assistée** optionnelle (désactivée par défaut), validée côté serveur, budgétée, avec mode dégradé ([ADR-0009](adr/0009-formulation-assistee.md)) — **appel réel non vérifié**.
+- **Analyse agentique** : modes règles, simulé et Hermes live explicitement séparés ; service privé remplaçable, sept outils de lecture, références et versions revalidées, réservations atomiques ([ADR-0012](adr/0012-hermes-analyse-agentique.md), [contrats](AGENT-CONTRACT.md)). La formulation payante historique est désactivée au worker. **Fournisseur live non vérifié**.
 - **Exploitation** : image Docker unique, stack Compose complète, sauvegarde chiffrée et restauration vérifiée, commandes d'administration, règles d'alerte, runbooks ([OPERATIONS](OPERATIONS.md), [ADR-0010](adr/0010-image-et-sauvegardes.md)).
 
 ## Vérifié
+
+Recette UL-016 actuelle : [rapport](VALIDATION-UL-016.md), CI et stack vertes au `562cf83`, PostgreSQL 50/50, API 17/17, worker 20/20, e2e 12/12, captures et preuves neuve/upgrade. Les résultats ci-dessous décrivent le socle historique.
 
 Branche `claude/quirky-darwin-v4is1f`, [PR #2](https://github.com/TFourniax/ulysse-ithaque-saas/pull/2). Au commit `a3160dc` : [CI run 37543605537](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37543605537) (push) et [run 37543609256](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37543609256) (pull request), 5 jobs verts chacun. Les commits suivants ne modifient que la documentation.
 
@@ -32,7 +34,7 @@ Branche `claude/quirky-darwin-v4is1f`, [PR #2](https://github.com/TFourniax/ulys
 | Image + stack Compose : connexion OIDC, propositions en arrière-plan, redémarrage, sauvegarde/restauration | vert | CI `container-stack` et local |
 | Démo hors ligne (`npm run demo`) | vert | CI |
 
-Captures de l'interface (données fictives) : [docs/evidence](evidence/), antérieures à la refonte UL-015 (DEBT-019). Correspondance critère par critère : [ACCEPTANCE](ACCEPTANCE.md).
+Captures et preuves UL-016 actuelles : [rapport](VALIDATION-UL-016.md). Les autres captures [docs/evidence](evidence/) sont antérieures à UL-015 (DEBT-019). Correspondance critère par critère : [ACCEPTANCE](ACCEPTANCE.md).
 
 ## Non vérifié, partiel ou bloqué
 
@@ -48,7 +50,7 @@ Captures de l'interface (données fictives) : [docs/evidence](evidence/), antér
 
 ## Prochaine étape
 
-Les lots réalisables sans nouvel accès sont livrés. La suite dépend des réponses listées dans [PILOT](PILOT.md) : UL-008 (première source réelle, dès qu'un accès est fourni), UL-009 (doctrine validée), UL-011b (environnement), puis UL-012c (pilote). En attendant : DEBT-013 (traces) ou DEBT-017 (autres navigateurs) si le pilote l'exige.
+Terminer la recette UL-016 avec une clé autorisée, la revue de pertinence et le lancement Docker Desktop. Les lots de pilote réel restent distincts et dépendent des réponses listées dans [PILOT](PILOT.md) : UL-008 (première source réelle, dès qu'un accès est fourni), UL-009 (doctrine validée), UL-011b (environnement), puis UL-012c (pilote). En attendant : DEBT-013 (traces) ou DEBT-017 (autres navigateurs) si le pilote l'exige.
 
 ## Source et publication
 

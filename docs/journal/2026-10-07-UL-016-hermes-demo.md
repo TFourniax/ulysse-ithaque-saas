@@ -27,3 +27,15 @@ Validation `efaea8e` : vraie boucle Hermes verte, deux instances concurrentes, s
 Recette upgrade : décision, session et identifiants antérieurs conservés ; manque de sync immédiate après enrichissement découvert puis corrigé par `ConnectionService.requestSync`, sans écriture directe de recommandation. Coûts estimés et inconnus testés séparément ; réserve incertaine conservée, retries bornés à huit transmissions. Dernière recette et état final détaillés dans VALIDATION.
 
 Le transport du poste s'est fermé après les contrôles locaux ; les corrections restantes sont poursuivies via GitHub. La copie personnelle reste intacte. Aucun accès live fourni ; état du lot partial, aucune approbation de pertinence supposée.
+
+## Consolidation finale
+
+Au head `562cf83e1e46559560f019ffdde0f30e384cd5fd`, checkout PR `65eae5fdeb4df6831d8958fb5f388bb6aede49ce` : cinq jobs CI et quatre jobs UL-016 verts. PostgreSQL 50/50, API 17/17, worker 20/20 (neuf cas agentiques), e2e 12/12 ; builds, backup/reprise, loop Hermes et stacks neuve/upgrade passent. Preuves JSON et captures reliées au SHA dans VALIDATION. L'upgrade ingère immédiatement l'enrichissement du seed et conserve la décision antérieure.
+
+Contrôles d'accessibilité ajoutés aux trois nouveaux parcours : le test initial mesurait le bandeau pendant son animation d'entrée ; attente des animations finies avant axe, sans les désactiver. Axe et largeur mobile passent. Les références des recommandations/décisions consultées sont maintenant versionnées ; une décision concurrente provoque l'abandon du résultat obsolète.
+
+Un Python 3.12 auxiliaire a permis l'analyse AST locale des fichiers ; l'image officielle Python 3.14.4 et son installation scellée ont été construites et réellement testées en CI. La boucle Hermes avec endpoint simulé utilise deux requêtes modèle par processus, sept outils exacts et get_opportunity, en 5,466 s pour deux processus concurrentiels. Ce test ne constitue pas un appel fournisseur réel.
+
+Documentation consolidée : ADR-0012, blueprint, contrat agentique v1, OpenAPI, sécurité/exploitation/acceptance, catalogue, guide PowerShell et parcours de 10–15 minutes. DEBT-014 corrigée et testée pour le pipeline activable ; ancienne formulation payante désactivée. Captures de trois vues actuelles disponibles ; les autres captures historiques restent une dette distincte.
+
+État final **partial**. Aucun fournisseur live appelé, aucune qualité/coût/latence live observée, aucune approbation produit inventée. Clé autorisée absente et Docker Desktop personnel inaccessible. Revue humaine de fidélité aux sources, rapprochement offre/besoin, contradictions et injection encore attendue. La PR reste draft, sans fusion ; les sources/doctrine réelles et le pilote ne sont pas clôturés.
