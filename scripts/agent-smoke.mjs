@@ -25,14 +25,25 @@ async function until(probe, timeout = 60000) {
   throw new Error('agent smoke condition timeout');
 }
 async function checkAccessibility() {
+  // Measure the settled interface, including the decision banner's finite entrance animation.
+  await page.evaluate(async () => {
+    const animations = globalThis.document.getAnimations().filter(
+      (animation) => animation.effect?.getComputedTiming().iterations !== Infinity,
+    );
+    await Promise.all(animations.map((animation) => animation.finished.catch(() => {})));
+  });
   const analysis = await new AxeBuilder({ page }).analyze();
   const violations = analysis.violations.filter(
     (v) => v.impact === 'serious' || v.impact === 'critical',
   );
-  assert.deepEqual(violations.map((v) => v.id), [], 'new agent pages remain accessible');
+  assert.deepEqual(
+    violations.map((v) => ({ id: v.id, targets: v.nodes.map((node) => node.target) })),
+    [],
+    'new agent pages remain accessible',
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   const overflows = await page.evaluate(
-    () => document.documentElement.scrollWidth > window.innerWidth,
+    () => globalThis.document.documentElement.scrollWidth > globalThis.innerWidth,
   );
   assert.equal(overflows, false, 'new agent pages fit mobile width');
   await page.setViewportSize({ width: 1280, height: 900 });
