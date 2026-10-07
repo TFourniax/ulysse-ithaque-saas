@@ -1,0 +1,78 @@
+services:
+  api:
+    environment:
+      ENABLE_FIXTURE_CONNECTOR: 'true'
+      ENABLE_DEMO_SCENARIOS: ${ENABLE_DEMO_SCENARIOS:-false}
+      ULYSSE_ANALYSIS_MODE: ${ULYSSE_ANALYSIS_MODE:-rules}
+  worker:
+    environment:
+      WORKER_HTTP_HOST: 0.0.0.0
+      MODEL_PROVIDER: none
+      ULYSSE_ANALYSIS_MODE: ${ULYSSE_ANALYSIS_MODE:-rules}
+      HERMES_URL: http://hermes:8090
+      HERMES_SERVICE_TOKEN: ${HERMES_SERVICE_TOKEN:-}
+      AGENT_MODEL_ID: ${AGENT_MODEL_ID:-}
+      AGENT_RUN_BUDGET_USD: ${AGENT_RUN_BUDGET_USD:-}
+      AGENT_SESSION_BUDGET_USD: ${AGENT_SESSION_BUDGET_USD:-}
+      AGENT_MONTH_BUDGET_USD: ${AGENT_MONTH_BUDGET_USD:-}
+      AGENT_SESSION_ID: ${AGENT_SESSION_ID:-}
+      # hermes-stub only (empty otherwise; refused in hermes-live).
+      AGENT_STUB_PROVIDER_URL: ${AGENT_STUB_PROVIDER_URL:-}
+    networks: [default, agent-private, stub-private]
+  hermes:
+    profiles: [agent]
+    image: ulysse-hermes:ul016
+    build:
+      context: ..
+      dockerfile: services/hermes/Dockerfile
+    environment:
+      HERMES_SERVICE_TOKEN: ${HERMES_SERVICE_TOKEN:-}
+      ULYSSE_GATEWAY_URL: http://worker:3001/agent
+    networks: [agent-private]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=128m,uid=10001,gid=10001']
+    mem_limit: 1g
+    pids_limit: 64
+    healthcheck:
+      test:
+        [
+          CMD,
+          /opt/hermes/.venv/bin/python,
+          -c,
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health',timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  # hermes-stub: SIMULATED OpenAI-compatible model for acceptance without a provider.
+  # No credential, no outbound network; reachable by the worker gateway only.
+  model-stub:
+    profiles: [agent-stub]
+    image: ulysse-hermes:ul016
+    command: [/opt/hermes/.venv/bin/python, /opt/ulysse/model_stub.py, '8091']
+    networks: [stub-private]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    pids_limit: 32
+    healthcheck:
+      test:
+        [
+          CMD,
+          /opt/hermes/.venv/bin/python,
+          -c,
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health',timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+networks:
+  agent-private:
+    internal: true
+  stub-private:
+    internal: true

@@ -32,6 +32,10 @@ const Schema = z.object({
     .default(120),
   COOKIE_SECURE: bool,
   ENABLE_FIXTURE_CONNECTOR: bool,
+  ENABLE_DEMO_SCENARIOS: bool,
+  ULYSSE_ANALYSIS_MODE: z
+    .enum(['rules', 'simulated', 'hermes-live', 'hermes-stub'])
+    .default('rules'),
   WEB_DIST_DIR: z.string().optional(),
   METRICS_TOKEN: z.string().min(24).optional(),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(300),

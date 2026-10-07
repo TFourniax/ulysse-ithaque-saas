@@ -1,4 +1,5 @@
 import type { ModelSettings } from '@ulysse/ai';
+import type { AgentRuntime } from './agent-runtime.ts';
 import { formulateNextStep, PROMPT_VERSION } from '@ulysse/ai';
 import type { Connector, ConnectorContext, ConnectorRegistry } from '@ulysse/connectors';
 import { ConnectorError } from '@ulysse/connectors';
@@ -62,6 +63,7 @@ export type WorkerDeps = Readonly<{
   faults?: FaultHooks;
   /** Optional model-assisted wording; null provider = deterministic wording only. */
   model?: ModelSettings;
+  agent?: AgentRuntime;
 }>;
 
 type OutboxRow = {
@@ -511,6 +513,10 @@ export class WorkerRuntime {
 
   async handleAnalyze(job: TenantJob, jobId: string): Promise<void> {
     const ctx = serviceContext(job.tenantId, `job:${jobId}`, ['analysis:run']);
+    if (this.#deps.agent) {
+      await this.#deps.agent.analyze(ctx, job.trigger, this.#abort.signal);
+      return;
+    }
     const analysis = await this.#analysis.run(ctx, job.trigger);
     if (analysis.generated > 0) {
       const connections = await this.#uow.run(ctx, (tx) => tx.listConnections());
@@ -538,6 +544,14 @@ export class WorkerRuntime {
   async handleMaintain(job: TenantJob, jobId: string): Promise<void> {
     const ctx = serviceContext(job.tenantId, `job:${jobId}`, ['recommendation:maintain']);
     await this.#maintenance.expireDue(ctx);
+    // A process crash can leave an expired lease without a fresh source event.
+    // Periodic reconciliation retries it; completed input hashes are skipped.
+    if (this.#deps.agent)
+      await this.#deps.agent.analyze(
+        serviceContext(job.tenantId, `job:${jobId}:resume`, ['analysis:run']),
+        'scheduled',
+        this.#abort.signal,
+      );
     const now = this.#deps.clock.now().getTime();
     for (const c of await this.#uow.run(ctx, (tx) => tx.listConnections())) {
       if (c.status === 'active' && c.dataAsOf) {
@@ -558,6 +572,18 @@ export class WorkerRuntime {
     );
     const connection = await this.#uow.run(ctx, (tx) => tx.getConnection(job.connectionId));
     if (!connection || connection.status !== 'revoked') return;
+    // Erase agent-derived content, retain usage accounting so erasure cannot reset budgets.
+    if (this.#deps.agent)
+      await this.#deps.agent.store.transaction(ctx, async (_tx, sql) => {
+        await sql.query(
+          'DELETE FROM agent_events WHERE tenant_id=$1 AND run_id IN (SELECT r.id FROM agent_runs r JOIN opportunities o ON o.tenant_id=r.tenant_id AND o.id=r.subject_id WHERE r.tenant_id=$1 AND o.connection_id=$2)',
+          [ctx.tenantId, job.connectionId],
+        );
+        await sql.query(
+          "UPDATE agent_runs SET result=NULL,retrieved='{}',snapshot='{}',status=CASE WHEN status IN ('running','validating') THEN 'interrupted' ELSE status END,error_code='source_purged' WHERE tenant_id=$1 AND subject_id IN (SELECT id FROM opportunities WHERE tenant_id=$1 AND connection_id=$2)",
+          [ctx.tenantId, job.connectionId],
+        );
+      });
     const connector = this.#deps.registry.get(connection.provider);
     if (connector) {
       await connector

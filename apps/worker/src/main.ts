@@ -6,6 +6,7 @@ import { createPool, databaseUrl } from '@ulysse/database';
 import { defaultRules, systemClock } from '@ulysse/domain';
 import { createLogger, createMetrics } from '@ulysse/observability';
 import { loadWorkerConfig } from './config.ts';
+import { agentConfig, AgentRuntime } from './agent-runtime.ts';
 import { noCredentialStore, WorkerRuntime } from './runtime.ts';
 
 const config = loadWorkerConfig();
@@ -19,6 +20,17 @@ const pool = createPool({
 });
 
 const connectors: Connector[] = [];
+const agentSettings = agentConfig();
+if (
+  process.env.MODEL_PROVIDER &&
+  process.env.MODEL_PROVIDER !== 'none' &&
+  agentSettings.ULYSSE_ANALYSIS_MODE === 'rules'
+)
+  throw new Error('Legacy paid wording is disabled: use the bounded hermes-live execution path');
+const agent =
+  agentSettings.ULYSSE_ANALYSIS_MODE === 'rules'
+    ? undefined
+    : new AgentRuntime(pool, agentSettings, undefined, logger);
 if (config.ENABLE_FIXTURE_CONNECTOR)
   connectors.push(new FixtureConnector(new PgFixtureStore(pool)));
 
@@ -32,11 +44,16 @@ const runtime = new WorkerRuntime({
   clock: systemClock,
   logger,
   metrics,
-  model: modelSettingsFromEnv(),
+  model: agent ? undefined : modelSettingsFromEnv(),
+  agent,
 });
 
 let ready = false;
 const server = http.createServer((req, res) => {
+  if (req.url?.startsWith('/agent/') && agent) {
+    void agent.handleHttp(req, res);
+    return;
+  }
   const send = (status: number, body: string, type = 'application/json') => {
     res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
     res.end(body);

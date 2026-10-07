@@ -1,21 +1,27 @@
 # État actuel
 
+## UL-016 — analyse agentique fictive
+
+Lot **partial** sur `claude/clever-cannon-99ywx2`, [PR draft #4](https://github.com/TFourniax/ulysse-ithaque-saas/pull/4), qui reprend la [PR #3](https://github.com/TFourniax/ulysse-ithaque-saas/pull/3) de Codex (`fefba88`) depuis la base UL-015 `598f082`. Interface UL-015 conservée. Hermes officiel épinglé `e76fb95` : le modèle ne reçoit plus que les instructions Ulysse (plugin `ulysse`, contrôle d'empreinte à la passerelle) ; corpus fictif propre à chaque opportunité ; mode `hermes-stub` qui exécute **le vrai Hermes dans la stack** contre un modèle simulé. Vérifié localement et en CI : verify, PostgreSQL 50/50, API 17/17, worker 23/23, e2e 12/12, boucle Hermes, parcours navigateur Hermes + redémarrage, mise à niveau depuis UL-015 et depuis la version Codex, répétition de la validation live. **Live non exécuté** (pas de clé ; `openrouter.ai` refusé par la politique réseau de l'environnement de l'agent) ; procédure prête (`scripts/live-validation.mjs`). Voir [guide](DEMO-AGENTIQUE.md), [rapport](VALIDATION-UL-016.md), [journal](journal/2026-10-07-UL-016-hermes-demo.md). Les sources réelles, la doctrine réelle et le pilote restent ouverts.
+
 Mis à jour : 2026-10-07. Stade : **V1 de démonstration complète sur données fictives** (Résultat A). Pas de pilote réel : aucune source réelle, doctrine validée, utilisateur pilote ni environnement d'hébergement n'est disponible (Résultat B partiel).
 
 ## Ce qui fonctionne
 
 - **Parcours** : une source autorisée (CRM fictif) est synchronisée en arrière-plan ; les faits normalisés produisent des propositions priorisées, expliquées et sourcées, sans question à un chatbot ; un humain approuve, rejette ou modifie ; tout est historisé et audité ; aucune action externe n'est exécutée.
 - **Identité** : connexion OIDC réelle (Keycloak de développement) côté serveur, sessions serveur, CSRF, deux entreprises fictives, rôles owner/reviewer/viewer relus à chaque requête ([ADR-0006](adr/0006-identite-oidc-bff.md)).
-- **Données** : PostgreSQL 18.6, 8 migrations, rôles séparés (le compte de migration n'est jamais le compte applicatif), RLS forcée, clés composites, tables en ajout seul ([ADR-0004](adr/0004-postgresql-roles-rls.md)).
+- **Données** : PostgreSQL 18.6, 11 migrations, rôles séparés (le compte de migration n'est jamais le compte applicatif), RLS forcée, clés composites, tables en ajout seul ([ADR-0004](adr/0004-postgresql-roles-rls.md)).
 - **Worker** : pg-boss, outbox transactionnelle, synchronisations planifiées, analyse, expiration, purge, reprise sur crash, équité entre entreprises ([ADR-0007](adr/0007-worker-outbox.md)).
 - **Connecteurs** : contrat versionné et suite de tests de contrat ; seul le connecteur **fictif** existe ([ADR-0008](adr/0008-contrat-connecteur.md)).
 - **Doctrine et contexte** : doctrine fictive versionnée (brouillon → validation par un owner → retrait), contexte d'entreprise versionné ; une nouvelle version remplace les propositions concernées.
 - **Interface** : React/Vite accessible (clavier, axe, mobile) : propositions, détail et preuves, décisions, révisions, sources, opportunités, analyses, audit, doctrine, contexte, membres. Direction visuelle « tech minimaliste » (UL-015) : thèmes clair et sombre, police auto-hébergée, jauges de priorité, transitions respectant `prefers-reduced-motion`.
 - **Mesure** : évaluation facultative de chaque décision (utile, non actionnable, doublon, obsolète, non fondée, hors périmètre) et page « Mesure » calculée uniquement à partir des données enregistrées ([ADR-0011](adr/0011-mesure-pilote.md)).
-- **Formulation assistée** optionnelle (désactivée par défaut), validée côté serveur, budgétée, avec mode dégradé ([ADR-0009](adr/0009-formulation-assistee.md)) — **appel réel non vérifié**.
+- **Analyse agentique** : modes règles, simulé, Hermes réel avec modèle simulé et Hermes live, explicitement séparés ; service privé remplaçable, plugin Hermes `ulysse` (sept outils de lecture, prompt réduit aux instructions Ulysse et vérifié par la passerelle), références et versions revalidées, réservations atomiques et tentatives bornées ([ADR-0012](adr/0012-hermes-analyse-agentique.md), [contrats](AGENT-CONTRACT.md)). La formulation payante historique est désactivée au worker. **Fournisseur live non vérifié**.
 - **Exploitation** : image Docker unique, stack Compose complète, sauvegarde chiffrée et restauration vérifiée, commandes d'administration, règles d'alerte, runbooks ([OPERATIONS](OPERATIONS.md), [ADR-0010](adr/0010-image-et-sauvegardes.md)).
 
 ## Vérifié
+
+Recette UL-016 actuelle : [rapport](VALIDATION-UL-016.md) — trois niveaux distincts (simulé, Hermes réel avec modèle simulé, live non exécuté), PostgreSQL 50/50, API 17/17, worker 23/23, e2e 12/12, stack Hermes réelle en CI (`hermes-stack`) et en local, mise à niveau UL-015 et Codex. Les résultats ci-dessous décrivent le socle historique.
 
 Branche `claude/quirky-darwin-v4is1f`, [PR #2](https://github.com/TFourniax/ulysse-ithaque-saas/pull/2). Au commit `a3160dc` : [CI run 37543605537](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37543605537) (push) et [run 37543609256](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37543609256) (pull request), 5 jobs verts chacun. Les commits suivants ne modifient que la documentation.
 
@@ -28,7 +34,7 @@ Branche `claude/quirky-darwin-v4is1f`, [PR #2](https://github.com/TFourniax/ulys
 | Image + stack Compose : connexion OIDC, propositions en arrière-plan, redémarrage, sauvegarde/restauration | vert | CI `container-stack` et local |
 | Démo hors ligne (`npm run demo`) | vert | CI |
 
-Captures de l'interface (données fictives) : [docs/evidence](evidence/), antérieures à la refonte UL-015 (DEBT-019). Correspondance critère par critère : [ACCEPTANCE](ACCEPTANCE.md).
+Captures et preuves UL-016 actuelles : [rapport](VALIDATION-UL-016.md). Les autres captures [docs/evidence](evidence/) sont antérieures à UL-015 (DEBT-019). Correspondance critère par critère : [ACCEPTANCE](ACCEPTANCE.md).
 
 ## Non vérifié, partiel ou bloqué
 
@@ -44,12 +50,14 @@ Captures de l'interface (données fictives) : [docs/evidence](evidence/), antér
 
 ## Prochaine étape
 
-Les lots réalisables sans nouvel accès sont livrés. La suite dépend des réponses listées dans [PILOT](PILOT.md) : UL-008 (première source réelle, dès qu'un accès est fourni), UL-009 (doctrine validée), UL-011b (environnement), puis UL-012c (pilote). En attendant : DEBT-013 (traces) ou DEBT-017 (autres navigateurs) si le pilote l'exige.
+Terminer UL-016 : sur le poste de Thomas (Docker Desktop), répétition `hermes-stub`, puis `hermes-live` avec une clé autorisée et `node scripts/live-validation.mjs`, décision humaine et revue de pertinence du rapport. Les lots de pilote réel restent distincts et dépendent des réponses listées dans [PILOT](PILOT.md) : UL-008 (première source réelle, dès qu'un accès est fourni), UL-009 (doctrine validée), UL-011b (environnement), puis UL-012c (pilote). En attendant : DEBT-013 (traces) ou DEBT-017 (autres navigateurs) si le pilote l'exige.
 
 ## Source et publication
 
 Base : `codex/ul-001-foundation` ([PR #1](https://github.com/TFourniax/ulysse-ithaque-saas/pull/1), non fusionnée). Travail sur `claude/quirky-darwin-v4is1f` ([PR #2](https://github.com/TFourniax/ulysse-ithaque-saas/pull/2)). Aucune fusion sur `main`, aucun déploiement.
 
 Journaux : [fondation](journal/2026-10-06-foundation.md), [UL-002 à UL-010](journal/2026-10-06-UL-002-v1-demo.md), [UL-011](journal/2026-10-06-UL-011-exploitation.md), [UL-012b](journal/2026-10-06-UL-012b-mesure.md), [UL-015](journal/2026-10-07-UL-015-interface.md).
+
+UL-016 : Codex sur `codex/ul-016-hermes-demo` ([PR #3](https://github.com/TFourniax/ulysse-ithaque-saas/pull/3)), reprise sur `claude/clever-cannon-99ywx2` ([PR #4](https://github.com/TFourniax/ulysse-ithaque-saas/pull/4), contient #3), toutes deux vers `claude/sweet-tesla-jrnkxs`, sans fusion.
 
 Refonte visuelle UL-015 sur `claude/sweet-tesla-jrnkxs`, basée sur `claude/quirky-darwin-v4is1f` : [CI run 37628909866](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37628909866) au commit `2364d93`, 5 jobs verts (recette Playwright 12/12, axe et mobile compris) ; captures validées par le responsable produit.

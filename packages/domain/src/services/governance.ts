@@ -116,6 +116,7 @@ export class DoctrineService {
     const actor = requirePermission(ctx, 'doctrine:validate');
     const { uow, clock, ids } = this.#deps;
     return uow.run(ctx, async (tx) => {
+      await tx.lock('analysis');
       const doctrine = await tx.getDoctrine(doctrineId, { forUpdate: true });
       ensure(doctrine !== null, 'NOT_FOUND');
       const at = toInstant(clock.now());
@@ -160,6 +161,7 @@ export class DoctrineService {
     requirePermission(ctx, 'doctrine:validate');
     const { uow, clock, ids } = this.#deps;
     return uow.run(ctx, async (tx) => {
+      await tx.lock('analysis');
       const doctrine = await tx.getDoctrine(doctrineId, { forUpdate: true });
       ensure(doctrine !== null, 'NOT_FOUND');
       const at = toInstant(clock.now());
@@ -216,6 +218,7 @@ export class CompanyContextService {
     const { uow, clock, ids } = this.#deps;
     return uow.run(ctx, async (tx) => {
       const at = toInstant(clock.now());
+      await tx.lock('analysis');
       const current = await tx.getCurrentContext();
       const next: CompanyContext = {
         tenantId: ctx.tenantId,

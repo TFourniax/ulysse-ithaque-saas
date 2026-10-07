@@ -1,5 +1,15 @@
 # Blueprint technique Ulysse
 
+## Extension UL-016 — analyse proactive par agent
+
+[ADR-0012](adr/0012-hermes-analyse-agentique.md) étend explicitement ADR-0009 : Hermes choisit les lectures autorisées, rapproche sources, contexte et doctrine, et propose une prochaine action. Le modèle n'est plus limité à reformuler un signal détecté par règles. Le mode historique reste disponible.
+
+Web → API pour identité/permissions/lectures/décisions ; PostgreSQL pour état canonique, versions, runs, audit et usages ; worker pour ingestion, jobs/reprise, réservations et publication ; Hermes privé pour la boucle ; plugin/adaptateur Ulysse pour les sept outils et le contrat fermé. Le domaine ne dépend pas d'Hermes, Python, Fastify ou d'un fournisseur. Le navigateur ne contacte aucun de ces services d'inférence.
+
+Une capacité opaque expirante fixe tenant/sujet côté serveur. Chaque lecture et chaque publication recontrôlent permissions, sources actives, versions et fraîcheur. Les appels modèle sont hors transaction PostgreSQL et transitent par une passerelle financière. Les registres/plugins/caches d'Hermes sont isolés par processus et ses fichiers temporaires supprimés ; PostgreSQL demeure l'unique base métier.
+
+Modes : `rules`, `simulated`, `hermes-stub` (vrai Hermes, modèle simulé, pour la recette sans dépense), `hermes-live`. Le plugin Hermes `ulysse` fournit les outils et réduit le prompt système aux seules instructions versionnées d'Ulysse ; la passerelle le vérifie avant toute transmission (révision ADR-0012). Activation live explicite, aucune configuration absente ne lance un appel payant, aucune double publication par les règles en mode agentique, aucun repli invisible. Sources et doctrine de ce lot entièrement fictives. Voir [scénarios](SCENARIOS-AGENTIQUES.md) et [validation](VALIDATION-UL-016.md).
+
 Statut : architecture cible proposée pour démarrer le développement ; composants livrés décrits dans STATUS. Référence produit : PRODUCT. Les interfaces externes non documentées restent des contrats à obtenir. Aucune intégration partenaire n'est supposée fonctionnelle.
 
 ## 1. Architecture et responsabilités
@@ -162,3 +172,5 @@ Les lots sont détaillés dans BACKLOG avec dépendances et preuves. Pas de date
 - Sorties structurées OpenRouter : https://openrouter.ai/docs/guides/features/structured-outputs
 
 Ces documentations fondent les choix proposés. Elles ne prouvent pas que les composants sont installés ni leur compatibilité de bout en bout ; la première installation doit vérifier ces points.
+
+Contrats d'exécution, outils, résultats, progression et usages : [AGENT-CONTRACT](AGENT-CONTRACT.md).

@@ -1144,7 +1144,7 @@ export class PgTenantTx implements TenantTx {
 
   async sumModelCostSince(since: string): Promise<number> {
     const row = await this.#one(
-      'SELECT COALESCE(sum(cost_usd), 0)::text AS total FROM model_usage WHERE tenant_id = $1 AND created_at >= $2',
+      'SELECT COALESCE(sum(COALESCE(cost_usd, 1000000000)), 0)::text AS total FROM model_usage WHERE tenant_id = $1 AND created_at >= $2',
       [this.tenantId, since],
     );
     return row ? num(row, 'total') : 0;

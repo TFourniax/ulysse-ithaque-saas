@@ -1,4 +1,5 @@
 import { useOpportunities } from '../api.ts';
+import { Link } from 'react-router';
 import { useSession } from '../session.tsx';
 import { EmptyState, ErrorBanner, Loading, PageHeader, TableScroll } from '../components/ui.tsx';
 import { formatDateTime, formatFactValue } from '../format.ts';
@@ -12,18 +13,20 @@ function cell(field: Field): { text: string; muted: boolean } {
   return { text: formatFactValue(field.state, field.value), muted: field.state !== 'present' };
 }
 
+export const OPPORTUNITY_FIELDS: Array<[string, string]> = [
+  ['lastInteractionAt', 'Dernière interaction'],
+  ['nextStep', 'Prochaine étape'],
+  ['nextStepDueAt', 'Échéance'],
+  ['amount', 'Montant'],
+  ['ownerName', 'Responsable'],
+  ['segment', 'Segment'],
+];
+
 export function OpportunitiesPage() {
   const session = useSession();
   const query = useOpportunities(session.activeTenant.id);
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
-  const columns: Array<[string, string]> = [
-    ['lastInteractionAt', 'Dernière interaction'],
-    ['nextStep', 'Prochaine étape'],
-    ['nextStepDueAt', 'Échéance'],
-    ['amount', 'Montant'],
-    ['ownerName', 'Responsable'],
-    ['segment', 'Segment'],
-  ];
+  const columns = OPPORTUNITY_FIELDS;
   return (
     <>
       <PageHeader title="Opportunités">
@@ -57,7 +60,7 @@ export function OpportunitiesPage() {
               {items.map((o) => (
                 <tr key={o.id}>
                   <th scope="row">
-                    {o.name}
+                    <Link to={`/opportunities/${o.id}`}>{o.name}</Link>
                     <span className="muted small cell-sub">
                       {' '}
                       ({o.externalId}, rév. {o.revision})

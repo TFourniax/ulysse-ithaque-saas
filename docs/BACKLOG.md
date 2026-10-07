@@ -8,7 +8,7 @@ Mis à jour le 7 octobre 2026. Ce fichier fait foi tant qu'un passage documenté
 | --- | --- | --- | --- | --- |
 | UL-001 | Cadrage, règles communes, blueprint et kernel de référence | done | — | Docs de reprise, démo hors ligne ; [journal](journal/2026-10-06-foundation.md) |
 | UL-002 | Tooling strict, API et identité/memberships | done | UL-001 | Lockfile, tsc/lint/build en CI ; OIDC BFF, sessions, CSRF, tests droits/membership/révocation ; OpenAPI versionné ([ADR-0005](adr/0005-outillage-et-stack.md), [ADR-0006](adr/0006-identite-oidc-bff.md)) |
-| UL-003 | PostgreSQL/RLS et décisions durables | done | UL-002 | Migrations SQL contrôlées (8 à ce jour), tests sous rôles réels, conflits/idempotence/atomicité, redémarrage ([ADR-0004](adr/0004-postgresql-roles-rls.md)) |
+| UL-003 | PostgreSQL/RLS et décisions durables | done | UL-002 | Migrations SQL contrôlées (11 à ce jour), tests sous rôles réels, conflits/idempotence/atomicité, redémarrage ([ADR-0004](adr/0004-postgresql-roles-rls.md)) |
 | UL-004 | Worker, pg-boss, outbox et synchronisation fixture | done | UL-003 | Ingestion planifiée sans utilisateur, crash/retry/révocation, deux entreprises ([ADR-0007](adr/0007-worker-outbox.md)) |
 | UL-005 | Contrat connecteur et normalisation versionnée | done | UL-003 | Capacités, pagination, versions, suppressions, erreurs typées ; fixture et suite de contrat ([ADR-0008](adr/0008-contrat-connecteur.md)) |
 | UL-006 | Tableau de bord et décisions de bout en bout | done | UL-002–UL-004 | Liste, détail, provenance, décisions, révisions, historique ; Playwright 12/12 avec axe et mobile en CI |
@@ -21,10 +21,13 @@ Mis à jour le 7 octobre 2026. Ce fichier fait foi tant qu'un passage documenté
 | UL-013 | Réconcilier la pièce jointe initiale | blocked | Fichier lisible | Lire le document exact, comparer exigences/stack, conserver arbitrages explicites |
 | UL-014 | Licence, hébergement et conditions d'exploitation | blocked | Arbitrages responsables | Décisions consignées dans OPEN-QUESTIONS/ADR sans inventer contrat, coûts ou droits ; questions préparées dans [PILOT](PILOT.md) |
 | UL-015 | Refonte visuelle « tech minimaliste » de l'interface | done | UL-006 | Jetons clair/sombre, Mona Sans auto-hébergée, rail, jauges, transitions, `TableScroll` ; axe 0 violation sérieuse sur 48 combinaisons ; CSP de production vérifiée ; [CI run 37628909866](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37628909866) au commit `2364d93` : 5 jobs verts dont recette Playwright 12/12 ; captures validées par le responsable produit le 2026-10-07 ([journal](journal/2026-10-07-UL-015-interface.md)). Captures `docs/evidence` à régénérer : DEBT-019 |
+| UL-016 | Intégration Hermes et démonstration agentique fictive | partial | UL-015, clé modèle autorisée, accès réseau au fournisseur | Prise Codex (PR #3, depuis `598f082`), reprise Claude (PR #4, depuis `fefba88`). Fait : outils bornés, pipeline PostgreSQL/worker, corpus propre à chaque opportunité, opportunités ouvrables, Analyses, décisions ; prompt Hermes réduit aux instructions Ulysse et vérifié par la passerelle ; mode `hermes-stub` (vrai Hermes, modèle simulé) recetté en stack locale et en CI ; mise à niveau UL-015 et Codex ; procédure PowerShell exécutée ; outillage `scripts/live-validation.mjs` répété ([VALIDATION](VALIDATION-UL-016.md)). Reste : exécution `hermes-live` des cinq scénarios avec décision humaine et revue de pertinence du rapport, lancement sur le Docker Desktop de Thomas. Aucun appel live observé. |
 
 UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre convenu. Une intégration réelle et des utilisateurs pilotes le sont pour qualifier la valeur réelle.
 
 ## Prochain lot à prendre
+
+Priorité de cette branche : terminer la recette UL-016 live et la revue de pertinence selon [DEMO-AGENTIQUE](DEMO-AGENTIQUE.md). Les lots ci-dessous restent indépendants et ne sont pas clôturés par des données fictives.
 
 1. **UL-008** dès qu'une source et un accès sont fournis, en suivant [CONNECTORS](CONNECTORS.md).
 2. **UL-009** dès que la doctrine Néreis/Odyssée est fournie et validée par ses responsables.
@@ -48,9 +51,11 @@ UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre c
 | DEBT-011 | Stockage des credentials de connecteurs réels non conçu (`noCredentialStore`) | ouverte — UL-008 |
 | DEBT-012 | Doctrine par entreprise seulement ; pas de doctrine commune sous licence partagée entre entreprises | ouverte — UL-009, Q-011 |
 | DEBT-013 | Pas de traces OpenTelemetry ; corrélation par `correlationId` dans journaux et erreurs | ouverte — avant pilote multi-services |
-| DEBT-014 | Budget modèle fondé sur le coût déclaré ; un appel sans coût déclaré compte pour 0 | ouverte — UL-010 avant activation réelle |
+| DEBT-014 | Coût inconnu et concurrence des budgets modèle | fermée dans UL-016 pour le pipeline activable : réservation atomique avant transmission ; coût déclaré/estimé/inconnu conservateur, plafonds run/session/mois ; tentatives échouées bornées à deux par entrée et session, réservation ramenée au montant engagé (transmissions incertaines à leur borne haute). Ancienne formulation payante désactivée. La qualité et les coûts réels restent à mesurer lors de la recette live. |
 | DEBT-015 | Règles d'alerte non déployées (aucun Prometheus/Alertmanager) | ouverte — UL-011b |
 | DEBT-016 | Avertissement de dépréciation Fastify `requestIdLogLabel` (option retirée en Fastify 6) | fermée — `LogController` ; journaux toujours corrélés par `correlationId` |
 | DEBT-017 | Recette navigateur sur Chromium seulement | ouverte — ajouter Firefox/WebKit si le pilote l'exige |
 | DEBT-018 | Coût de la formulation assistée sur des données réelles inconnu | ouverte — UL-010 |
-| DEBT-019 | Captures de `docs/evidence` antérieures à la refonte visuelle | ouverte — UL-015, à régénérer depuis la stack réelle |
+| DEBT-019 | Captures de `docs/evidence` antérieures à la refonte visuelle | partielle — captures UL-016 versionnées (`08` à `10`, stack Hermes réelle) et artefacts CI ; les anciennes captures `01` à `07` restent à régénérer |
+| DEBT-020 | Hermes épinglé sur un commit de `main`, pas sur une release (la release `v2026.9.24` précède l'installateur scellé et exclut Python 3.14) | ouverte — passer à la première release officielle contenant l'installateur scellé, puis rejouer `hermes-loop` et `hermes-stack` |
+| DEBT-021 | Urgence et limites proposées par l'agent lues dans le résultat du run (rapprochement par titre), non portées par la recommandation | ouverte — si elles deviennent des critères de tri ou d'export, les ajouter au modèle de recommandation par une migration |

@@ -1,7 +1,9 @@
-import type { RecommendationDetail } from '@ulysse/contracts';
+import type { AgentRunDto, RecommendationDetail } from '@ulysse/contracts';
+import { useQuery } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import {
+  api,
   ApiError,
   newIdempotencyKey,
   useDecision,
@@ -330,6 +332,55 @@ function BackLink() {
   );
 }
 
+const URGENCY_LABELS: Record<string, string> = {
+  normal: 'normale',
+  soon: 'prochainement',
+  urgent: 'urgente',
+};
+
+/** Parts proposed by the agent that the recommendation does not carry: urgency and limits. */
+function AgentProposalFacts({ analysisId, title }: { analysisId: string; title: string }) {
+  const session = useSession();
+  const run = useQuery({
+    queryKey: ['agent-run', session.activeTenant.id, analysisId],
+    queryFn: () => api<AgentRunDto>(`/v1/agent-runs/${analysisId}`),
+  });
+  const result = run.data?.result;
+  const proposals =
+    typeof result === 'object' && result !== null && 'proposals' in result
+      ? result.proposals
+      : null;
+  const proposal = Array.isArray(proposals)
+    ? (proposals as Array<{ title?: unknown; urgency?: unknown; limits?: unknown }>).find(
+        (p) => p.title === title,
+      )
+    : undefined;
+  if (!proposal) return null;
+  const limits = Array.isArray(proposal.limits)
+    ? proposal.limits.filter((l): l is string => typeof l === 'string')
+    : [];
+  return (
+    <>
+      {limits.length > 0 && (
+        <>
+          <h3>Limites indiquées par l’agent</h3>
+          <ul className="plain-list">
+            {limits.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {typeof proposal.urgency === 'string' && (
+        <p className="small">
+          Urgence proposée par l’agent : {URGENCY_LABELS[proposal.urgency] ?? proposal.urgency}.
+          Elle n’entre pas dans la priorité, calculée par Ulysse.
+        </p>
+      )}
+    </>
+  );
+}
+
 export function RecommendationDetailPage() {
   const { id = '' } = useParams();
   const session = useSession();
@@ -360,6 +411,9 @@ export function RecommendationDetailPage() {
         </div>
         <h1>{frenchSpacing(rec.title)}</h1>
         <p className="detail-subject">
+          <Link to={`/opportunities/${rec.subject.id}`}>Ouvrir les sources de l’opportunité</Link> ·{' '}
+          <Link to={`/analyses#${rec.analysisId}`}>Voir l’analyse et son origine</Link>
+          <br />
           {KIND_LABELS[rec.kind] ?? rec.kind} · {rec.subject.label} ({rec.subject.externalId})
         </p>
       </header>
@@ -434,7 +488,9 @@ export function RecommendationDetailPage() {
                 <tbody>
                   {detail.evidence.map((e) => (
                     <tr key={e.id}>
-                      <th scope="row">{e.label}</th>
+                      <th scope="row">
+                        <Link to={`/opportunities/${rec.subject.id}`}>{e.label}</Link>
+                      </th>
                       <td className={e.state === 'present' ? '' : 'muted'}>
                         {e.factType === 'stage' && typeof e.value === 'string'
                           ? (STAGE_LABELS[e.value] ?? e.value)
@@ -481,12 +537,22 @@ export function RecommendationDetailPage() {
                 </ul>
               </>
             )}
+            {rec.ruleId === 'ulysse.agent.v1' && (
+              <AgentProposalFacts analysisId={rec.analysisId} title={rec.title} />
+            )}
             <p className="muted small provenance">
               Règle {rec.ruleId} v{rec.ruleVersion} · doctrine « {rec.doctrine.key} » v
               {rec.doctrine.version}
               {rec.doctrine.fictional && ' (fictive, non validée métier)'} · contexte v
               {rec.contextVersion ?? '—'} · formulation :{' '}
-              {rec.formulation === 'model' ? 'assistée par modèle' : 'règles déterministes'}.
+              {rec.ruleId === 'ulysse.agent.v1'
+                ? rec.formulation === 'model'
+                  ? 'Hermes live'
+                  : 'simulation agentique, aucun modèle réel (origine exacte dans l’analyse)'
+                : rec.formulation === 'model'
+                  ? 'assistée par modèle'
+                  : 'règles déterministes'}
+              .
             </p>
           </section>
         </div>

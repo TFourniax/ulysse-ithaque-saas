@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS fixture_crm.items (
 CREATE INDEX IF NOT EXISTS fixture_items_seq_idx ON fixture_crm.items (dataset, seq);
 GRANT USAGE ON SCHEMA fixture_crm TO ulysse_worker;
 GRANT SELECT ON fixture_crm.items TO ulysse_worker;
+GRANT USAGE ON SCHEMA fixture_crm TO ulysse_definer;
+GRANT SELECT, UPDATE ON fixture_crm.items TO ulysse_definer;
+GRANT USAGE ON SEQUENCE fixture_crm.change_seq TO ulysse_definer;
 `;
 
 export class PgFixtureStore implements FixtureStore {
