@@ -668,6 +668,8 @@ export class PgTenantTx implements TenantTx {
   async purgeConnectionData(
     connectionId: string,
   ): Promise<{ sourceRecords: number; opportunities: number; facts: number }> {
+    // The worker removes agent copies in the same transaction, even after returning to rules.
+    await this.#exec('SELECT app.purge_agent_artifacts($1)', [connectionId]);
     const facts = await this.#exec(
       'DELETE FROM facts WHERE tenant_id = $1 AND connection_id = $2',
       [this.tenantId, connectionId],

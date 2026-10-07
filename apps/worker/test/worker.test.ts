@@ -232,6 +232,42 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     assert.equal(run.status, 'failed');
     assert.equal((await w.open())[0]?.id, previous.id);
   });
+  test('revocation purges agent excerpts and runs in rules mode without resetting usage', async () => {
+    const w = await world('agent-purge-copies');
+    await w.agent.analyze(w.ctx, 'source_change');
+    const rec = (await w.open())[0];
+    assert.ok(rec);
+    await assert.rejects(
+      w.agent.store.transaction(w.ctx, (_tx, sql) =>
+        sql.query('SELECT app.purge_agent_artifacts($1)', [w.connection.id]),
+      ),
+      /revoked connection/,
+    );
+    await w.agent.store.transaction(w.ctx, async (_tx, sql) => {
+      await sql.query(
+        "UPDATE agent_runs SET reserved_usd=.25,committed_usd=.01,cost_state='unknown' WHERE tenant_id=$1",
+        [w.tenantId],
+      );
+    });
+    await w.connections.revoke(w.owner, w.connection.id);
+    // This runtime has no AgentRuntime: erasure must not depend on the current mode.
+    await runtimeWith().handlePurge(
+      { tenantId: w.tenantId, connectionId: w.connection.id },
+      crypto.randomUUID(),
+    );
+    const detail = await w.queries.getRecommendation(w.owner, rec.id);
+    assert.ok(detail.evidence.length > 0);
+    assert.ok(detail.evidence.every((e) => e.state === 'unavailable' && e.value === null));
+    const run = (await w.agent.store.list(w.owner))[0];
+    assert.ok(run);
+    assert.equal(run.result, null);
+    assert.deepEqual(run.snapshot, {});
+    assert.deepEqual(run.retrieved, []);
+    assert.equal(run.error_code, 'source_purged');
+    assert.equal(Number(run.reserved_usd), 0.25);
+    assert.equal(Number(run.committed_usd), 0.01);
+    assert.equal((await w.agent.store.events(w.owner, String(run.id))).length, 0);
+  });
   test('capabilities reject foreign subjects, unavailable tools, expired leases and revoked connections', async () => {
     const w = await world('agent-capability');
     const other = await world('agent-other');
