@@ -491,7 +491,14 @@ export function RecommendationDetailPage() {
               {rec.doctrine.version}
               {rec.doctrine.fictional && ' (fictive, non validée métier)'} · contexte v
               {rec.contextVersion ?? '—'} · formulation :{' '}
-              {rec.ruleId === 'ulysse.agent.v1' ? rec.formulation === 'model' ? 'Hermes live' : 'agentique simulé (sans modèle)' : rec.formulation === 'model' ? 'assistée par modèle' : 'règles déterministes'}.
+              {rec.ruleId === 'ulysse.agent.v1'
+                ? rec.formulation === 'model'
+                  ? 'Hermes live'
+                  : 'agentique simulé (sans modèle)'
+                : rec.formulation === 'model'
+                  ? 'assistée par modèle'
+                  : 'règles déterministes'}
+              .
             </p>
           </section>
         </div>

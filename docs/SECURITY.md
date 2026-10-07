@@ -1,5 +1,15 @@
 # Sécurité et protection des données
 
+## UL-016 — frontière agentique
+
+Hermes est privé, authentifié par secret de service, sans port publié ni réseau public. Il reçoit une capacité bornée au run, expirant en 90 secondes et stockée sous empreinte seulement. Le modèle ne choisit pas le tenant. Le worker reconstruit l'autorisation depuis PostgreSQL à chaque outil/appel modèle ; la révocation du connecteur bloque immédiatement les nouvelles lectures et la publication. Les fixtures respectent les droits d'entreprise existants : aucune ACL fine de dossier n'est revendiquée (DEBT-010).
+
+Seuls sept outils Ulysse de lecture sont sélectionnés et vérifiés dans le runtime réel. Aucun terminal, fichier, navigateur, mémoire, historique partagé, délégation ou écriture. Un prompt ne constitue pas ce contrôle : l'allowlist et le réseau l'imposent. Un processus par run isole les registres, plugins et caches ; mémoire et contextes locaux étrangers désactivés. Les documents/e-mails restent des données non fiables et ne changent aucune permission ou doctrine.
+
+Les résultats fermés sont revalidés (références réellement lues, versions, doctrine, fraîcheur, suppression, décisions et volume). Les copies nouvelles de contenu sont purgées avec la source ; la comptabilité minimisée demeure pour empêcher un reset des budgets par effacement. Les répertoires temporaires Hermes sont supprimés ; ni prompts bruts, ni réponses complètes, ni chaîne de pensée conservés. Progression : faits d'exécution seulement.
+
+Les commandes de scénarios exigent un owner, CSRF/session/membership actuels, connecteur fixture actif et activation explicite hors production. Elles changent une source fictive et demandent une ingestion ; aucune recommandation finale directe. Les viewers ne peuvent ni les exécuter ni décider. Une approbation écrit uniquement une décision Ulysse.
+
 Statut : exigences et critères de revue. Mise à jour 2026-10-06 : la V1 met en œuvre les contrôles marqués ci-dessous, vérifiés par tests ; les autres restent à faire.
 
 ## État de mise en œuvre (V1)

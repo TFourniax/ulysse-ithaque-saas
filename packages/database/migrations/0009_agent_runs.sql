@@ -22,6 +22,7 @@ CREATE TABLE agent_runs (
   tool_calls integer NOT NULL DEFAULT 0 CHECK (tool_calls BETWEEN 0 AND 12),
   model_calls integer NOT NULL DEFAULT 0 CHECK (model_calls BETWEEN 0 AND 8),
   uncertain_calls integer NOT NULL DEFAULT 0 CHECK (uncertain_calls BETWEEN 0 AND 8),
+  estimated_calls integer NOT NULL DEFAULT 0 CHECK (estimated_calls BETWEEN 0 AND 8),
   input_tokens integer NOT NULL DEFAULT 0,
   output_tokens integer NOT NULL DEFAULT 0,
   reserved_usd numeric(12,6) NOT NULL DEFAULT 0 CHECK (reserved_usd >= 0),

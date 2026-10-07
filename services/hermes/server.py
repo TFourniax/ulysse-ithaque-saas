@@ -30,7 +30,9 @@ def isolated_run(request):
             "HERMES_TELEMETRY_ENABLED": "false", "DO_NOT_TRACK": "1",
         }
         Path(home, "config.yaml").write_text(
-            "telemetry:\n  enabled: false\ncompression:\n  enabled: false\nmemory:\n  memory_enabled: false\n  user_profile_enabled: false\n",
+            "telemetry:\n  enabled: false\ncompression:\n  enabled: false\n"
+            "tools:\n  tool_search:\n    enabled: off\n"
+            "memory:\n  memory_enabled: false\n  user_profile_enabled: false\n",
             encoding="utf-8",
         )
         completed = subprocess.run(

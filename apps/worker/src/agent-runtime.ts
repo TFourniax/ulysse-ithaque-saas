@@ -22,6 +22,7 @@ import {
   expiresAtFor,
   HOUR_MS,
   record,
+  requireScope,
   validateAgentPublication,
   validateAgentResult,
 } from '@ulysse/domain';
@@ -144,6 +145,7 @@ export class AgentRuntime {
   }
 
   async analyze(ctx: Context, trigger: string, signal?: AbortSignal): Promise<void> {
+    requireScope(ctx, 'analysis:run');
     const subjects = await this.store.transaction(ctx, async (tx) =>
       (await tx.listOpportunitiesForAnalysis(new Date(Date.now() - 30 * DAY_MS).toISOString()))
         .filter((o) => !o.deletedAt && o.fields.stage === 'open')
@@ -160,6 +162,7 @@ export class AgentRuntime {
     trigger: string,
     signal?: AbortSignal,
   ): Promise<string | null> {
+    requireScope(ctx, 'analysis:run');
     const id = randomUUID();
     const capability = randomBytes(32).toString('base64url');
     const mode = this.config.ULYSSE_ANALYSIS_MODE;
@@ -280,10 +283,7 @@ export class AgentRuntime {
     // Ingestion and revocation hold this same row lock. Re-read after acquiring it.
     o = await tx.getOpportunity(subjectId);
     ensure(o && !o.deletedAt && o.fields.stage === 'open', 'NOT_FOUND');
-    const [doctrine, context] = await Promise.all([
-      tx.getActiveDoctrine(),
-      tx.getCurrentContext(),
-    ]);
+    const [doctrine, context] = await Promise.all([tx.getActiveDoctrine(), tx.getCurrentContext()]);
     ensure(connection?.status === 'active' && connection.provider === 'fixture-crm', 'FORBIDDEN');
     ensure(
       doctrine !== null && doctrine.origin === 'fixture',
@@ -514,7 +514,11 @@ export class AgentRuntime {
         'INVALID_INPUT',
         'required tools not consulted',
       );
-      ensure(c === null || run.retrieved.includes(`context:v${String(c.version)}`), 'INVALID_INPUT', 'context not consulted');
+      ensure(
+        c === null || run.retrieved.includes(`context:v${String(c.version)}`),
+        'INVALID_INPUT',
+        'context not consulted',
+      );
       for (const p of result.proposals)
         validateAgentPublication(p, new Set(run.retrieved), o.fields.commercial, Date.now());
       const now = Date.now();
@@ -681,7 +685,7 @@ export class AgentRuntime {
       });
       await sql.query(
         "UPDATE agent_runs SET status=$3,result=$4,completed_at=clock_timestamp(),reserved_usd=CASE WHEN cost_state='unknown' THEN reserved_usd ELSE committed_usd END WHERE tenant_id=$1 AND id=$2",
-        [ctx.tenantId, id, generated ? 'completed' : 'abstained', JSON.stringify(result)],
+        [ctx.tenantId, id, result.outcome === 'technical_error' ? 'failed' : generated ? 'completed' : 'abstained', JSON.stringify(result)],
       );
       await this.store.event(
         sql,
@@ -776,7 +780,7 @@ export class AgentRuntime {
       ensure(actual <= upperCost, 'INVALID_INPUT', 'provider exceeded reservation');
       await this.store.transaction(ctx, async (_tx, sql) => {
         await sql.query(
-          "UPDATE agent_runs SET committed_usd=committed_usd-$3+$4,uncertain_calls=uncertain_calls-1,cost_state=CASE WHEN uncertain_calls>1 THEN 'unknown' ELSE $5 END,input_tokens=input_tokens+$6,output_tokens=output_tokens+$7 WHERE tenant_id=$1 AND id=$2",
+          "UPDATE agent_runs SET committed_usd=committed_usd-$3+$4,uncertain_calls=uncertain_calls-1,estimated_calls=estimated_calls+CASE WHEN $5='estimated' THEN 1 ELSE 0 END,cost_state=CASE WHEN uncertain_calls>1 THEN 'unknown' WHEN estimated_calls>0 OR $5='estimated' THEN 'estimated' ELSE 'declared' END,input_tokens=input_tokens+$6,output_tokens=output_tokens+$7 WHERE tenant_id=$1 AND id=$2",
           [
             ctx.tenantId,
             runId,

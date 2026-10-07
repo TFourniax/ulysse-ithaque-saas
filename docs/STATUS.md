@@ -1,5 +1,9 @@
 # État actuel
 
+## UL-016 — analyse agentique fictive
+
+Lot **partial** sur `codex/ul-016-hermes-demo`, [PR draft #3](https://github.com/TFourniax/ulysse-ithaque-saas/pull/3). Base UL-015 exacte `598f082ab33fb87faf5ff357285dc95b536bb1b3`, interface conservée. Intégration et recette en cours ; live non validé sans clé. Voir [guide](DEMO-AGENTIQUE.md), [rapport](VALIDATION-UL-016.md), [journal](journal/2026-10-07-UL-016-hermes-demo.md). Les sources réelles, la doctrine réelle et le pilote restent ouverts.
+
 Mis à jour : 2026-10-07. Stade : **V1 de démonstration complète sur données fictives** (Résultat A). Pas de pilote réel : aucune source réelle, doctrine validée, utilisateur pilote ni environnement d'hébergement n'est disponible (Résultat B partiel).
 
 ## Ce qui fonctionne

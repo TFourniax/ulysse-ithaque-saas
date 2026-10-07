@@ -58,9 +58,9 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     await Promise.all([a.agent.analyze(a.ctx, 'source_change'), b.agent.analyze(b.ctx, 'source_change')]);
     for (const w of [a, b]) {
       const recs = await w.open(); assert.equal(recs.length, 1); assert.equal(recs[0]?.ruleId, 'ulysse.agent.v1');
-      const runs = await w.agent.store.list(w.owner); assert.equal(runs[0]?.status, 'completed'); assert.ok(Number(runs[0]?.tool_calls) >= 6);
+      const runs = await w.agent.store.list(w.owner); assert.equal(runs[0].status, 'completed'); assert.ok(Number(runs[0].tool_calls) >= 6);
       await w.agent.analyze(w.ctx, 'source_change'); assert.equal((await w.open()).length, 1); assert.equal((await w.agent.store.list(w.owner)).length, 1);
-      const detail = await w.queries.getRecommendation(w.owner, recs[0]?.id ?? '');
+      const detail = await w.queries.getRecommendation(w.owner, recs[0].id);
       assert.ok(detail.evidence.every((e) => e.tenantId === w.tenantId));
       assert.ok(detail.evidence.some((e) => e.factType === 'commercial_context'));
     }
@@ -124,8 +124,7 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
   });
   test('source changes during execution prevent publication and retry after a completed run cannot duplicate', async () => {
     const w = await world('agent-obsolete');
-    let runner: AgentRuntime;
-    runner = new AgentRuntime(workerPool, liveTestConfig(), { execute: async (request) => {
+    const runner = new AgentRuntime(workerPool, liveTestConfig(), { execute: async (request) => {
       await runner.tool(request.capability, 'get_opportunity', { subjectId: w.o.id });
       await runner.tool(request.capability, 'get_active_doctrine', {});
       store.upsert('agent-obsolete', 'OPP-001', stalled('OPP-001', 12, { commercial: commercialFixture('acme', 'positive_reply') }), iso(0));
@@ -572,7 +571,7 @@ describe('background ingestion with pg-boss', () => {
     // Deterministic per opportunity: other tenants' pending events may also reach this runtime.
     const provider = new ScriptedProvider(
       Array.from({ length: 50 }, () => (request: { user: string }) => {
-        if (request.user.includes('OPP-2')) throw new ModelError('unavailable', 'provider down');
+        if (request.user.includes('OPP-2')) throw new ModelError('unavailable', 'provider down', { inputTokens: 0, outputTokens: 0, costUsd: 0 });
         return good;
       }),
     );

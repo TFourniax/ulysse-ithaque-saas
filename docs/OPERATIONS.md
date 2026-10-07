@@ -1,5 +1,13 @@
 # Exploitation
 
+## UL-016 — stack et budgets agentiques
+
+Voir [DEMO-AGENTIQUE](DEMO-AGENTIQUE.md) pour les commandes PowerShell avec arrêt après échec et la mise à niveau additive, [rapport](VALIDATION-UL-016.md) pour les validations réellement observées. `scripts/demo-agentique.ps1` construit l'application, applique 0009/0010, enrichit les fixtures et démarre le mode demandé, sans supprimer les volumes. L'overlay `infra/hermes.compose.yaml` ajoute le service privé Python/Hermes et son réseau interne. PostgreSQL 18.6/Keycloak 26.8 restent inchangés.
+
+Live : clé OpenRouter et secret Hermes dans `.env` ignoré par Git ; modèle fixe `openai/gpt-4.1-mini`, budgets explicites 0,25 USD/run, 2 USD/session, 10 USD/tenant/mois, session identifiée. 8 appels modèle retries compris, 12 outils, 90 secondes, un run/tenant, deux au total. Les fonctions de réservation sous verrou global évitent une dépense concurrente du même solde. Les coûts inconnus ne valent jamais zéro ; une issue incertaine conserve la réservation. L'ancienne formulation payante sans réservation est désactivée dans l'entrée du worker.
+
+Le worker ne maintient aucune transaction longue pendant le modèle. Les runs/events sont durables et bornés, les entrées déjà publiées dédupliquées. La maintenance reprend les leases expirées ; les décisions idempotentes et révisions humaines existantes sont conservées. Aucun fallback automatique. Retour au mode historique : `.\scripts\demo-agentique.ps1 -Mode rules`.
+
 Mis à jour : 2026-10-06 (UL-011). Ce document décrit comment démarrer, configurer, surveiller, sauvegarder, restaurer et révoquer. Il ne désigne **aucune infrastructure de production** : l'hébergement, la région, le fournisseur d'identité et les objectifs de reprise restent à décider (OPEN-QUESTIONS Q-007, Q-008, Q-013). Ne pas installer Ulysse sur un serveur partagé existant sans inventaire préalable de ses services, ressources, sauvegardes et périmètre.
 
 Toutes les commandes ci-dessous ont été exécutées sur la stack locale avec des données fictives, sauf mention « non vérifié ». Les preuves sont consignées dans [le journal UL-011](journal/2026-10-06-UL-011-exploitation.md).
