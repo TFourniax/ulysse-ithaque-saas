@@ -4,7 +4,7 @@ Date : 2026-10-07. **partial** : intégration et parcours simulé vérifiés ; v
 
 ## Preuves au commit vérifié
 
-Code et contrats vérifiés au head `562cf83e1e46559560f019ffdde0f30e384cd5fd`. Checkout de recette PR `65eae5fdeb4df6831d8958fb5f388bb6aede49ce`. [CI applicative, cinq jobs verts](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37651082514), [recette UL-016, quatre jobs verts](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37651082522). Les changements suivants consolident uniquement documentation et preuves.
+Code et contrats vérifiés au head `562cf83e1e46559560f019ffdde0f30e384cd5fd`. Checkout de recette PR `65eae5fdeb4df6831d8958fb5f388bb6aede49ce`. [CI applicative, cinq jobs verts](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37651082514), [recette UL-016, quatre jobs verts](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37651082522). Les preuves ci-dessous portent sur ce SHA. Une protection supplémentaire des résultats techniques a ensuite été ajoutée : une erreur de l'agent est enregistrée sans fermer les propositions existantes. Le SHA et la recette complémentaire sont consignés dans le journal.
 
 | Contrôle | Résultat observé | Portée |
 | --- | --- | --- |

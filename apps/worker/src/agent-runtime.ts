@@ -723,12 +723,7 @@ export class AgentRuntime {
       });
       await sql.query(
         "UPDATE agent_runs SET status=$3,result=$4,completed_at=clock_timestamp(),reserved_usd=CASE WHEN cost_state='unknown' THEN reserved_usd ELSE committed_usd END WHERE tenant_id=$1 AND id=$2",
-        [
-          ctx.tenantId,
-          id,
-          generated ? 'completed' : 'abstained',
-          JSON.stringify(result),
-        ],
+        [ctx.tenantId, id, generated ? 'completed' : 'abstained', JSON.stringify(result)],
       );
       await this.store.event(
         sql,
