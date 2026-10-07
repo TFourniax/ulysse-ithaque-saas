@@ -726,7 +726,7 @@ export class AgentRuntime {
         [
           ctx.tenantId,
           id,
-          result.outcome === 'technical_error' ? 'failed' : generated ? 'completed' : 'abstained',
+          generated ? 'completed' : 'abstained',
           JSON.stringify(result),
         ],
       );
