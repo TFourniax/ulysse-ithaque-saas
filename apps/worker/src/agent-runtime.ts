@@ -262,7 +262,8 @@ export class AgentRuntime {
           this.config.AGENT_SESSION_ID ?? 'simulation',
           this.config.AGENT_MODEL_ID ?? 'simulation',
           HERMES_COMMIT,
-          INSTRUCTIONS_VERSION,
+          // The worker simulation does not use the instructions sent to the model.
+          mode === 'simulated' ? AGENT_VERSION : INSTRUCTIONS_VERSION,
           ctx.correlationId,
         ],
       );
