@@ -354,12 +354,15 @@ export class AgentRuntime {
           { view: 'all', now: new Date().toISOString(), subjectId: o.id },
           { limit: 100, cursor: null },
         );
-        const related = recs.items.filter((r) => r.subject.id === o.id).slice(0, 6);
+        const related = recs.items.filter((r) => r.subject.id === o.id).slice(0, args.limit ?? 6);
+        refs = related.map((r) => `recommendation:${r.id}:r${String(r.revision)}`);
         value = {
           state: related.length ? 'present' : 'empty',
           items: await Promise.all(
             related.map(async (r) => ({
               id: r.id,
+              revision: r.revision,
+              reference: `recommendation:${r.id}:r${String(r.revision)}`,
               status: r.status,
               proposedAction: r.proposedAction,
               decisions: await tx.listDecisions(r.id),
@@ -507,6 +510,24 @@ export class AgentRuntime {
           'Sources ou contexte modifiés ; publication abandonnée',
         );
         return;
+      }
+      // Human decisions and edits can change while inference runs outside a transaction.
+      // Lock and compare each version of related history actually consulted.
+      for (const reference of run.retrieved.filter((r) => r.startsWith('recommendation:'))) {
+        const match = /^recommendation:([0-9a-f-]{36}):r([0-9]+)$/.exec(reference);
+        ensure(match?.[1] && match[2], 'INVALID_INPUT', 'invalid history reference');
+        const previous = await tx.getRecommendation(match[1], { forUpdate: true });
+        if (!previous || previous.subject.id !== o.id || previous.revision !== Number(match[2])) {
+          await sql.query(
+            "UPDATE agent_runs SET status='obsolete',completed_at=clock_timestamp(),error_code='history_changed' WHERE tenant_id=$1 AND id=$2",
+            [ctx.tenantId, id],
+          );
+          await this.store.event(
+            sql, ctx.tenantId, id, 'obsolete',
+            'Décision ou révision humaine modifiée ; publication abandonnée',
+          );
+          return;
+        }
       }
       ensure(
         run.retrieved.includes(oppRef(o)) &&
