@@ -544,6 +544,9 @@ export class WorkerRuntime {
   async handleMaintain(job: TenantJob, jobId: string): Promise<void> {
     const ctx = serviceContext(job.tenantId, `job:${jobId}`, ['recommendation:maintain']);
     await this.#maintenance.expireDue(ctx);
+    // A process crash can leave an expired lease without a fresh source event.
+    // Periodic reconciliation retries it; completed input hashes are skipped.
+    if (this.#deps.agent) await this.#deps.agent.analyze(serviceContext(job.tenantId, `job:${jobId}:resume`, ['analysis:run']), 'scheduled', this.#abort.signal);
     const now = this.#deps.clock.now().getTime();
     for (const c of await this.#uow.run(ctx, (tx) => tx.listConnections())) {
       if (c.status === 'active' && c.dataAsOf) {

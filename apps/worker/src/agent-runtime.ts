@@ -10,7 +10,7 @@ export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
 export const TOOL_NAMES = ['get_opportunity', 'list_activities', 'search_documents', 'read_document_excerpt', 'get_company_context', 'get_active_doctrine', 'list_related_recommendations'] as const;
 const Config = z.object({
   ULYSSE_ANALYSIS_MODE: z.enum(['rules', 'simulated', 'hermes-live']).default('rules'),
-  HERMES_URL: z.string().url().default('http://hermes:8090'),
+  HERMES_URL: z.url().default('http://hermes:8090'),
   HERMES_SERVICE_TOKEN: z.string().min(32).optional(),
   OPENROUTER_API_KEY: z.string().min(16).optional(),
   AGENT_MODEL_ID: z.literal('openai/gpt-4.1-mini').optional(),
@@ -32,8 +32,8 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
   return c;
 }
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
-const Run = z.object({ id: z.string().uuid(), subject_id: z.string().uuid(), input_hash: z.string(), mode: z.enum(['simulated', 'hermes-live']), status: z.string(), expires_at: z.string(), retrieved: z.array(z.string()), tool_calls: z.number(), model_calls: z.number(), reserved_usd: z.coerce.number(), committed_usd: z.coerce.number() });
-const Args = z.object({ subjectId: z.string().uuid().optional(), query: z.string().max(100).optional(), documentId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(), limit: z.number().int().min(1).max(6).optional() }).strict();
+const Run = z.object({ id: z.uuid(), subject_id: z.uuid(), input_hash: z.string(), mode: z.enum(['simulated', 'hermes-live']), status: z.string(), expires_at: z.string(), retrieved: z.array(z.string()), tool_calls: z.number(), model_calls: z.number(), reserved_usd: z.coerce.number(), committed_usd: z.coerce.number() });
+const Args = z.object({ subjectId: z.uuid().optional(), query: z.string().max(100).optional(), documentId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(), limit: z.number().int().min(1).max(6).optional() }).strict();
 const oppRef = (o: Opportunity) => `opportunity:${o.id}:r${String(o.revision)}`;
 const materialRef = (o: Opportunity, id: string, version: number) => `material:${o.id}:${id}:v${String(version)}:r${String(o.revision)}`;
 
@@ -226,7 +226,7 @@ export class AgentRuntime {
   async inference(capability: string, input: unknown): Promise<unknown> {
     const ctx = await this.store.resolve(hash(capability)); ensure(ctx, 'FORBIDDEN');
     const body = record(input);
-    ensure(Array.isArray(body.messages) && body.messages.length <= 32 && Array.isArray(body.tools) && body.tools.length <= 7, 'INVALID_INPUT');
+    ensure(Array.isArray(body.messages) && body.messages.length <= 32 && (body.tools === undefined || Array.isArray(body.tools) && body.tools.length <= 7), 'INVALID_INPUT');
     const bytes = Buffer.byteLength(JSON.stringify(body));
     ensure(bytes <= 80000, 'INVALID_INPUT', 'context limit');
     // byte count is a conservative upper bound on text tokens; schema/role overhead is included.

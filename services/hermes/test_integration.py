@@ -28,8 +28,10 @@ class Endpoint(BaseHTTPRequestHandler):
         if self.path.startswith("/agent/tools/"):
             output = {"state": "present", "reference": f"fixture:{token[-3:]}", "content": "Sources fictives isolées"}
         else:
-            names = [t["function"]["name"] for t in body["tools"]]
-            self.assert_tools(names)
+            names = [t["function"]["name"] for t in body.get("tools", [])]
+            if names:
+                self.assert_tools(names)
+            print(json.dumps({"path": self.path, "model": body.get("model"), "tools": names, "roles": [m.get("role") for m in body.get("messages", [])]}), flush=True)
             if not any(m.get("role") == "tool" for m in body["messages"]):
                 message = {"role": "assistant", "content": None, "tool_calls": [{"id": "call_fixture", "type": "function", "function": {"name": "get_opportunity", "arguments": json.dumps({"subjectId": str(uuid4())})}}]}
                 finish = "tool_calls"

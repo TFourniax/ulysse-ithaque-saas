@@ -39,7 +39,7 @@ CREATE TABLE agent_events (
   sequence integer NOT NULL CHECK (sequence BETWEEN 1 AND 40),
   kind text NOT NULL,
   label text NOT NULL CHECK (length(label) <= 200),
-  references text[] NOT NULL DEFAULT '{}',
+  reference_ids text[] NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (tenant_id,run_id,sequence),
   FOREIGN KEY (tenant_id,run_id) REFERENCES agent_runs(tenant_id,id) ON DELETE CASCADE
