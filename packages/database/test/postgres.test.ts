@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import type { Role } from '@ulysse/domain';
+import type { Role, UnitOfWork } from '@ulysse/domain';
 import { fixedClock } from '@ulysse/domain';
 import { defineWorkflowScenarios, SCENARIO_START } from '@ulysse/domain/testing';
 import pg from 'pg';
@@ -45,9 +45,18 @@ async function member(tenantId: string, role: Role, displayName: string): Promis
   return userId;
 }
 
-defineWorkflowScenarios('postgresql, ulysse_app role', async () => {
+defineWorkflowScenarios('postgresql, API user and worker service roles', async () => {
   const pool = createPool({ connectionString: db.appUrl, applicationName: 'ulysse-test', max: 6 });
-  const uow = new PgUnitOfWork(pool);
+  const workerPool = createPool({
+    connectionString: db.workerUrl,
+    applicationName: 'ulysse-test-worker',
+    max: 6,
+  });
+  const appUow = new PgUnitOfWork(pool);
+  const workerUow = new PgUnitOfWork(workerPool);
+  const uow: UnitOfWork = {
+    run: (ctx, work) => (ctx.actor.kind === 'service' ? workerUow : appUow).run(ctx, work),
+  };
   return {
     uow,
     clock: fixedClock(SCENARIO_START),
@@ -78,7 +87,9 @@ defineWorkflowScenarios('postgresql, ulysse_app role', async () => {
         client.release();
       }
     },
-    close: () => pool.end(),
+    close: async () => {
+      await Promise.all([pool.end(), workerPool.end()]);
+    },
   };
 });
 
