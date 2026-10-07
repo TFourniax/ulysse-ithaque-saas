@@ -27,9 +27,9 @@ async function until(probe, timeout = 60000) {
 async function checkAccessibility() {
   // Measure the settled interface, including the decision banner's finite entrance animation.
   await page.evaluate(async () => {
-    const animations = globalThis.document.getAnimations().filter(
-      (animation) => animation.effect?.getComputedTiming().iterations !== Infinity,
-    );
+    const animations = globalThis.document
+      .getAnimations()
+      .filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity);
     await Promise.all(animations.map((animation) => animation.finished.catch(() => {})));
   });
   const analysis = await new AxeBuilder({ page }).analyze();

@@ -172,3 +172,5 @@ Les lots sont détaillés dans BACKLOG avec dépendances et preuves. Pas de date
 - Sorties structurées OpenRouter : https://openrouter.ai/docs/guides/features/structured-outputs
 
 Ces documentations fondent les choix proposés. Elles ne prouvent pas que les composants sont installés ni leur compatibilité de bout en bout ; la première installation doit vérifier ces points.
+
+Contrats d'exécution, outils, résultats, progression et usages : [AGENT-CONTRACT](AGENT-CONTRACT.md).

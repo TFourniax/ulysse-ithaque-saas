@@ -149,25 +149,42 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     const previous = (await w.open())[0];
     assert.ok(previous);
     store.upsert(
-      'agent-history-version', 'OPP-001',
-      stalled('OPP-001', 12, { commercial: commercialFixture('acme', 'positive_reply') }), iso(0),
+      'agent-history-version',
+      'OPP-001',
+      stalled('OPP-001', 12, { commercial: commercialFixture('acme', 'positive_reply') }),
+      iso(0),
     );
     await w.runtime.handleSync(
-      { tenantId: w.tenantId, connectionId: w.connection.id, trigger: 'manual' }, crypto.randomUUID(),
+      { tenantId: w.tenantId, connectionId: w.connection.id, trigger: 'manual' },
+      crypto.randomUUID(),
     );
     const review = new ReviewService({
-      uow: new PgUnitOfWork(appPool), clock: systemClock,
-      ids: { next: () => crypto.randomUUID() }, rules: defaultRules,
+      uow: new PgUnitOfWork(appPool),
+      clock: systemClock,
+      ids: { next: () => crypto.randomUUID() },
+      rules: defaultRules,
     });
     const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
       execute: async (request) => {
         await runner.tool(request.capability, 'get_opportunity', {});
         await runner.tool(request.capability, 'get_active_doctrine', {});
         await runner.tool(request.capability, 'get_company_context', {});
-        const history = await runner.tool(request.capability, 'list_related_recommendations', { limit: 1 });
-        assert.ok(JSON.stringify(history).includes(`recommendation:${previous.id}:r${String(previous.revision)}`));
-        await review.decide(w.owner, previous.id,
-          { expectedRevision: previous.revision, decision: 'reject', reason: 'Décision pendant analyse' },
+        const history = await runner.tool(request.capability, 'list_related_recommendations', {
+          limit: 1,
+        });
+        assert.ok(
+          JSON.stringify(history).includes(
+            `recommendation:${previous.id}:r${String(previous.revision)}`,
+          ),
+        );
+        await review.decide(
+          w.owner,
+          previous.id,
+          {
+            expectedRevision: previous.revision,
+            decision: 'reject',
+            reason: 'Décision pendant analyse',
+          },
           crypto.randomUUID(),
         );
         return abstention;

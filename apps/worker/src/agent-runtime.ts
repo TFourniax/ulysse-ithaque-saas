@@ -523,7 +523,10 @@ export class AgentRuntime {
             [ctx.tenantId, id],
           );
           await this.store.event(
-            sql, ctx.tenantId, id, 'obsolete',
+            sql,
+            ctx.tenantId,
+            id,
+            'obsolete',
             'Décision ou révision humaine modifiée ; publication abandonnée',
           );
           return;
