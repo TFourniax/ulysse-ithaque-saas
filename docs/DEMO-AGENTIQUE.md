@@ -145,7 +145,7 @@ docker @c logs --tail=200 worker hermes | Select-String 'agent run not published
 | `FORBIDDEN:budget limit`, statut `budget_reached` | Plafond run/session/mois ou concurrence | Lire les réservations dans Analyses ; ne pas changer de session pour contourner |
 | `FORBIDDEN:model limit` | 8 appels modèle atteints | Analyse trop longue : à signaler dans le rapport |
 | `execution_timeout` | Analyse au-delà de 90 s | Réseau ou fournisseur lent ; relancer une fois |
-| Requêtes `GET … /api/tags`, `/v1/props` refusées | Sondes de détection de fournisseur local par Hermes | Sans effet ; aucune inférence |
+| Aucune ligne de refus mais analyses en échec | Hermes injoignable ou en timeout | `docker @c logs hermes` (`execution_failed`, `execution_timeout`) ; les sondes `GET` d'Hermes (`/api/tags`, `/v1/props`) sont refusées sans être journalisées |
 | `obsolete` | Source, doctrine ou décision modifiée pendant l'analyse | Normal : l'analyse suivante porte sur la nouvelle version |
 
 Deux échecs sur une même version des sources arrêtent les nouvelles tentatives (budget protégé) ; une nouvelle donnée source relance l'analyse. Une annulation locale ne garantit pas l'absence de facturation : une transmission à l'issue incertaine reste comptée à sa borne haute.

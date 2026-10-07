@@ -959,14 +959,17 @@ export class AgentRuntime {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(output));
     } catch (error) {
-      this.log?.warn(
-        {
-          method: req.method,
-          path: req.url?.split('?')[0],
-          reason: reasonOf(error),
-        },
-        'agent gateway refused a call',
-      );
+      // Hermes probes local-provider metadata with GET (/api/tags, /v1/props…): refused
+      // like any non-inference call, but not logged, so real refusals stay visible.
+      if (req.method !== 'GET')
+        this.log?.warn(
+          {
+            method: req.method,
+            path: req.url?.split('?')[0],
+            reason: reasonOf(error),
+          },
+          'agent gateway refused a call',
+        );
       res.writeHead(403, { 'content-type': 'application/json' });
       res.end(
         '{"error":{"message":"execution unavailable, invalid or limited","type":"permission_error"}}',
