@@ -1,6 +1,6 @@
 # ADR-0012 — Hermes et analyse agentique bornée
 
-Date : 2026-10-07. Lot : UL-016. État : proposé, validation d'intégration en cours.
+Date : 2026-10-07. Lot : UL-016. État : adopté pour l'implémentation UL-016 ; vraie boucle validée sur endpoint simulé, activation live encore non validée.
 
 Le moteur historique détecte des signaux par règles ; ADR-0009 autorisait seulement une formulation assistée. UL-016 étend explicitement l'analyse : l'agent peut choisir les lectures, rapprocher les données, le contexte et la doctrine, puis proposer une action. La publication et les décisions restent sous contrôle déterministe Ulysse. Le mode historique demeure disponible pour comparaison.
 

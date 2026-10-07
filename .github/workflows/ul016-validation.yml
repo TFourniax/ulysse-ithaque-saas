@@ -2,8 +2,7 @@ name: ul016-validation
 on:
   pull_request:
     branches: ['claude/sweet-tesla-jrnkxs']
-  push:
-    branches: ['codex/ul-016-hermes-demo']
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:

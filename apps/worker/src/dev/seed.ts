@@ -159,6 +159,9 @@ try {
         config: { dataset: company.dataset },
         syncIntervalMinutes: 5,
       });
+    } else {
+      // Upgrade enrichment follows the existing ingestion pipeline immediately.
+      await connections.requestSync(owner, active.id);
     }
     console.warn(`seed: ${company.name} ready (tenant ${tenantId})`);
   }

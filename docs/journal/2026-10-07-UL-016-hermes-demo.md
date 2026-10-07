@@ -21,3 +21,9 @@ Au commit `02f7a61`, tests intégration PostgreSQL 50/50, API 17/17 et worker 17
 Configuration, budgets et instructions versionnés ; procédure PowerShell exacte ajoutée. Une matrice CI vérifie le départ neuf et la mise à niveau depuis l'image construite au commit UL-015, sans suppression de volume. La décision fictive enregistrée avant mise à niveau et les identifiants métier doivent survivre.
 
 État courant : **partial**, recette en cours, live absent faute de clé autorisée. Les validations automatisées déportées et la recette live sont distinctes. Aucune approbation produit supposée.
+
+Validation `efaea8e` : vraie boucle Hermes verte, deux instances concurrentes, sept outils exacts, deux requêtes modèle et lecture par run. Streaming désactivé officiellement ; aucune boucle maison. Le parcours simulé neuf passe jusqu'après restart ; captures et preuve JSON conservées. Le modèle endpoint est simulé : aucune recette fournisseur live.
+
+Recette upgrade : décision, session et identifiants antérieurs conservés ; manque de sync immédiate après enrichissement découvert puis corrigé par `ConnectionService.requestSync`, sans écriture directe de recommandation. Coûts estimés et inconnus testés séparément ; réserve incertaine conservée, retries bornés à huit transmissions. Dernière recette et état final détaillés dans VALIDATION.
+
+Le transport du poste s'est fermé après les contrôles locaux ; les corrections restantes sont poursuivies via GitHub. La copie personnelle reste intacte. Aucun accès live fourni ; état du lot partial, aucune approbation de pertinence supposée.

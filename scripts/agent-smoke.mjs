@@ -34,8 +34,11 @@ async function login(username) {
 try {
   if (resume) {
     await until(async () => {
-      try { return (await context.request.get(`${origin}/health/ready`)).ok(); }
-      catch { return false; }
+      try {
+        return (await context.request.get(`${origin}/health/ready`)).ok();
+      } catch {
+        return false;
+      }
     });
     const evidence = JSON.parse(await readFile(`${output}/proof.json`, 'utf8'));
     await page.goto(`${origin}/recommendations/${evidence.recommendationId}`);

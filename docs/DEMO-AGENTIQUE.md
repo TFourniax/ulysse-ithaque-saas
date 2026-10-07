@@ -23,7 +23,7 @@ git rev-parse HEAD
 if ($LASTEXITCODE -ne 0) { throw 'cannot identify tested version' }
 ```
 
-PR [#3](https://github.com/TFourniax/ulysse-ithaque-saas/pull/3), base UL-015 `598f082ab33fb87faf5ff357285dc95b536bb1b3`. Tant que les corrections locales finales ne sont pas publiées, le rapport précise la limite du dernier commit distant. Ne pas assimiler le dernier commit poussé à une recette finale acquise.
+PR [#3](https://github.com/TFourniax/ulysse-ithaque-saas/pull/3), base UL-015 `598f082ab33fb87faf5ff357285dc95b536bb1b3`. Le rapport relie chaque preuve au commit et au run CI. Le lot demeure partial tant que la recette live, la revue sémantique et le démarrage Windows n'ont pas été confirmés.
 
 ## Configurer et démarrer
 
