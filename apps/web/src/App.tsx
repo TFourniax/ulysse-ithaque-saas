@@ -14,6 +14,8 @@ import { ConnectionsPage } from './pages/Connections.tsx';
 import { HistoryPage } from './pages/History.tsx';
 import { MeasurePage } from './pages/Measure.tsx';
 import { OpportunitiesPage } from './pages/Opportunities.tsx';
+import { OpportunityDetailPage } from './pages/OpportunityDetail.tsx';
+import { AnalysesPage } from './pages/Analyses.tsx';
 import { RecommendationDetailPage } from './pages/RecommendationDetail.tsx';
 import { RecommendationsPage } from './pages/Recommendations.tsx';
 
@@ -184,6 +186,7 @@ function Layout() {
   const nav = [
     { to: '/recommendations', label: 'Propositions' },
     { to: '/opportunities', label: 'Opportunités' },
+    { to: '/analyses', label: 'Analyses' },
     { to: '/connections', label: 'Connexions' },
     ...(can(session, 'analysis:read') ? [{ to: '/measure', label: 'Mesure' }] : []),
     ...(can(session, 'audit:read') ? [{ to: '/history', label: 'Historique' }] : []),
@@ -248,6 +251,8 @@ const router = createBrowserRouter([
       { path: '/recommendations', element: <RecommendationsPage /> },
       { path: '/recommendations/:id', element: <RecommendationDetailPage /> },
       { path: '/opportunities', element: <OpportunitiesPage /> },
+      { path: '/opportunities/:id', element: <OpportunityDetailPage /> },
+      { path: '/analyses', element: <AnalysesPage /> },
       { path: '/connections', element: <ConnectionsPage /> },
       { path: '/measure', element: <MeasurePage /> },
       { path: '/history', element: <HistoryPage /> },

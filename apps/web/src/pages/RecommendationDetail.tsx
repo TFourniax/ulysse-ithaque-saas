@@ -360,6 +360,7 @@ export function RecommendationDetailPage() {
         </div>
         <h1>{frenchSpacing(rec.title)}</h1>
         <p className="detail-subject">
+          <Link to={`/opportunities/${rec.subject.id}`}>Ouvrir les sources de l’opportunité</Link> · <Link to={`/analyses#${rec.analysisId}`}>Voir l’analyse et son origine</Link><br />
           {KIND_LABELS[rec.kind] ?? rec.kind} · {rec.subject.label} ({rec.subject.externalId})
         </p>
       </header>
@@ -434,7 +435,7 @@ export function RecommendationDetailPage() {
                 <tbody>
                   {detail.evidence.map((e) => (
                     <tr key={e.id}>
-                      <th scope="row">{e.label}</th>
+                      <th scope="row"><Link to={`/opportunities/${rec.subject.id}`}>{e.label}</Link></th>
                       <td className={e.state === 'present' ? '' : 'muted'}>
                         {e.factType === 'stage' && typeof e.value === 'string'
                           ? (STAGE_LABELS[e.value] ?? e.value)

@@ -35,6 +35,7 @@ export type DoctrinePolicy = Readonly<{
 export type DoctrineContent = Readonly<{
   rules: readonly RuleConfig[];
   policy: DoctrinePolicy;
+  agentGuidance?: string;
 }>;
 
 export type Doctrine = Readonly<{
@@ -92,7 +93,7 @@ export function validateDoctrineContent(
   specs: ReadonlyMap<string, readonly ParameterSpec[]>,
 ): DoctrineContent {
   ensure(typeof input === 'object' && input !== null, 'INVALID_POLICY', 'content');
-  const raw = input as { rules?: unknown; policy?: unknown };
+  const raw = input as { rules?: unknown; policy?: unknown; agentGuidance?: unknown };
   ensure(
     Array.isArray(raw.rules) && raw.rules.length > 0 && raw.rules.length <= 50,
     'INVALID_POLICY',
@@ -135,7 +136,8 @@ export function validateDoctrineContent(
     );
     return { ruleId: rule.ruleId, enabled: rule.enabled, parameters };
   });
-  return { rules, policy: validatePolicy(raw.policy) };
+  ensure(raw.agentGuidance === undefined || typeof raw.agentGuidance === 'string' && raw.agentGuidance.length > 0 && raw.agentGuidance.length <= 4000, 'INVALID_POLICY');
+  return { rules, policy: validatePolicy(raw.policy), ...(typeof raw.agentGuidance === 'string' ? { agentGuidance: raw.agentGuidance } : {}) };
 }
 
 export function doctrineContentHash(content: DoctrineContent): string {

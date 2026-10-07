@@ -122,7 +122,7 @@ export function auditDto(e: AuditEvent, names: ReadonlyMap<string, string>) {
 }
 
 export function opportunityDto(o: Opportunity) {
-  const { name, stage, ...rest } = o.fields;
+  const { name, stage, commercial, ...rest } = o.fields;
   return {
     id: o.id,
     connectionId: o.connectionId,
@@ -131,6 +131,7 @@ export function opportunityDto(o: Opportunity) {
     name,
     stage,
     fields: Object.fromEntries(Object.entries(rest).map(([k, v]) => [k, { ...v }])),
+    ...(commercial ? { commercial } : {}),
     sourceModifiedAt: o.sourceModifiedAt,
     observedAt: o.observedAt,
     deletedAt: o.deletedAt,

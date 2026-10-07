@@ -1,4 +1,6 @@
 import { ensure } from './errors.ts';
+import type { CommercialData } from './commercial.ts';
+import { validateCommercialData } from './commercial.ts';
 import { fingerprintOf } from './hash.ts';
 import { isInstant, parseInstant } from './time.ts';
 
@@ -32,6 +34,7 @@ export type OpportunityFields = Readonly<{
   amount: FieldValue<Money>;
   ownerName: FieldValue<string>;
   segment: FieldValue<string>;
+  commercial?: CommercialData;
 }>;
 
 /** Connector output after normalization; provider identifiers stay distinct from internal IDs. */
@@ -123,6 +126,7 @@ export function validateFields(input: unknown): OpportunityFields {
     amount: field(raw.amount, isMoney, 'amount'),
     ownerName: field(raw.ownerName, (v): v is string => nonblank(v, 200), 'ownerName'),
     segment: field(raw.segment, (v): v is string => nonblank(v, 100), 'segment'),
+    ...(raw.commercial === undefined ? {} : { commercial: validateCommercialData(raw.commercial) }),
   };
   return fields;
 }
@@ -214,6 +218,7 @@ export const FACT_TYPES = [
   'amount',
   'owner_name',
   'segment',
+  'commercial_context',
 ] as const;
 export type FactType = (typeof FACT_TYPES)[number];
 
@@ -240,5 +245,6 @@ export function factsOf(fields: OpportunityFields): FactValue[] {
     asFact('amount', 'fields.amount', fields.amount),
     asFact('owner_name', 'fields.ownerName', fields.ownerName),
     asFact('segment', 'fields.segment', fields.segment),
+    ...(fields.commercial === undefined ? [] : [asFact('commercial_context', 'fields.commercial', present(fields.commercial))]),
   ];
 }

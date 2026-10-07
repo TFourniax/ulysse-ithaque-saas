@@ -55,6 +55,7 @@ const PayloadSchema = z.object({
     .nullable()
     .optional(),
   segment: z.string().min(1).max(100).nullable().optional(),
+  commercial: z.unknown().optional(),
 });
 
 /**
@@ -234,7 +235,7 @@ export class FixtureConnector implements Connector {
       fields,
     };
     try {
-      return { ok: true, record: validateNormalizedRecord(candidate) };
+      return { ok: true, record: validateNormalizedRecord({ ...candidate, fields: { ...fields, ...(p.commercial === undefined ? {} : { commercial: p.commercial }) } }) };
     } catch {
       return { ok: false, reason: 'normalized_validation' };
     }

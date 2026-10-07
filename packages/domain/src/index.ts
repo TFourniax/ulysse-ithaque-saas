@@ -1,4 +1,6 @@
 export * from './analysis.ts';
+export * from './agent.ts';
+export * from './commercial.ts';
 export * from './company-context.ts';
 export * from './context.ts';
 export * from './cursor.ts';
