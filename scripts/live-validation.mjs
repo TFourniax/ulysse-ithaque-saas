@@ -57,7 +57,12 @@ async function until(label, probe, timeout = 300000) {
 }
 function commit() {
   try {
-    return execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+    const head = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+    // Evidence must name exactly what ran: flag uncommitted changes to tracked files.
+    const dirty = execSync('git status --porcelain --untracked-files=no', {
+      encoding: 'utf8',
+    }).trim();
+    return dirty ? `${head} + modifications locales non commitées` : head;
   } catch {
     return process.env.GITHUB_SHA ?? null;
   }

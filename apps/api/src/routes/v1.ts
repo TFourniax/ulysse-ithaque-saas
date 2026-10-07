@@ -1,5 +1,6 @@
 import {
   Analysis,
+  AgentRun,
   AgentStatus,
   AgentEvent,
   DemoScenarioBody,
@@ -134,6 +135,17 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
           config.NODE_ENV !== 'production',
         runs: await agentStore.list(ctx),
       });
+    },
+  );
+  app.get(
+    '/agent-runs/:id',
+    { schema: { tags: ['analyses'], params: IdParam, response: { 200: AgentRun } } },
+    async (request) => {
+      const ctx = ctxOf(request);
+      requirePermission(ctx, 'analysis:read');
+      const [run] = await agentStore.list(ctx, request.params.id);
+      ensure(run, 'NOT_FOUND');
+      return AgentRun.parse(run);
     },
   );
   app.get(

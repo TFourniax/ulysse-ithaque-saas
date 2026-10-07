@@ -8,6 +8,8 @@ Seuls sept outils Ulysse de lecture sont sélectionnés et vérifiés dans le ru
 
 Les résultats fermés sont revalidés (références réellement lues, versions, doctrine, fraîcheur, suppression, décisions et volume). Les copies nouvelles de contenu sont purgées avec la source ; la comptabilité minimisée demeure pour empêcher un reset des budgets par effacement. Les répertoires temporaires Hermes sont supprimés ; ni prompts bruts, ni réponses complètes, ni chaîne de pensée conservés. Progression : faits d'exécution seulement.
 
+Instructions : le modèle ne reçoit que les instructions versionnées d'Ulysse. Le prompt générique d'Hermes (identité, consignes d'agent de code, chemins de l'hôte, canal « OUT-OF-BAND USER MESSAGE » doté d'une autorité utilisateur) est retiré par le plugin `ulysse`, et la passerelle refuse toute requête dont le message système ou la liste d'outils diffère de l'attendu (empreinte sha256). Le contrôle d'autorité reste côté Ulysse, le middleware Hermes étant fail-open. Le mode `hermes-stub` n'envoie jamais la clé fournisseur à son point simulé, et ce point est refusé en `hermes-live`. Journaux du worker et du superviseur : codes de refus et identifiants seulement.
+
 Les commandes de scénarios exigent un owner, CSRF/session/membership actuels, connecteur fixture actif et activation explicite hors production. Elles changent une source fictive et demandent une ingestion ; aucune recommandation finale directe. Les viewers ne peuvent ni les exécuter ni décider. Une approbation écrit uniquement une décision Ulysse.
 
 Statut : exigences et critères de revue. Mise à jour 2026-10-06 : la V1 met en œuvre les contrôles marqués ci-dessous, vérifiés par tests ; les autres restent à faire.

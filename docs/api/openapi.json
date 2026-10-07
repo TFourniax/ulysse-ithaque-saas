@@ -384,6 +384,182 @@
         }
       }
     },
+    "/v1/agent-runs/{id}": {
+      "get": {
+        "tags": [
+          "analyses"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "subject_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "subject_label": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "subject_external_id": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "simulated",
+                        "hermes-live",
+                        "hermes-stub"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "validating",
+                        "completed",
+                        "abstained",
+                        "obsolete",
+                        "budget_reached",
+                        "failed",
+                        "interrupted"
+                      ]
+                    },
+                    "trigger": {
+                      "type": "string"
+                    },
+                    "snapshot": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "hermes_version": {
+                      "type": "string"
+                    },
+                    "instructions_version": {
+                      "type": "string"
+                    },
+                    "started_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "completed_at": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "result": {
+                      "nullable": true
+                    },
+                    "error_code": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "retrieved": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "tool_calls": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "model_calls": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "input_tokens": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "output_tokens": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "reserved_usd": {
+                      "type": "number"
+                    },
+                    "committed_usd": {
+                      "type": "number"
+                    },
+                    "cost_state": {
+                      "type": "string",
+                      "enum": [
+                        "declared",
+                        "estimated",
+                        "unknown"
+                      ]
+                    },
+                    "correlation_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "subject_id",
+                    "subject_label",
+                    "subject_external_id",
+                    "mode",
+                    "status",
+                    "trigger",
+                    "snapshot",
+                    "model",
+                    "hermes_version",
+                    "instructions_version",
+                    "started_at",
+                    "completed_at",
+                    "result",
+                    "error_code",
+                    "retrieved",
+                    "tool_calls",
+                    "model_calls",
+                    "input_tokens",
+                    "output_tokens",
+                    "reserved_usd",
+                    "committed_usd",
+                    "cost_state",
+                    "correlation_id"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/agent-runs/{id}/events": {
       "get": {
         "tags": [
