@@ -40,6 +40,67 @@ jobs:
       - run: docker build -f services/hermes/Dockerfile -t ulysse-hermes:ul016 .
       - name: Python checks and actual Hermes loop, simulated model endpoint
         run: docker run --rm --tmpfs /tmp:rw,size=128m,uid=10001,gid=10001 --entrypoint /opt/hermes/.venv/bin/python ulysse-hermes:ul016 -m unittest -v test_integration
+  # The real Hermes loop inside the complete stack (worker tools, PostgreSQL, publication,
+  # browser journey, restart) against the simulated OpenAI-compatible model: never live.
+  hermes-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      ULYSSE_ANALYSIS_MODE: hermes-stub
+      ENABLE_DEMO_SCENARIOS: 'true'
+      AGENT_MODEL_ID: openai/gpt-4.1-mini
+      AGENT_RUN_BUDGET_USD: '0.25'
+      AGENT_SESSION_BUDGET_USD: '2'
+      AGENT_MONTH_BUDGET_USD: '10'
+      AGENT_STUB_PROVIDER_URL: http://model-stub:8091/v1/chat/completions
+      ULYSSE_EXPECT_MODE: hermes-stub
+      ULYSSE_EVIDENCE_DIR: test-results/ul016-hermes-stub
+      COMPOSE: docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app --profile agent --profile agent-stub
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Throwaway configuration of an ephemeral run
+        run: |
+          cp .env.example .env
+          cp infra/.env.example infra/.env
+          token="$(openssl rand -hex 24)"
+          echo "::add-mask::$token"
+          echo "HERMES_SERVICE_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "AGENT_SESSION_ID=ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - run: docker build -t ulysse-app:local .
+      - run: docker build -f services/hermes/Dockerfile -t ulysse-hermes:ul016 .
+      - run: |
+          $COMPOSE up -d --wait --wait-timeout 600 postgres keycloak
+          $COMPOSE run --rm --no-deps db-init
+          $COMPOSE run --rm --no-deps demo-seed
+          $COMPOSE up -d --wait --wait-timeout 600 hermes model-stub api worker
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/agent-smoke.mjs
+      - run: |
+          $COMPOSE restart api worker hermes
+          $COMPOSE up -d --wait --wait-timeout 300 api worker hermes
+          node scripts/agent-smoke.mjs --resume
+      - name: Sanitized structured execution evidence
+        if: always()
+        run: |
+          if test -f "$ULYSSE_EVIDENCE_DIR/proof.json"; then cat "$ULYSSE_EVIDENCE_DIR/proof.json"; fi
+      - name: Diagnostic logs (codes only, no payloads)
+        if: failure()
+        run: $COMPOSE logs --tail=150 worker hermes model-stub
+      - name: Structured proof and browser captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ul016-hermes-stub-evidence
+          path: |
+            test-results/ul016-hermes-stub/proof.json
+            test-results/ul016-hermes-stub/*.png
   simulated-stack:
     runs-on: ubuntu-latest
     timeout-minutes: 25

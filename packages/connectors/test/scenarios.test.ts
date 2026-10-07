@@ -46,5 +46,5 @@ test('dates follow the replay time and contact constraints follow the events', (
   assert.ok(commercialFixture('acme', 'pause', NOW).contactPolicy.pauseUntil);
   assert.ok(commercialFixture('acme', 'baseline', NOW, 'OPP-006').contactPolicy.pauseUntil);
   assert.equal(commercialFixture('acme', 'insufficient', NOW).materials.length, 0);
-  assert.equal(commercialFixture('acme', 'baseline', NOW, 'OPP-005').materials.length, 0);
+  assert.equal(commercialFixture('acme', 'baseline', NOW, 'OPP-005').materials.length, 1);
 });

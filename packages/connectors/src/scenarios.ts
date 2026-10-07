@@ -190,8 +190,21 @@ const PROFILES: Record<Company, Record<string, Profile>> = {
         ),
       ],
     },
-    // The source exposes neither exchanges nor documents: insufficient information.
-    'OPP-005': { contact: 'Léa Fontaine (fictive)', topic: 'le pilote IoT', materials: () => [] },
+    // Only a dated trace: no need, budget, contact exchange nor document (insufficient).
+    'OPP-005': {
+      contact: 'Léa Fontaine (fictive)',
+      topic: 'le pilote IoT',
+      materials: (at) => [
+        material(
+          'lead-trace',
+          'activity',
+          'Fiche créée sur un salon (fictive)',
+          'Bruno Leroy (fictif)',
+          at(-4),
+          'Contact laissé sur le stand d’un salon fictif. Aucun échange, besoin, budget ni calendrier enregistré.',
+        ),
+      ],
+    },
     'OPP-006': {
       contact: 'Yves Bertin (fictif)',
       topic: 'le renouvellement du contrat',

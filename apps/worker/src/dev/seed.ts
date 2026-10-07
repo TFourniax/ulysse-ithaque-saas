@@ -84,11 +84,16 @@ try {
       const ids = z
         .object({ materials: z.array(z.object({ id: z.string() })) })
         .safeParse(payload.commercial);
+      const found = ids.success ? ids.data.materials.map((m) => m.id) : [];
+      const shared: readonly string[] = LEGACY_SHARED_CORPUS[corpus];
+      const sharedPrefix = ids.success && shared.every((id, i) => found[i] === id);
+      // OPP-001 sources were already its own: only an untouched Acme baseline gains the recorded
+      // decision. Elsewhere the shared corpus (and events added to it) described another prospect.
       const legacy =
-        ids.success &&
-        JSON.stringify(ids.data.materials.map((m) => m.id)) ===
-          JSON.stringify(LEGACY_SHARED_CORPUS[corpus]) &&
-        !(corpus === 'globex' && item.externalId === 'OPP-001');
+        item.externalId === 'OPP-001'
+          ? corpus === 'acme' && sharedPrefix && found.length === shared.length
+          : sharedPrefix ||
+            (corpus === 'acme' && item.externalId === 'OPP-005' && found.length === 0);
       if (!('commercial' in payload) || legacy)
         await writer.upsert(
           company.dataset,
