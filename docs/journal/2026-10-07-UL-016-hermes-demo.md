@@ -41,3 +41,11 @@ Documentation consolidée : ADR-0012, blueprint, contrat agentique v1, OpenAPI, 
 État final **partial**. Aucun fournisseur live appelé, aucune qualité/coût/latence live observée, aucune approbation produit inventée. Clé autorisée absente et Docker Desktop personnel inaccessible. Revue humaine de fidélité aux sources, rapprochement offre/besoin, contradictions et injection encore attendue. La PR reste draft, sans fusion ; les sources/doctrine réelles et le pilote ne sont pas clôturés.
 
 Dernier contrôle : traitement de technical_error séparé de la publication normale, code agent_reported_error durable et propositions existantes conservées. Test PostgreSQL supplémentaire ajouté ; recette relancée. Les anciennes mentions d'un coût inconnu comptant pour zéro dans OPERATIONS sont remplacées par la réservation conservatrice actuelle.
+
+## Retrait des copies et droits d'exécution
+
+Migration additive 0011 : retrait atomique des extraits agentiques dans evidence_links, des résultats/références/snapshots et événements de runs, avec conservation des réservations et usages. La purge fonctionne aussi après retour au mode règles. Fonction SECURITY DEFINER réservée au worker, entreprise courante et connexion révoquée obligatoires ; aucune écriture sur décisions/révisions/audit.
+
+La recette PostgreSQL générique utilisait le rôle API pour les opérations de service. Elle utilise maintenant le vrai rôle worker pour les contextes service, et le rôle API pour les humains ; les droits de purge ne sont pas étendus au rôle API. Le nouveau test worker vérifie refus sur connexion active, retrait après révocation en mode règles, et conservation des coûts incertains.
+
+Thomas annonce une clé OpenRouter prête. Configuration demandée dans le .env local ignoré par Git. Le terminal est à nouveau accessible, la copie de travail est resynchronisée depuis la PR, mais réseau terminal et Docker Desktop restent refusés ; aucune clé ni coût live n'est affiché ou inventé.

@@ -10,7 +10,7 @@ Mis à jour : 2026-10-07. Stade : **V1 de démonstration complète sur données 
 
 - **Parcours** : une source autorisée (CRM fictif) est synchronisée en arrière-plan ; les faits normalisés produisent des propositions priorisées, expliquées et sourcées, sans question à un chatbot ; un humain approuve, rejette ou modifie ; tout est historisé et audité ; aucune action externe n'est exécutée.
 - **Identité** : connexion OIDC réelle (Keycloak de développement) côté serveur, sessions serveur, CSRF, deux entreprises fictives, rôles owner/reviewer/viewer relus à chaque requête ([ADR-0006](adr/0006-identite-oidc-bff.md)).
-- **Données** : PostgreSQL 18.6, 10 migrations, rôles séparés (le compte de migration n'est jamais le compte applicatif), RLS forcée, clés composites, tables en ajout seul ([ADR-0004](adr/0004-postgresql-roles-rls.md)).
+- **Données** : PostgreSQL 18.6, 11 migrations, rôles séparés (le compte de migration n'est jamais le compte applicatif), RLS forcée, clés composites, tables en ajout seul ([ADR-0004](adr/0004-postgresql-roles-rls.md)).
 - **Worker** : pg-boss, outbox transactionnelle, synchronisations planifiées, analyse, expiration, purge, reprise sur crash, équité entre entreprises ([ADR-0007](adr/0007-worker-outbox.md)).
 - **Connecteurs** : contrat versionné et suite de tests de contrat ; seul le connecteur **fictif** existe ([ADR-0008](adr/0008-contrat-connecteur.md)).
 - **Doctrine et contexte** : doctrine fictive versionnée (brouillon → validation par un owner → retrait), contexte d'entreprise versionné ; une nouvelle version remplace les propositions concernées.

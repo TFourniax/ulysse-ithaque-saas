@@ -8,7 +8,7 @@ Mis à jour le 7 octobre 2026. Ce fichier fait foi tant qu'un passage documenté
 | --- | --- | --- | --- | --- |
 | UL-001 | Cadrage, règles communes, blueprint et kernel de référence | done | — | Docs de reprise, démo hors ligne ; [journal](journal/2026-10-06-foundation.md) |
 | UL-002 | Tooling strict, API et identité/memberships | done | UL-001 | Lockfile, tsc/lint/build en CI ; OIDC BFF, sessions, CSRF, tests droits/membership/révocation ; OpenAPI versionné ([ADR-0005](adr/0005-outillage-et-stack.md), [ADR-0006](adr/0006-identite-oidc-bff.md)) |
-| UL-003 | PostgreSQL/RLS et décisions durables | done | UL-002 | Migrations SQL contrôlées (10 à ce jour), tests sous rôles réels, conflits/idempotence/atomicité, redémarrage ([ADR-0004](adr/0004-postgresql-roles-rls.md)) |
+| UL-003 | PostgreSQL/RLS et décisions durables | done | UL-002 | Migrations SQL contrôlées (11 à ce jour), tests sous rôles réels, conflits/idempotence/atomicité, redémarrage ([ADR-0004](adr/0004-postgresql-roles-rls.md)) |
 | UL-004 | Worker, pg-boss, outbox et synchronisation fixture | done | UL-003 | Ingestion planifiée sans utilisateur, crash/retry/révocation, deux entreprises ([ADR-0007](adr/0007-worker-outbox.md)) |
 | UL-005 | Contrat connecteur et normalisation versionnée | done | UL-003 | Capacités, pagination, versions, suppressions, erreurs typées ; fixture et suite de contrat ([ADR-0008](adr/0008-contrat-connecteur.md)) |
 | UL-006 | Tableau de bord et décisions de bout en bout | done | UL-002–UL-004 | Liste, détail, provenance, décisions, révisions, historique ; Playwright 12/12 avec axe et mobile en CI |
