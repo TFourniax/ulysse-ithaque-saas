@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
+import { createHash } from 'node:crypto';
 import type { ModelSettings } from '@ulysse/ai';
 import { ModelError, ScriptedProvider } from '@ulysse/ai';
 import type { Connector } from '@ulysse/connectors';
 import {
   ConnectorError,
   createRegistry,
+  commercialFixture,
   FixtureConnector,
   MemoryFixtureStore,
 } from '@ulysse/connectors';
@@ -20,18 +22,489 @@ import {
   defaultRules,
   DoctrineService,
   QueryService,
+  ReviewService,
   systemClock,
+  agentInputHash,
 } from '@ulysse/domain';
 import {
   FIXTURE_CONTEXT,
   FIXTURE_DOCTRINE,
   fixtureCatalog,
+  serviceContext,
   userContext,
 } from '@ulysse/domain/testing';
 import { createLogger, createMetrics } from '@ulysse/observability';
 import { loadWorkerConfig } from '../src/config.ts';
+import { AgentRuntime, agentConfig } from '../src/agent-runtime.ts';
 import type { FaultHooks } from '../src/runtime.ts';
 import { noCredentialStore, WorkerRuntime } from '../src/runtime.ts';
+
+describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
+  async function world(
+    name: string,
+    company: 'acme' | 'globex' = 'acme',
+    scenario: Parameters<typeof commercialFixture>[1] = 'baseline',
+  ) {
+    const data = commercialFixture(company, scenario);
+    store.upsert(name, 'OPP-001', stalled('OPP-001', 12, { commercial: data }), iso(-1000));
+    const w = await tenantWorld(name, name);
+    const connection = await w.connect();
+    const agent = new AgentRuntime(workerPool, agentConfig({ ULYSSE_ANALYSIS_MODE: 'simulated' }));
+    const runtime = runtimeWith({ agent });
+    await runtime.handleSync(
+      { tenantId: w.tenantId, connectionId: connection.id, trigger: 'initial' },
+      crypto.randomUUID(),
+    );
+    const ctx = serviceContext(w.tenantId, ['analysis:run']);
+    const o = await agent.store.transaction(ctx, (tx) =>
+      tx.getOpportunityByExternalId(connection.id, 'OPP-001'),
+    );
+    assert.ok(o);
+    return { ...w, agent, runtime, ctx, o, connection };
+  }
+  test('two tenants with the same external identifier use tools and publish separate references; replay is idempotent', async () => {
+    const a = await world('agent-acme');
+    const b = await world('agent-globex', 'globex');
+    await Promise.all([
+      a.agent.analyze(a.ctx, 'source_change'),
+      b.agent.analyze(b.ctx, 'source_change'),
+    ]);
+    for (const w of [a, b]) {
+      const recs = await w.open();
+      assert.equal(recs.length, 1);
+      assert.equal(recs[0]?.ruleId, 'ulysse.agent.v1');
+      const runs = await w.agent.store.list(w.owner);
+      const run = runs[0];
+      assert.ok(run);
+      assert.equal(run.status, 'completed');
+      assert.ok(Number(run.tool_calls) >= 6);
+      await w.agent.analyze(w.ctx, 'source_change');
+      assert.equal((await w.open()).length, 1);
+      assert.equal((await w.agent.store.list(w.owner)).length, 1);
+      const detail = await w.queries.getRecommendation(w.owner, recs[0].id);
+      assert.ok(detail.evidence.every((e) => e.tenantId === w.tenantId));
+      assert.ok(detail.evidence.some((e) => e.factType === 'commercial_context'));
+    }
+    assert.equal(await a.agent.store.transaction(a.owner, (tx) => tx.getOpportunity(b.o.id)), null);
+  });
+  test('pause, opposition and absent exchanges produce no contact recommendation', async () => {
+    for (const scenario of ['pause', 'opposition', 'insufficient'] as const) {
+      const w = await world(`agent-${scenario}`, 'acme', scenario);
+      await w.agent.analyze(w.ctx, 'source_change');
+      assert.equal((await w.open()).length, 0);
+      assert.equal((await w.agent.store.list(w.owner))[0]?.status, 'abstained');
+    }
+  });
+  test('human decisions persist, viewer cannot decide, and rejection suppresses regeneration', async () => {
+    const w = await world('agent-review');
+    await w.agent.analyze(w.ctx, 'source_change');
+    const rec = (await w.open())[0];
+    assert.ok(rec);
+    const review = new ReviewService({
+      uow: new PgUnitOfWork(appPool),
+      clock: systemClock,
+      ids: { next: () => crypto.randomUUID() },
+      rules: defaultRules,
+    });
+    await assert.rejects(
+      review.decide(
+        {
+          ...w.owner,
+          actor: {
+            kind: 'user',
+            userId: w.owner.actor.kind === 'user' ? w.owner.actor.userId : '',
+            role: 'viewer',
+          },
+        },
+        rec.id,
+        { expectedRevision: rec.revision, decision: 'approve', reason: null },
+        crypto.randomUUID(),
+      ),
+    );
+    const key = crypto.randomUUID();
+    const decision = await review.decide(
+      w.owner,
+      rec.id,
+      { expectedRevision: rec.revision, decision: 'reject', reason: 'À clarifier' },
+      key,
+    );
+    assert.equal(decision.decision.decision, 'reject');
+    assert.equal(
+      (
+        await review.decide(
+          w.owner,
+          rec.id,
+          { expectedRevision: rec.revision, decision: 'reject', reason: 'À clarifier' },
+          key,
+        )
+      ).replayed,
+      true,
+    );
+    await w.agent.analyze(w.ctx, 'manual');
+    assert.equal((await w.open()).length, 0);
+  });
+  test('related history has stable versions and a concurrent human decision invalidates publication', async () => {
+    const w = await world('agent-history-version');
+    await w.agent.analyze(w.ctx, 'source_change');
+    const previous = (await w.open())[0];
+    assert.ok(previous);
+    store.upsert(
+      'agent-history-version',
+      'OPP-001',
+      stalled('OPP-001', 12, { commercial: commercialFixture('acme', 'positive_reply') }),
+      iso(0),
+    );
+    await w.runtime.handleSync(
+      { tenantId: w.tenantId, connectionId: w.connection.id, trigger: 'manual' },
+      crypto.randomUUID(),
+    );
+    const review = new ReviewService({
+      uow: new PgUnitOfWork(appPool),
+      clock: systemClock,
+      ids: { next: () => crypto.randomUUID() },
+      rules: defaultRules,
+    });
+    const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        await runner.tool(request.capability, 'get_opportunity', {});
+        await runner.tool(request.capability, 'get_active_doctrine', {});
+        await runner.tool(request.capability, 'get_company_context', {});
+        const history = await runner.tool(request.capability, 'list_related_recommendations', {
+          limit: 1,
+        });
+        assert.ok(
+          JSON.stringify(history).includes(
+            `recommendation:${previous.id}:r${String(previous.revision)}`,
+          ),
+        );
+        await review.decide(
+          w.owner,
+          previous.id,
+          {
+            expectedRevision: previous.revision,
+            decision: 'reject',
+            reason: 'Décision pendant analyse',
+          },
+          crypto.randomUUID(),
+        );
+        return abstention;
+      },
+    });
+    await runner.run(w.ctx, w.o.id, 'test');
+    const run = (await runner.store.list(w.owner)).find((r) => r.error_code === 'history_changed');
+    assert.ok(run);
+    assert.equal(run.status, 'obsolete');
+    assert.equal((await w.open()).length, 0);
+  });
+  test('a technical error records failure without closing an existing proposal', async () => {
+    const w = await world('agent-technical-error');
+    await w.agent.analyze(w.ctx, 'source_change');
+    const previous = (await w.open())[0];
+    assert.ok(previous);
+    store.upsert(
+      'agent-technical-error',
+      'OPP-001',
+      stalled('OPP-001', 12, { commercial: commercialFixture('acme', 'positive_reply') }),
+      iso(0),
+    );
+    await w.runtime.handleSync(
+      { tenantId: w.tenantId, connectionId: w.connection.id, trigger: 'manual' },
+      crypto.randomUUID(),
+    );
+    const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        await runner.tool(request.capability, 'get_opportunity', {});
+        await runner.tool(request.capability, 'get_active_doctrine', {});
+        await runner.tool(request.capability, 'get_company_context', {});
+        return {
+          version: 'ulysse-agent-v1',
+          outcome: 'technical_error',
+          summary: 'Erreur technique de recette, sans proposition.',
+          proposals: [],
+        };
+      },
+    });
+    await runner.run(w.ctx, w.o.id, 'test');
+    const run = (await runner.store.list(w.owner)).find(
+      (r) => r.error_code === 'agent_reported_error',
+    );
+    assert.ok(run);
+    assert.equal(run.status, 'failed');
+    assert.equal((await w.open())[0]?.id, previous.id);
+  });
+  test('revocation purges agent excerpts and runs in rules mode without resetting usage', async () => {
+    const w = await world('agent-purge-copies');
+    await w.agent.analyze(w.ctx, 'source_change');
+    const rec = (await w.open())[0];
+    assert.ok(rec);
+    await assert.rejects(
+      w.agent.store.transaction(w.ctx, (_tx, sql) =>
+        sql.query('SELECT app.purge_agent_artifacts($1)', [w.connection.id]),
+      ),
+      /revoked connection/,
+    );
+    await w.agent.store.transaction(w.ctx, async (_tx, sql) => {
+      await sql.query(
+        "UPDATE agent_runs SET reserved_usd=.25,committed_usd=.01,cost_state='unknown' WHERE tenant_id=$1",
+        [w.tenantId],
+      );
+    });
+    await w.connections.revoke(w.owner, w.connection.id);
+    // This runtime has no AgentRuntime: erasure must not depend on the current mode.
+    await runtimeWith().handlePurge(
+      { tenantId: w.tenantId, connectionId: w.connection.id },
+      crypto.randomUUID(),
+    );
+    const detail = await w.queries.getRecommendation(w.owner, rec.id);
+    assert.ok(detail.evidence.length > 0);
+    assert.ok(detail.evidence.every((e) => e.state === 'unavailable' && e.value === null));
+    const run = (await w.agent.store.list(w.owner))[0];
+    assert.ok(run);
+    assert.equal(run.result, null);
+    assert.deepEqual(run.snapshot, {});
+    assert.deepEqual(run.retrieved, []);
+    assert.equal(run.error_code, 'source_purged');
+    assert.equal(Number(run.reserved_usd), 0.25);
+    assert.equal(Number(run.committed_usd), 0.01);
+    assert.equal((await w.agent.store.events(w.owner, String(run.id))).length, 0);
+  });
+  test('capabilities reject foreign subjects, unavailable tools, expired leases and revoked connections', async () => {
+    const w = await world('agent-capability');
+    const other = await world('agent-other');
+    const capability = 'test-run-capability';
+    const runId = crypto.randomUUID();
+    await w.agent.store.transaction(w.ctx, async (tx, sql) => {
+      const d = await tx.getActiveDoctrine();
+      assert.ok(d);
+      const c = await tx.getCurrentContext();
+      await sql.query(
+        "INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id) VALUES($1,$2,$3,$4,'simulated','running','test','{}',$5,clock_timestamp()+interval '90 seconds','test','simulation','test','test','test')",
+        [
+          w.tenantId,
+          runId,
+          w.o.id,
+          agentInputHash(w.o, d, c),
+          createHash('sha256').update(capability).digest('hex'),
+        ],
+      );
+    });
+    await assert.rejects(w.agent.tool(capability, 'get_opportunity', { subjectId: other.o.id }));
+    await assert.rejects(w.agent.tool(capability, 'terminal', {}));
+    assert.ok(await w.agent.tool(capability, 'get_opportunity', { subjectId: w.o.id }));
+    await w.connections.revoke(w.owner, w.connection.id);
+    await assert.rejects(w.agent.tool(capability, 'get_opportunity', {}));
+    await w.agent.store.transaction(w.ctx, async (_tx, sql) => {
+      await sql.query(
+        "UPDATE agent_runs SET expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id=$1 AND id=$2",
+        [w.tenantId, runId],
+      );
+    });
+    await assert.rejects(w.agent.tool(capability, 'get_active_doctrine', {}));
+  });
+  const liveTestConfig = () =>
+    agentConfig({
+      ULYSSE_ANALYSIS_MODE: 'hermes-live',
+      ENABLE_FIXTURE_CONNECTOR: 'true',
+      HERMES_SERVICE_TOKEN: 'x'.repeat(32),
+      OPENROUTER_API_KEY: 'test-only-never-transmitted',
+      AGENT_MODEL_ID: 'openai/gpt-4.1-mini',
+      AGENT_RUN_BUDGET_USD: '.25',
+      AGENT_SESSION_BUDGET_USD: '2',
+      AGENT_MONTH_BUDGET_USD: '10',
+      AGENT_SESSION_ID: `test-${crypto.randomUUID()}`,
+    });
+  const abstention = {
+    version: 'ulysse-agent-v1',
+    outcome: 'no_signal',
+    summary: 'Aucun signal dans ce test de contrôle.',
+    proposals: [],
+  };
+  test('atomic reservations bound concurrent tenants and unknown historical cost blocks live', async () => {
+    const a = await world('agent-budget-a');
+    const b = await world('agent-budget-b');
+    const c = await world('agent-budget-c');
+    const releases: Array<() => void> = [];
+    const blocked = {
+      execute: () =>
+        new Promise<unknown>((resolve) => {
+          releases.push(() => resolve(abstention));
+        }),
+    };
+    const config = liveTestConfig();
+    const runners = [a, b, c].map(() => new AgentRuntime(workerPool, config, blocked));
+    const ra = runners[0];
+    const rb = runners[1];
+    const rc = runners[2];
+    assert.ok(ra && rb && rc);
+    const pending = [ra.run(a.ctx, a.o.id, 'test'), rb.run(b.ctx, b.o.id, 'test')];
+    await waitFor(async () => releases.length === 2);
+    try {
+      await assert.rejects(rc.run(c.ctx, c.o.id, 'test'), /concurrency/);
+    } finally {
+      releases.forEach((release) => release());
+      await Promise.all(pending);
+    }
+    const unknown = await world('agent-unknown-cost');
+    await unknown.agent.store.transaction(unknown.ctx, async (tx) => {
+      await tx.insertModelUsage({
+        tenantId: unknown.tenantId,
+        id: crypto.randomUUID(),
+        recommendationId: null,
+        provider: 'test',
+        model: 'test',
+        promptVersion: 'test',
+        inputTokens: 100,
+        outputTokens: 20,
+        costUsd: null,
+        latencyMs: 1,
+        outcome: 'failed',
+        errorCode: 'unknown',
+        createdAt: new Date().toISOString(),
+      });
+    });
+    let invoked = false;
+    const runtime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async () => {
+        invoked = true;
+        return abstention;
+      },
+    });
+    await runtime.run(unknown.ctx, unknown.o.id, 'test');
+    assert.equal(invoked, false);
+    assert.equal((await runtime.store.list(unknown.owner))[0]?.status, 'budget_reached');
+  });
+  test('source changes during execution prevent publication and retry after a completed run cannot duplicate', async () => {
+    const w = await world('agent-obsolete');
+    const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        await runner.tool(request.capability, 'get_opportunity', { subjectId: w.o.id });
+        await runner.tool(request.capability, 'get_active_doctrine', {});
+        store.upsert(
+          'agent-obsolete',
+          'OPP-001',
+          stalled('OPP-001', 12, { commercial: commercialFixture('acme', 'positive_reply') }),
+          iso(0),
+        );
+        await w.runtime.handleSync(
+          { tenantId: w.tenantId, connectionId: w.connection.id, trigger: 'manual' },
+          crypto.randomUUID(),
+        );
+        return abstention;
+      },
+    });
+    await runner.run(w.ctx, w.o.id, 'test');
+    assert.equal((await runner.store.list(w.owner))[0]?.status, 'obsolete');
+    assert.equal((await w.open()).length, 0);
+    await w.agent.analyze(w.ctx, 'source_change');
+    const recs = await w.open();
+    assert.equal(recs.length, 1);
+    // Equivalent to a crash after publication, before the pg-boss acknowledgement.
+    await w.agent.analyze(w.ctx, 'source_change');
+    assert.equal((await w.open())[0]?.id, recs[0]?.id);
+  });
+
+  test('inference accounting preserves estimated and uncertain costs and bounds retries', async (t) => {
+    const w = await world('agent-gateway-accounting');
+    let transmitted = 0;
+    t.mock.method(globalThis, 'fetch', async () => {
+      transmitted++;
+      if (transmitted === 3) throw new Error('simulated uncertain provider outcome');
+      return new Response(
+        JSON.stringify({
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            ...(transmitted === 2 ? {} : { cost: 0 }),
+          },
+          choices: [],
+        }),
+        { status: 200 },
+      );
+    });
+    const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        await runner.tool(request.capability, 'get_opportunity', { subjectId: w.o.id });
+        await runner.tool(request.capability, 'get_active_doctrine', {});
+        await runner.tool(request.capability, 'get_company_context', {});
+        const body = { messages: [{ role: 'user', content: 'Sources fictives de test.' }] };
+        await runner.inference(request.capability, body);
+        await runner.inference(request.capability, body);
+        const estimated = (await runner.store.list(w.owner))[0];
+        assert.ok(estimated);
+        assert.equal(estimated.cost_state, 'estimated');
+        await assert.rejects(runner.inference(request.capability, body));
+        await runner.inference(request.capability, body);
+        for (let i = 0; i < 4; i++) await runner.inference(request.capability, body);
+        await assert.rejects(runner.inference(request.capability, body), /model limit/);
+        return abstention;
+      },
+    });
+    await runner.run(w.ctx, w.o.id, 'test');
+    const run = (await runner.store.list(w.owner))[0];
+    assert.ok(run);
+    assert.equal(transmitted, 8);
+    assert.equal(run.model_calls, 8);
+    assert.equal(run.cost_state, 'unknown');
+    assert.equal(Number(run.reserved_usd), 0.25);
+    assert.ok(Number(run.committed_usd) > 0);
+    assert.equal((await w.open()).length, 0);
+  });
+
+  test('an expired run resumes before publication and an invented citation cannot publish', async () => {
+    const w = await world('agent-crash-before-publication');
+    const expired = crypto.randomUUID();
+    await w.agent.store.transaction(w.ctx, async (tx, sql) => {
+      const doctrine = await tx.getActiveDoctrine();
+      assert.ok(doctrine);
+      const context = await tx.getCurrentContext();
+      await sql.query(
+        "INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id) VALUES($1,$2,$3,$4,'simulated','running','test','{}',$5,clock_timestamp()-interval '1 second','test','simulation','test','test','test')",
+        [
+          w.tenantId,
+          expired,
+          w.o.id,
+          agentInputHash(w.o, doctrine, context),
+          createHash('sha256').update(expired).digest('hex'),
+        ],
+      );
+    });
+    await w.agent.analyze(w.ctx, 'scheduled');
+    const runs = await w.agent.store.list(w.owner);
+    assert.ok(runs.some((r) => r.id === expired && r.status === 'interrupted'));
+    assert.equal((await w.open()).length, 1);
+    await w.agent.analyze(w.ctx, 'scheduled');
+    assert.equal((await w.open()).length, 1);
+    const invalid = await world('agent-invalid-citation');
+    const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        await runner.tool(request.capability, 'get_opportunity', { subjectId: invalid.o.id });
+        await runner.tool(request.capability, 'get_active_doctrine', {});
+        await runner.tool(request.capability, 'get_company_context', {});
+        return {
+          version: 'ulysse-agent-v1',
+          outcome: 'proposals',
+          summary: 'Résultat invalide de test',
+          proposals: [
+            {
+              action: 'clarify',
+              title: 'Vérifier',
+              nextStep: 'Clarifier',
+              justification: 'Citation fictive non récupérée',
+              references: ['material:invented'],
+              assumptions: [],
+              missingInformation: [],
+              limits: [],
+              urgency: 'normal',
+            },
+          ],
+        };
+      },
+    });
+    await runner.run(invalid.ctx, invalid.o.id, 'test');
+    assert.equal((await invalid.open()).length, 0);
+    assert.equal((await runner.store.list(invalid.owner))[0]?.status, 'failed');
+  });
+});
 
 let db: TestDatabase;
 let admin: AdminClient;
@@ -63,6 +536,7 @@ function runtimeWith(
     env?: Record<string, string>;
     model?: ModelSettings;
     metrics?: ReturnType<typeof createMetrics>;
+    agent?: AgentRuntime;
   } = {},
 ) {
   return new WorkerRuntime({
@@ -82,6 +556,7 @@ function runtimeWith(
     metrics: options.metrics ?? createMetrics('worker-test'),
     ...(options.faults ? { faults: options.faults } : {}),
     ...(options.model ? { model: options.model } : {}),
+    ...(options.agent ? { agent: options.agent } : {}),
   });
 }
 
@@ -464,7 +939,12 @@ describe('background ingestion with pg-boss', () => {
     // Deterministic per opportunity: other tenants' pending events may also reach this runtime.
     const provider = new ScriptedProvider(
       Array.from({ length: 50 }, () => (request: { user: string }) => {
-        if (request.user.includes('OPP-2')) throw new ModelError('unavailable', 'provider down');
+        if (request.user.includes('OPP-2'))
+          throw new ModelError('unavailable', 'provider down', {
+            inputTokens: 0,
+            outputTokens: 0,
+            costUsd: 0,
+          });
         return good;
       }),
     );

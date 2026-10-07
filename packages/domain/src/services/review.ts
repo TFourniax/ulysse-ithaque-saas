@@ -1,4 +1,5 @@
 import { currentFingerprintFor } from '../analysis.ts';
+import { AGENT_RULE_ID, agentFingerprint } from '../agent.ts';
 import type { Context } from '../context.ts';
 import { requirePermission } from '../context.ts';
 import { ensure } from '../errors.ts';
@@ -44,14 +45,17 @@ export async function checkEvidence(
   const doctrineActive =
     doctrine !== null && doctrine.status === 'validated' && active?.id === doctrine.id;
   return {
-    currentFingerprint: currentFingerprintFor({
-      recommendation: rec,
-      opportunity,
-      doctrine,
-      rules,
-      context,
-      now,
-    }),
+    currentFingerprint:
+      rec.ruleId === AGENT_RULE_ID && opportunity && doctrine && !opportunity.deletedAt
+        ? agentFingerprint(opportunity, doctrine, context, rec.kind)
+        : currentFingerprintFor({
+            recommendation: rec,
+            opportunity,
+            doctrine,
+            rules,
+            context,
+            now,
+          }),
     dataAsOf: connection?.dataAsOf ?? null,
     connectionActive: connection?.status === 'active',
     doctrineActive,

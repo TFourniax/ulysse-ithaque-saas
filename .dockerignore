@@ -13,3 +13,4 @@ infra/.env
 .local
 backups
 docs
+.task-*

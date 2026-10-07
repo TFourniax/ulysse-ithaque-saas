@@ -1,0 +1,116 @@
+name: ul016-validation
+on:
+  pull_request:
+    branches: ['claude/sweet-tesla-jrnkxs']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Generate formatted sources and OpenAPI for review
+        run: |
+          npm run format
+          npm run openapi
+          git diff --binary > /tmp/ul016-generated.patch
+          python3 -c "import gzip,base64; print('UL016_PATCH='+base64.b64encode(gzip.compress(open('/tmp/ul016-generated.patch','rb').read())).decode())"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ul016-generated
+          path: /tmp/ul016-generated.patch
+      - run: npm run verify
+  hermes-loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: docker build -f services/hermes/Dockerfile -t ulysse-hermes:ul016 .
+      - name: Python checks and actual Hermes loop, simulated model endpoint
+        run: docker run --rm --tmpfs /tmp:rw,size=128m,uid=10001,gid=10001 --entrypoint /opt/hermes/.venv/bin/python ulysse-hermes:ul016 -m unittest -v test_integration
+  simulated-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        origin: [fresh, upgrade]
+    env:
+      ULYSSE_ANALYSIS_MODE: simulated
+      ENABLE_DEMO_SCENARIOS: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: |
+          cp .env.example .env
+          cp infra/.env.example infra/.env
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: matrix.origin == 'upgrade'
+        with:
+          persist-credentials: false
+          ref: 598f082ab33fb87faf5ff357285dc95b536bb1b3
+          path: .task-ul015
+      - name: Prepare the existing UL-015 stack and an approved decision
+        if: matrix.origin == 'upgrade'
+        env:
+          ULYSSE_IMAGE: ulysse-app:ul015
+          ULYSSE_UPGRADE_SESSION: ${{ runner.temp }}/ul015-session.json
+          ULYSSE_UPGRADE_PROOF: ${{ runner.temp }}/ul015-proof.json
+        run: |
+          docker build -t ulysse-app:ul015 .task-ul015
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait --wait-timeout 600 postgres keycloak api worker
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app run --rm demo-seed
+          node scripts/smoke.mjs --user alice --password ulysse-demo-alice --expect-recommendations 3 --session-file "$ULYSSE_UPGRADE_SESSION"
+          node scripts/upgrade-smoke.mjs --before
+          docker compose -f infra/compose.yaml --env-file .env --env-file infra/.env --profile app stop api worker
+      - run: |
+          docker build -t ulysse-app:local .
+          docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait --wait-timeout 600 postgres keycloak
+          docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app run --rm --no-deps db-init
+          docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app run --rm --no-deps demo-seed
+          docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait --wait-timeout 600 postgres keycloak api worker
+      - name: Verify preserved state after upgrade
+        if: matrix.origin == 'upgrade'
+        env:
+          ULYSSE_UPGRADE_SESSION: ${{ runner.temp }}/ul015-session.json
+          ULYSSE_UPGRADE_PROOF: ${{ runner.temp }}/ul015-proof.json
+        run: node scripts/upgrade-smoke.mjs
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/agent-smoke.mjs
+      - run: |
+          docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app restart api worker
+          docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait --wait-timeout 300 api worker
+          node scripts/agent-smoke.mjs --resume
+      - name: Sanitized structured execution evidence
+        if: always()
+        run: |
+          if test -f test-results/ul016/proof.json; then cat test-results/ul016/proof.json; fi
+      - name: Diagnostic logs
+        if: failure()
+        run: docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --profile app logs --tail=100 api worker
+      - name: Structured proof and browser captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ul016-simulated-evidence-${{ matrix.origin }}
+          path: |
+            test-results/ul016/proof.json
+            test-results/ul016/*.png

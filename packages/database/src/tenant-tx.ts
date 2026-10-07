@@ -668,6 +668,8 @@ export class PgTenantTx implements TenantTx {
   async purgeConnectionData(
     connectionId: string,
   ): Promise<{ sourceRecords: number; opportunities: number; facts: number }> {
+    // The worker removes agent copies in the same transaction, even after returning to rules.
+    await this.#exec('SELECT app.purge_agent_artifacts($1)', [connectionId]);
     const facts = await this.#exec(
       'DELETE FROM facts WHERE tenant_id = $1 AND connection_id = $2',
       [this.tenantId, connectionId],
@@ -1144,7 +1146,7 @@ export class PgTenantTx implements TenantTx {
 
   async sumModelCostSince(since: string): Promise<number> {
     const row = await this.#one(
-      'SELECT COALESCE(sum(cost_usd), 0)::text AS total FROM model_usage WHERE tenant_id = $1 AND created_at >= $2',
+      'SELECT COALESCE(sum(COALESCE(cost_usd, 1000000000)), 0)::text AS total FROM model_usage WHERE tenant_id = $1 AND created_at >= $2',
       [this.tenantId, since],
     );
     return row ? num(row, 'total') : 0;

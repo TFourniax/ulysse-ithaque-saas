@@ -1,6 +1,14 @@
 # Exploitation
 
-Mis à jour : 2026-10-06 (UL-011). Ce document décrit comment démarrer, configurer, surveiller, sauvegarder, restaurer et révoquer. Il ne désigne **aucune infrastructure de production** : l'hébergement, la région, le fournisseur d'identité et les objectifs de reprise restent à décider (OPEN-QUESTIONS Q-007, Q-008, Q-013). Ne pas installer Ulysse sur un serveur partagé existant sans inventaire préalable de ses services, ressources, sauvegardes et périmètre.
+## UL-016 — stack et budgets agentiques
+
+Voir [DEMO-AGENTIQUE](DEMO-AGENTIQUE.md) pour les commandes PowerShell avec arrêt après échec et la mise à niveau additive, [rapport](VALIDATION-UL-016.md) pour les validations réellement observées. `scripts/demo-agentique.ps1` construit l'application, applique 0009/0010/0011, enrichit les fixtures et démarre le mode demandé, sans supprimer les volumes. L'overlay `infra/hermes.compose.yaml` ajoute le service privé Python/Hermes et son réseau interne. PostgreSQL 18.6/Keycloak 26.8 restent inchangés.
+
+Live : clé OpenRouter et secret Hermes dans `.env` ignoré par Git ; modèle fixe `openai/gpt-4.1-mini`, budgets explicites 0,25 USD/run, 2 USD/session, 10 USD/tenant/mois, session identifiée. 8 appels modèle retries compris, 12 outils, 90 secondes, un run/tenant, deux au total. Les fonctions de réservation sous verrou global évitent une dépense concurrente du même solde. Les coûts inconnus ne valent jamais zéro ; une issue incertaine conserve la réservation. L'ancienne formulation payante sans réservation est désactivée dans l'entrée du worker.
+
+Le worker ne maintient aucune transaction longue pendant le modèle. Les runs/events sont durables et bornés, les entrées déjà publiées dédupliquées. La maintenance reprend les leases expirées ; les décisions idempotentes et révisions humaines existantes sont conservées. Aucun fallback automatique. Retour au mode historique : `.\scripts\demo-agentique.ps1 -Mode rules`.
+
+Mis à jour : 2026-10-07 (UL-011, UL-016). Ce document décrit comment démarrer, configurer, surveiller, sauvegarder, restaurer et révoquer. Il ne désigne **aucune infrastructure de production** : l'hébergement, la région, le fournisseur d'identité et les objectifs de reprise restent à décider (OPEN-QUESTIONS Q-007, Q-008, Q-013). Ne pas installer Ulysse sur un serveur partagé existant sans inventaire préalable de ses services, ressources, sauvegardes et périmètre.
 
 Toutes les commandes ci-dessous ont été exécutées sur la stack locale avec des données fictives, sauf mention « non vérifié ». Les preuves sont consignées dans [le journal UL-011](journal/2026-10-06-UL-011-exploitation.md).
 
@@ -70,7 +78,8 @@ Toutes les entrées sont validées au démarrage (Zod) ; une valeur manquante ou
 | `METRICS_TOKEN` | API, worker | **oui** | jeton Bearer de `/metrics` ; sans lui `/metrics` répond 404 |
 | `WORKER_CONCURRENCY`, `WORKER_TENANT_CONCURRENCY`, `SYNC_PAGE_SIZE`, `SYNC_MAX_PAGES_PER_JOB`, `OUTBOX_POLL_MS`, `SYNC_DISPATCH_CRON`, `MAINTENANCE_CRON` | worker | non | une entreprise ne peut pas saturer les autres (concurrence par entreprise) |
 | `ENABLE_FIXTURE_CONNECTOR` | API, worker | non | CRM fictif ; interdit en production |
-| `MODEL_PROVIDER` (`none`), `OPENROUTER_API_KEY`, `MODEL_ID`, `MODEL_TIMEOUT_MS`, `MODEL_MAX_OUTPUT_TOKENS`, `MODEL_TENANT_MONTHLY_BUDGET_USD` (0) | worker | clé : **oui** | formulation assistée optionnelle (ADR 0009) |
+| `MODEL_PROVIDER=none` | worker | non | formulation payante historique désactivée à l'entrée du worker ; mode règles conservé |
+| `OPENROUTER_API_KEY`, `HERMES_SERVICE_TOKEN`, `AGENT_MODEL_ID`, `AGENT_*_BUDGET_USD`, `AGENT_SESSION_ID` | worker, service privé | clé et token : **oui** | activation Hermes live explicite, réservations et plafonds selon DEMO-AGENTIQUE |
 | `BACKUP_ENCRYPTION_KEY` | sauvegarde/restauration | **oui** | 32 octets aléatoires en base64 (`openssl rand -base64 32`) |
 | `ULYSSE_PG_EXEC` | sauvegarde/restauration | non | préfixe pour exécuter `pg_dump`/`pg_restore` dans le conteneur PostgreSQL |
 | `LOG_LEVEL` | API, worker | non | |
@@ -116,7 +125,7 @@ Les propositions et décisions déjà enregistrées, avec les valeurs de preuve 
 | `OIDC_CLIENT_SECRET` | nouveau secret dans l'IdP puis redémarrage de l'API | connexions en cours à refaire |
 | Mots de passe PostgreSQL | section 4 | |
 | `METRICS_TOKEN` | remplacer côté Ulysse et côté collecteur | |
-| `OPENROUTER_API_KEY` | révoquer chez le fournisseur, remplacer, redémarrer le worker | sans clé, formulation déterministe |
+| `OPENROUTER_API_KEY` | révoquer chez le fournisseur, remplacer, redémarrer le worker | live exige une clé valide ; retour aux règles explicite |
 | `BACKUP_ENCRYPTION_KEY` | nouvelle clé pour les nouvelles sauvegardes ; **conserver l'ancienne** tant que des sauvegardes chiffrées avec elle sont retenues | chaque manifeste porte l'empreinte de sa clé |
 
 ## 8. Sauvegarde et restauration
@@ -174,7 +183,7 @@ Corréler par `correlationId` (renvoyé dans chaque erreur et présent dans les 
 
 ### Formulation assistée indisponible
 
-Sans effet sur le parcours : les propositions gardent la formulation déterministe. Vérifier la clé, le budget mensuel (`model_usage`) et l'état du fournisseur.
+La formulation payante historique est désactivée à l'entrée du worker. Le mode règles reste disponible. Pour Hermes, consulter Analyses (statut, code, corrélation et réservations), puis le diagnostic de DEMO-AGENTIQUE ; le retour aux règles est explicite.
 
 ## 11. Rétention et purge
 
@@ -183,7 +192,7 @@ Sans effet sur le parcours : les propositions gardent la formulation déterminis
 | Sessions | expiration (inactivité 2 h, absolue 12 h) ; purge des sessions expirées ou révoquées depuis 1 jour | maintenance worker toutes les 5 min |
 | Tentatives de connexion OIDC | 10 min ; purge après expiration | idem |
 | Reçus d'idempotence | 24 h ; purge après expiration | idem |
-| Données d'une connexion révoquée | purge des enregistrements source, opportunités et faits | job de purge à la révocation |
+| Données d'une connexion révoquée | purge des enregistrements source, opportunités, faits, résultats/extraits/events ajoutés par les analyses ; comptabilité expurgée conservée | job de purge à la révocation |
 | Propositions, décisions, révisions, audit | conservés (tables en ajout seul) | durée à décider (Q-013) |
 | Compteurs d'usage modèle | conservés (aucun prompt ni réponse stockés) | durée à décider |
 | Journaux applicatifs | sans corps de requête, jeton, cookie, code OIDC ni contenu source ; chemins sans paramètres | dépend de l'hébergement |
@@ -193,4 +202,4 @@ Sans effet sur le parcours : les propositions gardent la formulation déterminis
 - Aucun environnement pilote ni de production n'existe ; TLS, IdP de production, stockage des sauvegardes hors site et collecte des métriques ne sont pas vérifiés.
 - Keycloak est configuré en mode développement avec des comptes et un secret fictifs publics : il ne doit protéger aucun environnement réel.
 - L'appel réel à OpenRouter n'est pas vérifié (aucune clé ; sortie réseau refusée dans l'environnement de développement).
-- Le budget modèle s'appuie sur le coût déclaré par le fournisseur ; un appel sans coût déclaré compte pour 0 (DEBT-014).
+- DEBT-014 est corrigée pour le pipeline activable : réservation atomique, concurrence bornée, coût déclaré/estimé/inconnu conservateur ; une issue incertaine garde sa réservation. Les coûts et la qualité d'un fournisseur live restent à mesurer.

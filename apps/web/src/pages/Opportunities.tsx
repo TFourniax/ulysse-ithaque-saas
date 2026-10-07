@@ -1,4 +1,5 @@
 import { useOpportunities } from '../api.ts';
+import { Link } from 'react-router';
 import { useSession } from '../session.tsx';
 import { EmptyState, ErrorBanner, Loading, PageHeader, TableScroll } from '../components/ui.tsx';
 import { formatDateTime, formatFactValue } from '../format.ts';
@@ -57,7 +58,7 @@ export function OpportunitiesPage() {
               {items.map((o) => (
                 <tr key={o.id}>
                   <th scope="row">
-                    {o.name}
+                    <Link to={`/opportunities/${o.id}`}>{o.name}</Link>
                     <span className="muted small cell-sub">
                       {' '}
                       ({o.externalId}, rév. {o.revision})

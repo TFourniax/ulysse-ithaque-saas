@@ -1,0 +1,90 @@
+{
+  "testedCommit": "65eae5fdeb4df6831d8958fb5f388bb6aede49ce",
+  "mode": "simulated",
+  "hermesVersion": "e76fb951a1d207c9596032426e7e0eadfb197bea",
+  "modelCalls": 0,
+  "opportunityId": "0b0b6e05-02b8-4f6a-ab92-8c1f2a4f0907",
+  "recommendationId": "fd5e212e-4d43-4971-8964-f3f623338e5d",
+  "initialRun": "08954801-6b52-4779-80f4-13a101230c18",
+  "evolvedRun": "4a7606a6-44ca-4710-9dbb-a4763c51c821",
+  "sourceRevision": 2,
+  "events": [
+    {
+      "sequence": 1,
+      "kind": "started",
+      "label": "Analyse agentique simulée démarrée",
+      "references": [],
+      "created_at": "2026-10-07T16:21:04.250Z"
+    },
+    {
+      "sequence": 2,
+      "kind": "tool",
+      "label": "get_opportunity",
+      "references": ["opportunity:0b0b6e05-02b8-4f6a-ab92-8c1f2a4f0907:r2"],
+      "created_at": "2026-10-07T16:21:04.259Z"
+    },
+    {
+      "sequence": 3,
+      "kind": "tool",
+      "label": "get_company_context",
+      "references": ["context:v1"],
+      "created_at": "2026-10-07T16:21:04.263Z"
+    },
+    {
+      "sequence": 4,
+      "kind": "tool",
+      "label": "get_active_doctrine",
+      "references": ["doctrine:3ccdd6f1-543e-46f1-95a3-c5d5b6818633:v1"],
+      "created_at": "2026-10-07T16:21:04.267Z"
+    },
+    {
+      "sequence": 5,
+      "kind": "tool",
+      "label": "list_related_recommendations",
+      "references": ["recommendation:c931d315-7e72-441f-852b-10f3fac15f2f:r1"],
+      "created_at": "2026-10-07T16:21:04.273Z"
+    },
+    {
+      "sequence": 6,
+      "kind": "tool",
+      "label": "list_activities",
+      "references": [
+        "material:0b0b6e05-02b8-4f6a-ab92-8c1f2a4f0907:crm-call:v1:r2",
+        "material:0b0b6e05-02b8-4f6a-ab92-8c1f2a4f0907:workshop-note:v1:r2",
+        "material:0b0b6e05-02b8-4f6a-ab92-8c1f2a4f0907:calendar-email:v1:r2",
+        "material:0b0b6e05-02b8-4f6a-ab92-8c1f2a4f0907:new-reply:v1:r2"
+      ],
+      "created_at": "2026-10-07T16:21:04.278Z"
+    },
+    {
+      "sequence": 7,
+      "kind": "tool",
+      "label": "search_documents",
+      "references": [],
+      "created_at": "2026-10-07T16:21:04.282Z"
+    },
+    {
+      "sequence": 8,
+      "kind": "tool",
+      "label": "read_document_excerpt",
+      "references": ["material:0b0b6e05-02b8-4f6a-ab92-8c1f2a4f0907:offer-sheet:v1:r2"],
+      "created_at": "2026-10-07T16:21:04.287Z"
+    },
+    {
+      "sequence": 9,
+      "kind": "validating",
+      "label": "Validation des références, versions, doctrine et décisions",
+      "references": [],
+      "created_at": "2026-10-07T16:21:04.315Z"
+    },
+    {
+      "sequence": 10,
+      "kind": "completed",
+      "label": "1 proposition(s) publiée(s)",
+      "references": [],
+      "created_at": "2026-10-07T16:21:04.322Z"
+    }
+  ],
+  "decision": "approved",
+  "externalWrites": 0
+}

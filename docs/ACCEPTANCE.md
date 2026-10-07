@@ -1,5 +1,20 @@
 # Recette et preuves
 
+## Complément UL-016 (2026-10-07)
+
+Les preuves historiques ci-dessous restent applicables. [VALIDATION-UL-016](VALIDATION-UL-016.md) distingue contrôles simulés, véritable boucle Hermes sur endpoint simulé et validation fournisseur live. Cette dernière et la revue humaine de pertinence restent attendues ; le lot est **partial**.
+
+| Invariant | Contrôle du lot |
+| --- | --- |
+| Schéma fermé, citations récupérées, opposition/pause | `packages/domain/test/agent.test.ts` |
+| Rôles réels, capacités, références interentreprises et coût inconnu | `apps/worker/test/worker.test.ts`, migration 0009 et catalogue des privilèges |
+| Versions modifiées, rejeu, décisions et révocation | Même suite PostgreSQL ; aucune publication du résultat obsolète |
+| Sept outils réels ; registres et homes isolés | `services/hermes/test_integration.py`, vrai AIAgent épinglé, fournisseur simulé |
+| Sources, ingestion, évolution, preuves, décision, viewer et Globex | `scripts/agent-smoke.mjs` sur l'image complète, captures CI |
+| Mise à niveau et état durable | Matrice fresh/upgrade UL-015 ; `scripts/upgrade-smoke.mjs`, même volume et décision antérieure |
+| Pertinence commerciale et résistance sémantique aux injections | Catalogue [SCENARIOS-AGENTIQUES](SCENARIOS-AGENTIQUES.md), revue de sorties live requise |
+
+
 Mis à jour : 2026-10-06 (UL-012a). Les preuves ci-dessous ont été exécutées sur **données fictives** (deux entreprises fictives, CRM simulé, doctrine fictive, Keycloak de développement). Elles démontrent le comportement du logiciel, pas sa valeur commerciale réelle.
 
 Référence de preuve : commit `a3160dc`, [CI run 37543605537](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37543605537) (jobs `static-and-unit` Ubuntu/Windows, `integration-postgres`, `e2e-browser`, `container-stack`), plus les exécutions locales consignées dans les journaux. Les suites : `domain` (scénarios exécutés contre l'adaptateur mémoire **et** PostgreSQL), `database`, `api`, `worker`, `ai`, `connectors`, recette navigateur `apps/web/e2e/journey.spec.ts`, test de fumée `scripts/smoke.mjs`.
