@@ -41,3 +41,23 @@ Documentation consolidée : ADR-0012, blueprint, contrat agentique v1, OpenAPI, 
 État final **partial**. Aucun fournisseur live appelé, aucune qualité/coût/latence live observée, aucune approbation produit inventée. Clé autorisée absente et Docker Desktop personnel inaccessible. Revue humaine de fidélité aux sources, rapprochement offre/besoin, contradictions et injection encore attendue. La PR reste draft, sans fusion ; les sources/doctrine réelles et le pilote ne sont pas clôturés.
 
 Dernier contrôle : traitement de technical_error séparé de la publication normale, code agent_reported_error durable et propositions existantes conservées. Test PostgreSQL supplémentaire ajouté ; recette relancée. Les anciennes mentions d'un coût inconnu comptant pour zéro dans OPERATIONS sont remplacées par la réservation conservatrice actuelle.
+
+## Reprise (Claude), 2026-10-07
+
+**Départ.** Commit exact `fefba88846ea4956963b71e41bd7c238c89bcb1e` (tête de `codex/ul-016-hermes-demo`, PR #3 draft, CI verte), lui-même sur la base UL-015 `598f082`. Branche de travail désignée `claude/clever-cannon-99ywx2`, repartie de `fefba88` ; PR #4 draft vers `claude/sweet-tesla-jrnkxs`. L'identifiant UL-016 est conservé (même lot).
+
+**Vérification d'Hermes.** Le commit épinglé `e76fb95` est présent sur `main` du dépôt officiel `NousResearch/hermes-agent` (licence MIT), postérieur de 8 834 commits à la release stable `v2026.9.24`, qui ne contient pas l'installateur scellé et exclut Python 3.14 : épinglage conservé, DEBT-020.
+
+**Environnement de l'agent.** Docker 29.8 démarré localement ; Docker Hub limité (429), `quay.io`, `deb.debian.org` et `openrouter.ai` refusés ; images PostgreSQL 18.6, Keycloak 26.8.0, Node 24.21.0 et Python 3.14.4 récupérées au même tag via `mirror.gcr.io`. Node 24.21.0 installé avec contrôle SHA-256. Image Hermes construite par l'installateur scellé officiel à partir d'un export du dépôt officiel au commit épinglé (`apt` indisponible). Aucune clé OpenRouter dans l'environnement ; aucun secret affiché.
+
+**Recette de départ** (avant modification) : `npm run verify` vert ; PostgreSQL 50/50, API 17/17, worker 21/21 ; e2e 12/12 ; `test_integration` Hermes vert hors réseau.
+
+**Constats.** (1) La requête réelle d'Hermes au modèle commençait par ~10,5 Ko de consignes génériques (identité Hermes, terminal/fichiers, chemins de l'hôte, canal « OUT-OF-BAND USER MESSAGE »). (2) Toutes les opportunités Acme partageaient le corpus d'Industries Fictives SA, Globex OPP-002 celui d'OPP-001. (3) La maintenance relançait sans fin un run en échec sur une entrée inchangée, chaque échec gardant 0,25 USD réservé. (4) Le superviseur et la passerelle n'enregistraient aucun motif d'échec. (5) La boucle Hermes n'était testée qu'avec des outils simulés.
+
+**Changements.** Plugin Hermes officiel `ulysse` (outils + middleware `llm_request`), blocs génériques coupés par configuration, contrôles fail-closed ; passerelle vérifiant l'empreinte des instructions et la liste d'outils ; `/health` versionné et `hermes_version_mismatch` ; tentatives bornées (`MAX_ATTEMPTS=2`) et réservations réconciliées ; mode `hermes-stub` (migration 0011, `model_stub.py`, profil `agent-stub`, job CI `hermes-stack`) ; corpus par opportunité avec décisions consignées, migration du corpus hérité par le seed ; urgence et limites de l'agent dans le détail d'une proposition ; sujet de chaque analyse, état « analyse en attente », icône et libellés CRM ; `scripts/live-validation.mjs` ; script PowerShell à quatre modes ; documentation (ADR-0012 révisée, contrat, sécurité, exploitation, guide, catalogue, rapport). Dépendance `zod` déclarée pour le worker.
+
+**Résultats.** Local : verify vert ; PostgreSQL 50/50, API 17/17, worker 23/23 ; e2e 12/12 ; Hermes 2/2 hors réseau ; stack `hermes-stub` : parcours navigateur, accessibilité/mobile, viewer, Globex, redémarrage ; répétition live 6/6 analyses, invariants respectés ; mise à niveau depuis `fefba88` avec décision conservée ; `demo-agentique.ps1` exécuté sous PowerShell 7.5.4 (constructions d'images substituées par leurs équivalents compatibles avec le proxy). CI au `c578fba` : 10/10 jobs verts dont `hermes-stack`. Preuves au `c85282c` dans `docs/evidence`.
+
+**Risques et dettes.** Live non exécuté : pertinence, coût réel et latence inconnus. DEBT-020 (épinglage hors release), DEBT-021 (urgence/limites non portées par la recommandation). Le lancement sur le Docker Desktop de Thomas reste à confirmer.
+
+**Suite.** Thomas : `demo-agentique.ps1 -Mode hermes-stub`, `live-validation.mjs --dry-run`, puis `-Mode hermes-live` et `live-validation.mjs` avec décision humaine ; joindre le rapport relu à la PR. UL-016 passera à done seulement après ces preuves et la revue de pertinence.
