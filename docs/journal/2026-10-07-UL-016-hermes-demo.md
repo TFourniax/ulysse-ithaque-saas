@@ -14,4 +14,10 @@ Première tranche : sources commerciales fictives intégrées au connecteur exis
 
 Vérification locale initiale : 47 tests historiques domaine/mémoire passent, puis 3 contrôles agentiques purs passent. `npm run verify` échoue dès `format:check` car Prettier est absent ; aucun verdict tsc/lint/PG/Docker/live n'est inventé. Les vérifications restantes et leurs preuves seront consignées dans le rapport de validation.
 
-État courant : in progress. Les validations automatisées déportées et la recette live sont distinctes. Aucune approbation produit supposée.
+PR dédiée [#3](https://github.com/TFourniax/ulysse-ithaque-saas/pull/3), draft, sans fusion. Commits intermédiaires : `a1b7a9b`, `a838146`, `30f70ae`, `02f7a61`. CI : construction du runtime Hermes officiel réussie ; la sélection stricte a détecté la découverte progressive des outils upstream, désactivée via `tools.tool_search.enabled: off`. Le modèle de la passerelle utilise des réponses non streamées ; `model.streaming: false` désactive le streaming upstream. Aucun remplacement par une boucle maison.
+
+Au commit `02f7a61`, tests intégration PostgreSQL 50/50, API 17/17 et worker 17/17 passent, y compris les six cas agentiques et la formulation historique. Le test de compilation signale deux accès potentiellement absents dans le nouveau test ; assertions de présence ajoutées. Au commit `30f70ae`, parcours simulé Alice, ingestion d'un e-mail, évolution de proposition, décision, interdiction viewer et Globex passait avant la reprise ; attente de santé ajoutée après redémarrage. Les tests sont relancés sur le dernier SHA et leurs résultats consolidés dans le rapport.
+
+Configuration, budgets et instructions versionnés ; procédure PowerShell exacte ajoutée. Une matrice CI vérifie le départ neuf et la mise à niveau depuis l'image construite au commit UL-015, sans suppression de volume. La décision fictive enregistrée avant mise à niveau et les identifiants métier doivent survivre.
+
+État courant : **partial**, recette en cours, live absent faute de clé autorisée. Les validations automatisées déportées et la recette live sont distinctes. Aucune approbation produit supposée.

@@ -1,5 +1,7 @@
 # Hermes upstream
 
+The sealed per-run config disables `tools.tool_search.enabled` and `model.streaming` using upstream configuration: the runtime exposes exactly the seven Ulysse tools and consumes bounded non-streaming gateway responses. Both defaults were detected by executing the pinned upstream loop, not by a substitute adapter.
+
 Source: https://github.com/NousResearch/hermes-agent
 
 Commit: `e76fb951a1d207c9596032426e7e0eadfb197bea`.

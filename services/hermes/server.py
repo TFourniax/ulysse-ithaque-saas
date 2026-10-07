@@ -32,6 +32,7 @@ def isolated_run(request):
         Path(home, "config.yaml").write_text(
             "telemetry:\n  enabled: false\ncompression:\n  enabled: false\n"
             "tools:\n  tool_search:\n    enabled: off\n"
+            "model:\n  streaming: false\n  context_length: 100000\n"
             "memory:\n  memory_enabled: false\n  user_profile_enabled: false\n",
             encoding="utf-8",
         )

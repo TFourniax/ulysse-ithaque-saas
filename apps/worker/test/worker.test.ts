@@ -58,7 +58,7 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     await Promise.all([a.agent.analyze(a.ctx, 'source_change'), b.agent.analyze(b.ctx, 'source_change')]);
     for (const w of [a, b]) {
       const recs = await w.open(); assert.equal(recs.length, 1); assert.equal(recs[0]?.ruleId, 'ulysse.agent.v1');
-      const runs = await w.agent.store.list(w.owner); assert.equal(runs[0].status, 'completed'); assert.ok(Number(runs[0].tool_calls) >= 6);
+      const runs = await w.agent.store.list(w.owner); const run = runs[0]; assert.ok(run); assert.equal(run.status, 'completed'); assert.ok(Number(run.tool_calls) >= 6);
       await w.agent.analyze(w.ctx, 'source_change'); assert.equal((await w.open()).length, 1); assert.equal((await w.agent.store.list(w.owner)).length, 1);
       const detail = await w.queries.getRecommendation(w.owner, recs[0].id);
       assert.ok(detail.evidence.every((e) => e.tenantId === w.tenantId));

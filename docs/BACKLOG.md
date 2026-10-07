@@ -22,9 +22,13 @@ Mis à jour le 7 octobre 2026. Ce fichier fait foi tant qu'un passage documenté
 | UL-014 | Licence, hébergement et conditions d'exploitation | blocked | Arbitrages responsables | Décisions consignées dans OPEN-QUESTIONS/ADR sans inventer contrat, coûts ou droits ; questions préparées dans [PILOT](PILOT.md) |
 | UL-015 | Refonte visuelle « tech minimaliste » de l'interface | done | UL-006 | Jetons clair/sombre, Mona Sans auto-hébergée, rail, jauges, transitions, `TableScroll` ; axe 0 violation sérieuse sur 48 combinaisons ; CSP de production vérifiée ; [CI run 37628909866](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37628909866) au commit `2364d93` : 5 jobs verts dont recette Playwright 12/12 ; captures validées par le responsable produit le 2026-10-07 ([journal](journal/2026-10-07-UL-015-interface.md)). Captures `docs/evidence` à régénérer : DEBT-019 |
 
+| UL-016 | Intégration Hermes et démonstration agentique fictive | partial | UL-015, clé modèle autorisée | Prise Codex, PR #3 depuis `598f082`. Outils bornés, pipeline PostgreSQL/worker, corpus, opportunités ouvrables, Analyses et décisions intégrés. Recette dans [VALIDATION](VALIDATION-UL-016.md). Clôture : vraie boucle Hermes vérifiée, stack neuve/mise à niveau, tests applicables, puis cinq scénarios live et revue sémantique. Aucun appel live observé faute de clé. |
+
 UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre convenu. Une intégration réelle et des utilisateurs pilotes le sont pour qualifier la valeur réelle.
 
 ## Prochain lot à prendre
+
+Priorité de cette branche : terminer la recette UL-016 live et la revue de pertinence selon [DEMO-AGENTIQUE](DEMO-AGENTIQUE.md). Les lots ci-dessous restent indépendants et ne sont pas clôturés par des données fictives.
 
 1. **UL-008** dès qu'une source et un accès sont fournis, en suivant [CONNECTORS](CONNECTORS.md).
 2. **UL-009** dès que la doctrine Néreis/Odyssée est fournie et validée par ses responsables.
@@ -48,7 +52,7 @@ UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre c
 | DEBT-011 | Stockage des credentials de connecteurs réels non conçu (`noCredentialStore`) | ouverte — UL-008 |
 | DEBT-012 | Doctrine par entreprise seulement ; pas de doctrine commune sous licence partagée entre entreprises | ouverte — UL-009, Q-011 |
 | DEBT-013 | Pas de traces OpenTelemetry ; corrélation par `correlationId` dans journaux et erreurs | ouverte — avant pilote multi-services |
-| DEBT-014 | Budget modèle fondé sur le coût déclaré ; un appel sans coût déclaré compte pour 0 | ouverte — UL-010 avant activation réelle |
+| DEBT-014 | Coût inconnu et concurrence des budgets modèle | corrigée dans UL-016 : reservation atomique avant transmission ; coût estimé/inconnu conservateur, plafonds run/session/mois, tests PG réels ; ancienne formulation payante désactivée. Recette complète de la passerelle à vérifier avant activation live. |
 | DEBT-015 | Règles d'alerte non déployées (aucun Prometheus/Alertmanager) | ouverte — UL-011b |
 | DEBT-016 | Avertissement de dépréciation Fastify `requestIdLogLabel` (option retirée en Fastify 6) | fermée — `LogController` ; journaux toujours corrélés par `correlationId` |
 | DEBT-017 | Recette navigateur sur Chromium seulement | ouverte — ajouter Firefox/WebKit si le pilote l'exige |
