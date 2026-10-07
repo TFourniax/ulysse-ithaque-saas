@@ -52,4 +52,4 @@ Base : `codex/ul-001-foundation` ([PR #1](https://github.com/TFourniax/ulysse-it
 
 Journaux : [fondation](journal/2026-10-06-foundation.md), [UL-002 à UL-010](journal/2026-10-06-UL-002-v1-demo.md), [UL-011](journal/2026-10-06-UL-011-exploitation.md), [UL-012b](journal/2026-10-06-UL-012b-mesure.md), [UL-015](journal/2026-10-07-UL-015-interface.md).
 
-Refonte visuelle UL-015 sur `claude/sweet-tesla-jrnkxs`, basée sur `claude/quirky-darwin-v4is1f` ; vérifications locales sur API simulée, recette complète en CI.
+Refonte visuelle UL-015 sur `claude/sweet-tesla-jrnkxs`, basée sur `claude/quirky-darwin-v4is1f` : [CI run 37628909866](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37628909866) au commit `2364d93`, 5 jobs verts (recette Playwright 12/12, axe et mobile compris) ; captures validées par le responsable produit.
