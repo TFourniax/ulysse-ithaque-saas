@@ -196,6 +196,42 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     assert.equal(run.status, 'obsolete');
     assert.equal((await w.open()).length, 0);
   });
+  test('a technical error records failure without closing an existing proposal', async () => {
+    const w = await world('agent-technical-error');
+    await w.agent.analyze(w.ctx, 'source_change');
+    const previous = (await w.open())[0];
+    assert.ok(previous);
+    store.upsert(
+      'agent-technical-error',
+      'OPP-001',
+      stalled('OPP-001', 12, { commercial: commercialFixture('acme', 'positive_reply') }),
+      iso(0),
+    );
+    await w.runtime.handleSync(
+      { tenantId: w.tenantId, connectionId: w.connection.id, trigger: 'manual' },
+      crypto.randomUUID(),
+    );
+    const runner: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        await runner.tool(request.capability, 'get_opportunity', {});
+        await runner.tool(request.capability, 'get_active_doctrine', {});
+        await runner.tool(request.capability, 'get_company_context', {});
+        return {
+          version: 'ulysse-agent-v1',
+          outcome: 'technical_error',
+          summary: 'Erreur technique de recette, sans proposition.',
+          proposals: [],
+        };
+      },
+    });
+    await runner.run(w.ctx, w.o.id, 'test');
+    const run = (await runner.store.list(w.owner)).find(
+      (r) => r.error_code === 'agent_reported_error',
+    );
+    assert.ok(run);
+    assert.equal(run.status, 'failed');
+    assert.equal((await w.open())[0]?.id, previous.id);
+  });
   test('capabilities reject foreign subjects, unavailable tools, expired leases and revoked connections', async () => {
     const w = await world('agent-capability');
     const other = await world('agent-other');

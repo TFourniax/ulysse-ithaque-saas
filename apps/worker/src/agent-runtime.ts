@@ -543,6 +543,20 @@ export class AgentRuntime {
         'INVALID_INPUT',
         'context not consulted',
       );
+      if (result.outcome === 'technical_error') {
+        await sql.query(
+          "UPDATE agent_runs SET status='failed',error_code='agent_reported_error',result=$3,completed_at=clock_timestamp(),reserved_usd=CASE WHEN cost_state='unknown' THEN reserved_usd ELSE committed_usd END WHERE tenant_id=$1 AND id=$2",
+          [ctx.tenantId, id, JSON.stringify(result)],
+        );
+        await this.store.event(
+          sql,
+          ctx.tenantId,
+          id,
+          'failed',
+          'Erreur technique signalée ; propositions existantes conservées',
+        );
+        return;
+      }
       for (const p of result.proposals)
         validateAgentPublication(p, new Set(run.retrieved), o.fields.commercial, Date.now());
       const now = Date.now();
