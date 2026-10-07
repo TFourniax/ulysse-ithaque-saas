@@ -205,9 +205,12 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
           connection.config.dataset === 'acme-demo' || connection.config.dataset === 'globex-demo',
           'FORBIDDEN',
         );
+        // Each opportunity has its own fictional corpus; the event is phrased for it.
         const data = commercialFixture(
           connection.config.dataset === 'acme-demo' ? 'acme' : 'globex',
           request.body.scenario,
+          Date.now(),
+          o.externalId,
         );
         await sql.query('SELECT app.demo_update_source($1,$2)', [o.id, JSON.stringify(data)]);
         await tx.appendAudit({

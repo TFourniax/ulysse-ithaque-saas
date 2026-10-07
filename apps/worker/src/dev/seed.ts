@@ -4,8 +4,9 @@
  * CRM content and one fixture connection per company. Idempotent.
  * Requires migrator and worker credentials (see .env.example). Never run against a pilot.
  */
-import { commercialFixture, FixtureCrmWriter } from '@ulysse/connectors';
+import { commercialFixture, FixtureCrmWriter, LEGACY_SHARED_CORPUS } from '@ulysse/connectors';
 import { AdminClient, createPool, databaseUrl, PgUnitOfWork } from '@ulysse/database';
+import { z } from 'zod';
 import type { ServiceDeps } from '@ulysse/domain';
 import {
   CompanyContextService,
@@ -62,6 +63,7 @@ try {
     const ownerId = userIds[key === 'acme' ? 'alice' : 'gina'] ?? '';
     const owner = userContext(tenantId, ownerId, 'owner', 'dev-seed');
     const existing = await writer.list(company.dataset);
+    const corpus = company.dataset === 'acme-demo' ? 'acme' : 'globex';
     if (existing.length === 0 || reset) {
       for (const item of datasetItems(company.dataset))
         await writer.upsert(
@@ -69,31 +71,31 @@ try {
           item.id,
           {
             ...item.payload,
-            commercial: commercialFixture(
-              company.dataset === 'acme-demo' ? 'acme' : 'globex',
-              item.id === 'OPP-005' ? 'insufficient' : item.id === 'OPP-006' ? 'pause' : 'baseline',
-            ),
+            commercial: commercialFixture(corpus, 'baseline', Date.now(), item.id),
           },
           item.modifiedAt,
         );
     }
-    // Upgrade: enrich missing fixture materials only, preserve existing source changes.
+    // Upgrade: give each opportunity its own corpus when it has none, or still carries the
+    // shared corpus of the first UL-016 revision unchanged. Injected source events are kept.
     for (const item of existing.filter((i) => !i.deleted)) {
       const payload = await writer.get(company.dataset, item.externalId);
-      if (payload && !('commercial' in payload))
+      if (!payload) continue;
+      const ids = z
+        .object({ materials: z.array(z.object({ id: z.string() })) })
+        .safeParse(payload.commercial);
+      const legacy =
+        ids.success &&
+        JSON.stringify(ids.data.materials.map((m) => m.id)) ===
+          JSON.stringify(LEGACY_SHARED_CORPUS[corpus]) &&
+        !(corpus === 'globex' && item.externalId === 'OPP-001');
+      if (!('commercial' in payload) || legacy)
         await writer.upsert(
           company.dataset,
           item.externalId,
           {
             ...payload,
-            commercial: commercialFixture(
-              company.dataset === 'acme-demo' ? 'acme' : 'globex',
-              item.externalId === 'OPP-005'
-                ? 'insufficient'
-                : item.externalId === 'OPP-006'
-                  ? 'pause'
-                  : 'baseline',
-            ),
+            commercial: commercialFixture(corpus, 'baseline', Date.now(), item.externalId),
           },
           new Date().toISOString(),
         );
