@@ -34,6 +34,32 @@ const STATES: Record<WorkflowRunDto['status'], string> = {
   obsolete: 'À actualiser',
   failed: 'Analyse interrompue',
 };
+const WORKFLOW_ERRORS: Record<string, string> = {
+  engine_unavailable: 'Activez le moteur d’analyse pour produire ce résultat.',
+  STALE_EVIDENCE: 'Actualisez les sources sélectionnées avant de relancer.',
+  versions_changed: 'Le contexte ou les sources ont changé pendant l’analyse.',
+  provider_region_plan_required:
+    'Le compte du fournisseur ne permet pas l’accès européen. Vérifiez le forfait de l’organisation associée à la clé.',
+  provider_http_401: 'Le fournisseur refuse la clé API. Vérifiez la clé configurée.',
+  provider_http_402: 'Le fournisseur signale des crédits insuffisants.',
+  provider_http_403:
+    'Le fournisseur refuse cet appel. Vérifiez les autorisations et restrictions du compte.',
+  provider_http_429: 'Le fournisseur limite actuellement les appels.',
+  provider_http_503: 'Aucun fournisseur disponible ne satisfait les contraintes de cet appel.',
+  provider_timeout: 'Le fournisseur n’a pas répondu dans le délai prévu.',
+  provider_transport_error: 'La connexion au fournisseur a échoué.',
+  provider_invalid_response: 'Le fournisseur a renvoyé une réponse illisible.',
+  provider_response_error: 'Le fournisseur a signalé une erreur pendant la génération.',
+  hermes_http_504: 'Le délai maximal de l’analyse a été atteint.',
+  hermes_timeout: 'Le moteur d’analyse n’a pas répondu dans le délai prévu.',
+  hermes_http_422: 'Le moteur d’analyse n’a pas pu retourner une réponse exploitable.',
+  result_invalid: 'La réponse produite ne respecte pas le format attendu.',
+  required_source_unread: 'L’analyse n’a pas consulté toutes les sources requises.',
+  unretrieved_citation: 'L’analyse cite une référence qu’elle n’a pas consultée.',
+  offer_evidence_missing: 'L’analyse ne cite pas de source décrivant l’offre.',
+  competitor_evidence_missing: 'Le benchmark ne cite pas les preuves concurrentes requises.',
+  uniqueness_without_benchmark: 'Le verdict d’unicité n’est pas étayé par un benchmark sourcé.',
+};
 const EMPTY: WorkflowBriefDto = {
   offer: '',
   target: '',
@@ -122,11 +148,7 @@ function ResultCard({
       )}
       {run.errorCode && (
         <Banner kind="warning">
-          {run.errorCode === 'engine_unavailable'
-            ? 'Activez le moteur d’analyse pour produire ce résultat.'
-            : run.errorCode === 'STALE_EVIDENCE'
-              ? 'Actualisez les sources sélectionnées avant de relancer.'
-              : `Analyse non disponible (${run.errorCode}).`}
+          {WORKFLOW_ERRORS[run.errorCode] ?? 'Analyse non disponible.'} ({run.errorCode})
         </Banner>
       )}
       {r && (

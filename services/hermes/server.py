@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,7 +15,23 @@ from uuid import UUID
 
 SLOTS = threading.BoundedSemaphore(2)
 MODES = {"hermes-live", "hermes-stub"}
-MODELS = {"openai/gpt-4.1-mini", "anthropic/claude-haiku-5.5"}
+EXECUTION_CONTRACT = "ulysse-execution-v2"
+
+
+def model_settings(request):
+    """Provider-neutral settings from the authenticated worker, never from business input."""
+    model = request.get("model")
+    if not isinstance(model, str) or len(model) > 160 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*", model):
+        raise ValueError("invalid_model_id")
+    settings = request.get("modelSettings", {"maxOutputTokens": 3000, "reasoning": "disabled"})
+    if not isinstance(settings, dict) or set(settings) != {"maxOutputTokens", "reasoning"}:
+        raise ValueError("invalid_model_settings")
+    tokens = settings["maxOutputTokens"]
+    if type(tokens) is not int or not 256 <= tokens <= 16384:
+        raise ValueError("invalid_model_settings")
+    if settings["reasoning"] not in ("omit", "disabled", "low", "medium", "high", "max"):
+        raise ValueError("invalid_model_settings")
+    return settings
 _pinned = Path(os.environ.get("HERMES_SOURCE", "/opt/hermes"), ".ulysse-pinned-commit")
 PINNED_COMMIT = _pinned.read_text(encoding="utf-8").strip() if _pinned.exists() else "unknown"
 INSTRUCTIONS_SHA256 = hashlib.sha256(Path(__file__).with_name("instructions.txt").read_bytes()).hexdigest()
@@ -55,8 +72,9 @@ def isolated_run(request):
         raise ValueError("unsupported_workflow")
     # hermes-stub: the real Hermes loop against the stack's simulated model endpoint (CI and
     # local acceptance). The worker gateway, not this service, decides which provider is called.
-    if request["mode"] not in MODES or request["model"] not in MODELS:
+    if request["mode"] not in MODES:
         raise ValueError("unsupported_execution")
+    model_settings(request)
     if not isinstance(request["capability"], str) or len(request["capability"]) != 43:
         raise ValueError("invalid_capability")
     with tempfile.TemporaryDirectory(prefix="ulysse-run-") as home:
@@ -107,7 +125,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send(404, {"error": "not_found"})
             return
         # The worker refuses to start a run when these differ from what it expects.
-        self.send(200, {"status": "ok", "hermesCommit": PINNED_COMMIT, "instructionsSha256": INSTRUCTIONS_SHA256, "workflowInstructionsSha256": WORKFLOW_SHA256})
+        self.send(200, {"status": "ok", "hermesCommit": PINNED_COMMIT, "executionContract": EXECUTION_CONTRACT, "instructionsSha256": INSTRUCTIONS_SHA256, "workflowInstructionsSha256": WORKFLOW_SHA256})
 
     def do_POST(self):
         configured = os.environ.get("HERMES_SERVICE_TOKEN", "")

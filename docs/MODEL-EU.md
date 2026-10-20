@@ -1,5 +1,7 @@
 # Ulysse — Haiku 5.5 en Europe avec ZDR
 
+Procédure suivante : Thomas a choisi GLM-5.3-Flash. Utiliser désormais [MODEL-PROFILES](MODEL-PROFILES.md), qui conserve les profils Haiku/GPT pour comparaison. Le présent guide documente la livraison UL-018 antérieure.
+
 Correctif UL-018, depuis la démo live UL-017. Le script conserve la clé, les budgets 0,25 USD/run, 2 USD/session, 10 USD/mois et la session. Il ne modifie aucun contenu Paitite ni ne recharge Acme.
 
 ## Compte OpenRouter

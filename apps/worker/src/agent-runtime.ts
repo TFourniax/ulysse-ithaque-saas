@@ -31,14 +31,11 @@ import { PgAgentStore } from '@ulysse/database';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
-import {
-  AGENT_MODEL_IDS,
-  MAX_AGENT_CONTEXT_BYTES,
-  MAX_AGENT_OUTPUT_TOKENS,
-  agentProvider,
-} from './agent-provider.ts';
+import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts';
+import { fetchAgentCompletion, ProviderCallError } from './agent-errors.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
+export const EXECUTION_CONTRACT = 'ulysse-execution-v2';
 /** sha256 of services/hermes/instructions.txt (LF); a unit test keeps both identical. */
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
@@ -63,7 +60,8 @@ const Config = z.object({
   HERMES_URL: z.url().default('http://hermes:8090'),
   HERMES_SERVICE_TOKEN: z.string().min(32).optional(),
   OPENROUTER_API_KEY: z.string().min(16).optional(),
-  AGENT_MODEL_ID: z.enum(AGENT_MODEL_IDS).optional(),
+  AGENT_MODEL_ID: ModelId.optional(),
+  AGENT_MODEL_PROFILE_JSON: z.string().optional(),
   AGENT_PROVIDER_ROUTE: z.enum(['openrouter', 'openrouter-eu-zdr']).default('openrouter'),
   AGENT_RUN_BUDGET_USD: z.coerce.number().positive().max(0.25).optional(),
   AGENT_SESSION_BUDGET_USD: z.coerce.number().positive().max(2).optional(),
@@ -77,7 +75,10 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
   // Empty optional values in Compose mean absent, never automatic paid activation.
   const cleaned = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ''));
   const c = Config.parse(cleaned);
-  if (c.AGENT_MODEL_ID) agentProvider(c.AGENT_MODEL_ID, c.AGENT_PROVIDER_ROUTE);
+  if (c.AGENT_MODEL_PROFILE_JSON && !c.AGENT_MODEL_ID)
+    throw new Error('Un profil exige AGENT_MODEL_ID');
+  if (c.AGENT_MODEL_ID)
+    agentProvider(c.AGENT_MODEL_ID, c.AGENT_PROVIDER_ROUTE, c.AGENT_MODEL_PROFILE_JSON);
   if (c.ULYSSE_ANALYSIS_MODE === 'hermes-live' || c.ULYSSE_ANALYSIS_MODE === 'hermes-stub') {
     const live = c.ULYSSE_ANALYSIS_MODE === 'hermes-live';
     if (
@@ -118,6 +119,7 @@ const Run = z.object({
   subject_id: z.uuid(),
   input_hash: z.string(),
   model: z.string(),
+  snapshot: z.object({ modelProfileHash: z.string().nullable().optional() }),
   mode: z.enum(['simulated', 'hermes-live', 'hermes-stub']),
   status: z.string(),
   expires_at: z.string(),
@@ -141,16 +143,18 @@ const Args = z
 /** Minimized diagnostics: fixed codes and identifiers only, never payloads or secrets. */
 export type AgentLog = Readonly<{ warn: (fields: object, message: string) => void }>;
 const reasonOf = (error: unknown): string =>
-  error instanceof DomainError
-    ? `${error.code}${error.detail ? `:${error.detail}` : ''}`
-    : error instanceof Error &&
-        /^hermes_http_\d{3}$|^hermes_version_mismatch$|^agent_concurrency_limit$/.test(
-          error.message,
-        )
-      ? error.message
-      : error instanceof Error
-        ? error.name
-        : 'unknown';
+  error instanceof ProviderCallError
+    ? error.code
+    : error instanceof DomainError
+      ? `${error.code}${error.detail ? `:${error.detail}` : ''}`
+      : error instanceof Error &&
+          /^hermes_http_\d{3}$|^hermes_version_mismatch$|^agent_concurrency_limit$/.test(
+            error.message,
+          )
+        ? error.message
+        : error instanceof Error
+          ? error.name
+          : 'unknown';
 const sha256 = (text: string) =>
   createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex');
 const oppRef = (o: Opportunity) => `opportunity:${o.id}:r${String(o.revision)}`;
@@ -174,6 +178,7 @@ export class HermesExecutor implements AgentExecutor {
     const running = z
       .object({
         hermesCommit: z.string(),
+        executionContract: z.string(),
         instructionsSha256: z.string(),
         workflowInstructionsSha256: z.string().optional(),
       })
@@ -181,6 +186,7 @@ export class HermesExecutor implements AgentExecutor {
     if (
       !running.success ||
       running.data.hermesCommit !== HERMES_COMMIT ||
+      running.data.executionContract !== EXECUTION_CONTRACT ||
       running.data.instructionsSha256 !== AGENT_INSTRUCTIONS_SHA256 ||
       (request.workflow !== undefined &&
         running.data.workflowInstructionsSha256 !== WORKFLOW_INSTRUCTIONS_SHA256)
@@ -207,6 +213,7 @@ export class AgentRuntime {
   readonly executor: AgentExecutor;
   readonly workflows: WorkflowRuntime;
   readonly log: AgentLog | undefined;
+  readonly provider: ReturnType<typeof agentProvider> | undefined;
   constructor(
     pool: Pool,
     config: AgentConfig,
@@ -215,6 +222,13 @@ export class AgentRuntime {
   ) {
     this.store = new PgAgentStore(pool);
     this.config = config;
+    this.provider = config.AGENT_MODEL_ID
+      ? agentProvider(
+          config.AGENT_MODEL_ID,
+          config.AGENT_PROVIDER_ROUTE,
+          config.AGENT_MODEL_PROFILE_JSON,
+        )
+      : undefined;
     this.executor = executor;
     this.workflows = new WorkflowRuntime(
       pool,
@@ -222,6 +236,9 @@ export class AgentRuntime {
         mode: config.ULYSSE_ANALYSIS_MODE,
         model: config.AGENT_MODEL_ID ?? 'simulation',
         providerRoute: config.AGENT_PROVIDER_ROUTE,
+        modelProfile: this.provider?.profile,
+        modelProfileHash: this.provider?.profileHash,
+        modelSettings: this.provider?.executionSettings,
         session: config.AGENT_SESSION_ID ?? 'simulation',
         hermesVersion: HERMES_COMMIT,
         budgets: {
@@ -293,6 +310,8 @@ export class AgentRuntime {
             doctrineVersion: d.version,
             contextVersion: c?.version ?? null,
             providerRoute: this.config.AGENT_PROVIDER_ROUTE,
+            modelProfile: this.provider?.profile ?? null,
+            modelProfileHash: this.provider?.profileHash ?? null,
           }),
           hash(capability),
           this.config.AGENT_SESSION_ID ?? 'simulation',
@@ -347,6 +366,7 @@ export class AgentRuntime {
                 subjectId,
                 mode,
                 model: this.config.AGENT_MODEL_ID ?? '',
+                modelSettings: this.provider?.executionSettings,
                 timeoutMs: 90000,
               },
               signal,
@@ -368,7 +388,7 @@ export class AgentRuntime {
         // committed_usd already holds every uncertain transmission at its upper bound and the
         // gateway refuses calls once the run has stopped: keep that, release the unused rest.
         await sql.query(
-          "UPDATE agent_runs SET status=$3,completed_at=clock_timestamp(),error_code=$4,reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status IN ('running','validating')",
+          "UPDATE agent_runs SET status=$3,completed_at=clock_timestamp(),error_code=coalesce(error_code,$4),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status IN ('running','validating')",
           [ctx.tenantId, id, code, errorCode],
         );
         await this.store.event(
@@ -653,7 +673,7 @@ export class AgentRuntime {
       );
       if (result.outcome === 'technical_error') {
         await sql.query(
-          "UPDATE agent_runs SET status='failed',error_code='agent_reported_error',result=$3,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2",
+          "UPDATE agent_runs SET status='failed',error_code=coalesce(error_code,'agent_reported_error'),result=$3,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2",
           [ctx.tenantId, id, JSON.stringify(result)],
         );
         await this.store.event(
@@ -830,7 +850,7 @@ export class AgentRuntime {
         errorCode: null,
       });
       await sql.query(
-        'UPDATE agent_runs SET status=$3,result=$4,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2',
+        'UPDATE agent_runs SET status=$3,result=$4,error_code=NULL,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2',
         [ctx.tenantId, id, generated ? 'completed' : 'abstained', JSON.stringify(result)],
       );
       await this.store.event(
@@ -854,13 +874,14 @@ export class AgentRuntime {
       'INVALID_INPUT',
     );
     const messages = body.messages.map((m: unknown) => record(m));
+    assertTextMessages(messages);
     const bytes = Buffer.byteLength(JSON.stringify(body));
-    ensure(bytes <= MAX_AGENT_CONTEXT_BYTES, 'INVALID_INPUT', 'context limit');
-    ensure(this.config.AGENT_MODEL_ID, 'INVALID_INPUT', 'model absent');
-    const provider = agentProvider(this.config.AGENT_MODEL_ID, this.config.AGENT_PROVIDER_ROUTE);
+    const provider = this.provider;
+    ensure(provider && this.config.AGENT_MODEL_ID, 'INVALID_INPUT', 'model absent');
+    ensure(bytes <= provider.profile.maxContextBytes, 'INVALID_INPUT', 'context limit');
     // byte count is a conservative upper bound on text tokens; schema/role overhead is included.
     // Fixed model, no provider/model fallback, maximum prices pinned in request routing.
-    const upperCost = provider.estimate(bytes + 2048, MAX_AGENT_OUTPUT_TOKENS);
+    const upperCost = provider.estimate(bytes + 2048, provider.profile.generation.maxOutputTokens);
     const { runId, mode } = await this.store.transaction(ctx, async (tx, sql) => {
       const query = await sql.query(
         'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
@@ -871,6 +892,7 @@ export class AgentRuntime {
         run.mode !== 'simulated' &&
           run.mode === this.config.ULYSSE_ANALYSIS_MODE &&
           run.model === this.config.AGENT_MODEL_ID &&
+          run.snapshot.modelProfileHash === provider.profileHash &&
           run.status === 'running' &&
           run.model_calls < 8 &&
           Date.parse(run.expires_at) > Date.now(),
@@ -923,7 +945,7 @@ export class AgentRuntime {
     });
     const live = mode === 'hermes-live';
     // The provider key only ever leaves for OpenRouter; the stub endpoint receives none.
-    const response = await fetch(
+    const payload = await fetchAgentCompletion(
       live ? provider.url : (this.config.AGENT_STUB_PROVIDER_URL ?? 'invalid:'),
       {
         method: 'POST',
@@ -944,9 +966,22 @@ export class AgentRuntime {
         }),
         signal: AbortSignal.timeout(45000),
       },
-    );
-    ensure(response.ok, 'INVALID_INPUT', 'provider failed');
-    const payload = record(await response.json());
+    ).catch(async (error: unknown) => {
+      if (error instanceof ProviderCallError) {
+        await this.store.transaction(ctx, async (_tx, sql) => {
+          await sql.query(
+            "UPDATE agent_runs SET error_code=coalesce(error_code,$3) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+            [ctx.tenantId, runId, error.code],
+          );
+          await this.store.event(sql, ctx.tenantId, runId, 'error', error.code);
+        });
+        this.log?.warn(
+          { runId, reason: error.code, httpStatus: error.httpStatus },
+          'agent provider failed',
+        );
+      }
+      throw error;
+    });
     const usage = z
       .object({
         prompt_tokens: z.number().int().nonnegative(),

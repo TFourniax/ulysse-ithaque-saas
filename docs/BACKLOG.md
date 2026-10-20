@@ -28,6 +28,8 @@ UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre c
 
 ## Prochain lot à prendre
 
+UL-019 — **partial**, responsable Codex : GLM-5.3-Flash choisi par Thomas, profils déclaratifs sans changement de moteur pour un modèle compatible, contrat Hermes normalisé. Code e793f24a : 11 jobs CI verts, conservation du raisonnement/signatures et mises à niveau vérifiées avec modèle simulé. [Guide](MODEL-PROFILES.md), [ADR-0015](adr/0015-declarative-model-profiles.md), [preuves](journal/2026-10-20-UL-019-model-profiles.md). Clôture : recette fournisseur et qualité live sur Paitite. Multimodalité préparée par les frontières et les capacités ; ingestion/media/comptabilité restent un lot distinct.
+
 UL-018 — **partial**, responsable Codex : modèle économique et routage européen ZDR demandé par Thomas. Worker, Hermes, configuration, tests et procédure VPS modifiés ; [guide](MODEL-EU.md), [ADR-0014](adr/0014-europe-zdr-model.md). Clôture : inférence Business réelle, revue des trois parcours et coûts mesurés. Les contrôles locaux/CI ne prouvent pas la qualité du fournisseur.
 
 Priorité de cette branche : assembler et vérifier UL-017, puis terminer la recette des trois parcours et UL-016 live et la revue de pertinence selon [DEMO-AGENTIQUE](DEMO-AGENTIQUE.md). Les lots ci-dessous restent indépendants et ne sont pas clôturés par des données fictives.
@@ -62,5 +64,6 @@ Priorité de cette branche : assembler et vérifier UL-017, puis terminer la rec
 | DEBT-019 | Captures de `docs/evidence` antérieures à la refonte visuelle | partielle — captures UL-016 versionnées (`08` à `10`, stack Hermes réelle) et artefacts CI ; les anciennes captures `01` à `07` restent à régénérer |
 | DEBT-020 | Hermes épinglé sur un commit de `main`, pas sur une release (la release `v2026.9.24` précède l'installateur scellé et exclut Python 3.14) | ouverte — passer à la première release officielle contenant l'installateur scellé, puis rejouer `hermes-loop` et `hermes-stack` |
 | DEBT-021 | Urgence et limites proposées par l'agent lues dans le résultat du run (rapprochement par titre), non portées par la recommandation | ouverte — si elles deviennent des critères de tri ou d'export, les ajouter au modèle de recommandation par une migration |
+| DEBT-022 | Erreurs live masquées par result_refused ; le catalogue ne prouve pas l'autorisation d'inférence régionale | partielle — UL-019 conserve les causes fournisseur/exécution/format/preuves et explicite cette limite ; clôture après validation CI et diagnostic du nouvel essai VPS post-Business, puis recette fournisseur réussie |
 
 UL-017 — complément de compatibilité VPS : réunir la lignée déployée `5a7cf27`, préserver les anciennes migrations et contrôler une mise à niveau depuis cette version avec des analyses et une décision existantes. Responsable : Codex. Voir le journal UL-017 du 20 octobre.

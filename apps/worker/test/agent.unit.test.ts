@@ -5,12 +5,16 @@ import { test } from 'node:test';
 import {
   AGENT_INSTRUCTIONS_SHA256,
   WORKFLOW_INSTRUCTIONS_SHA256,
+  EXECUTION_CONTRACT,
+  HERMES_COMMIT,
+  HermesExecutor,
   agentConfig,
 } from '../src/agent-runtime.ts';
 import {
   agentProvider,
   MAX_AGENT_CONTEXT_BYTES,
-  MAX_AGENT_OUTPUT_TOKENS,
+  assertTextMessages,
+  modelProfiles,
 } from '../src/agent-provider.ts';
 import { checkEuropeanProvider } from '../src/agent-provider-check.ts';
 
@@ -24,9 +28,141 @@ const hermesEnv = {
   AGENT_SESSION_ID: 'unit-test-session',
 };
 
+test('GLM keeps reasoning enabled, reserves its full output allowance and has a stable profile', () => {
+  const route = agentProvider('z-ai/glm-5.3-flash', 'openrouter-eu-zdr');
+  assert.deepEqual(route.parameters, {
+    max_tokens: 8192,
+    temperature: 1,
+    top_p: 0.95,
+    reasoning: { enabled: true, effort: 'low' },
+  });
+  assert.deepEqual(route.provider.only, ['inceptron/fp8']);
+  assert.equal(route.estimate(10000, 2000), 0.00238);
+  assert.ok(route.estimate(MAX_AGENT_CONTEXT_BYTES + 2048, 8192) * 8 < 0.25);
+  const profile = structuredClone(route.profile);
+  // A model unknown to this release needs configuration only, not another code allowlist.
+  profile.model = 'example/next-model';
+  const json = JSON.stringify(profile);
+  const config = agentConfig({
+    ...hermesEnv,
+    AGENT_MODEL_ID: profile.model,
+    AGENT_PROVIDER_ROUTE: profile.route,
+    AGENT_MODEL_PROFILE_JSON: json,
+  });
+  const next = agentProvider(profile.model, profile.route, config.AGENT_MODEL_PROFILE_JSON);
+  assert.equal(next.profile.model, profile.model);
+  assert.notEqual(next.profileHash, route.profileHash);
+  profile.generation.reasoning = 'high';
+  assert.notEqual(
+    agentProvider(profile.model, profile.route, JSON.stringify(profile)).profileHash,
+    next.profileHash,
+  );
+  assert.equal(
+    agentProvider(route.profile.model, route.profile.route, JSON.stringify(route.profile))
+      .profileHash,
+    route.profileHash,
+  );
+  assert.ok(modelProfiles().every((p) => p.route === 'openrouter-eu-zdr'));
+});
+
+test('administrator profiles cannot smuggle secrets, URLs, plugins, fallbacks or unbounded settings', () => {
+  const base = agentProvider('z-ai/glm-5.3-flash', 'openrouter-eu-zdr').profile;
+  for (const invalid of [
+    { ...base, baseUrl: 'https://example.com' },
+    { ...base, apiKey: 'accidentally-pasted-secret' },
+    { ...base, provider: { zdr: false } },
+    { ...base, plugins: [{ id: 'web' }] },
+    { ...base, route: 'openrouter' },
+    { ...base, prices: { prompt: -1, completion: 0 } },
+    { ...base, maxContextBytes: 80001 },
+    { ...base, generation: { ...base.generation, maxOutputTokens: 16385 } },
+    { ...base, protocol: 'unimplemented-protocol' },
+  ]) {
+    assert.throws(
+      () => agentProvider(base.model, base.route, JSON.stringify(invalid)),
+      (e: unknown) =>
+        e instanceof Error &&
+        e.message.startsWith('Profil modele JSON invalide') &&
+        !e.message.includes('secret'),
+    );
+  }
+  assert.throws(
+    () => agentProvider('example/different', base.route, JSON.stringify(base)),
+    /incompatible/,
+  );
+  assert.throws(
+    () =>
+      agentProvider(
+        base.model,
+        base.route,
+        JSON.stringify({ ...base, capabilities: { ...base.capabilities, tools: false } }),
+      ),
+    /outils/,
+  );
+  assert.throws(() => agentProvider(base.model, base.route, '{broken'), /JSON invalide/);
+});
+
+test('declaring vision does not bypass the text-only harness or its cost boundary', () => {
+  assertTextMessages([
+    { role: 'user', content: 'text' },
+    { role: 'assistant', content: null },
+    { role: 'user', content: [{ type: 'text', text: 'excerpt' }] },
+  ]);
+  for (const content of [
+    [{ type: 'image_url', image_url: { url: 'https://example.com/client.png' } }],
+    [{ type: 'input_audio', input_audio: { data: 'AA==' } }],
+    { arbitrary: 'object' },
+  ])
+    assert.throws(
+      () => assertTextMessages([{ role: 'user', content }]),
+      /unsupported_content_modality/,
+    );
+});
+
+test('GLM preflight checks reasoning support, ZDR, parameters and pinned prices without inference', async () => {
+  const p = agentProvider('z-ai/glm-5.3-flash', 'openrouter-eu-zdr');
+  const reasoning = { mandatory: true, supported_efforts: ['low', 'high', 'max'] };
+  const endpoint = {
+    model_id: p.profile.model,
+    tag: 'inceptron/fp8',
+    status: 0,
+    pricing: { prompt: '0.0000001', completion: '0.00000069' },
+    supported_parameters: [...p.requiredParameters],
+  };
+  const request: typeof fetch = async (url, init) => {
+    assert.equal(init?.body, undefined);
+    if (typeof url !== 'string') throw new Error('Expected fixed URL');
+    return Response.json(
+      url.endsWith('/models/user')
+        ? { data: [{ id: p.profile.model, reasoning }] }
+        : { data: [endpoint] },
+    );
+  };
+  assert.equal(
+    (await checkEuropeanProvider(p.profile.model, 'fake-key', request)).profileHash,
+    p.profileHash,
+  );
+  endpoint.supported_parameters = endpoint.supported_parameters.filter((x) => x !== 'tools');
+  await assert.rejects(checkEuropeanProvider(p.profile.model, 'fake-key', request), /parametres/);
+  endpoint.supported_parameters = [...p.requiredParameters];
+  const disabled = JSON.stringify({
+    ...p.profile,
+    generation: { ...p.profile.generation, reasoning: 'disabled' },
+  });
+  await assert.rejects(
+    checkEuropeanProvider(p.profile.model, 'fake-key', request, disabled),
+    /exige le raisonnement/,
+  );
+  reasoning.supported_efforts = ['high', 'max'];
+  await assert.rejects(checkEuropeanProvider(p.profile.model, 'fake-key', request), /Niveau/);
+  reasoning.supported_efforts = ['low'];
+  endpoint.status = -2;
+  await assert.rejects(checkEuropeanProvider(p.profile.model, 'fake-key', request), /absent/);
+});
+
 test('Europe is an explicit closed route; Haiku can never use the global route', () => {
   const env = { ...hermesEnv, AGENT_MODEL_ID: 'anthropic/claude-haiku-5.5' };
-  assert.throws(() => agentConfig(env), /Haiku requires/);
+  assert.throws(() => agentConfig(env), /Profil modele/);
   assert.throws(() => agentConfig({ ...env, AGENT_PROVIDER_ROUTE: 'https://example.com' }));
   assert.throws(() => agentConfig({ ...env, AGENT_MODEL_ID: 'unreviewed/model' }));
   const config = agentConfig({ ...env, AGENT_PROVIDER_ROUTE: 'openrouter-eu-zdr' });
@@ -39,10 +175,13 @@ test('Europe is an explicit closed route; Haiku can never use the global route',
   assert.equal(route.provider.allow_fallbacks, false);
   assert.equal(route.provider.require_parameters, true);
   assert.equal(route.parameters.temperature, undefined);
-  assert.equal(route.parameters.reasoning.enabled, false);
+  assert.deepEqual(route.parameters.reasoning, { enabled: false });
   // An entire eight-call run at the largest allowed input fits in the existing run cap.
   assert.ok(MAX_AGENT_CONTEXT_BYTES + 2048 < 100000);
-  assert.ok(route.estimate(MAX_AGENT_CONTEXT_BYTES + 2048, MAX_AGENT_OUTPUT_TOKENS) * 8 < 0.25);
+  assert.ok(
+    route.estimate(MAX_AGENT_CONTEXT_BYTES + 2048, route.profile.generation.maxOutputTokens) * 8 <
+      0.25,
+  );
   assert.equal(route.estimate(10000, 2000), 0.0022);
   assert.equal(agentProvider('openai/gpt-4.1-mini', 'openrouter').estimate(10000, 2000), 0.0072);
   assert.equal(
@@ -164,4 +303,35 @@ test('the workflow gateway expects its own shipped prompt', async () => {
     'utf8',
   );
   assert.equal(createHash('sha256').update(text).digest('hex'), WORKFLOW_INSTRUCTIONS_SHA256);
+});
+
+test('worker refuses a Hermes image that does not implement the normalized execution contract', async (t) => {
+  let contract = 'ulysse-execution-v1';
+  let posts = 0;
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      posts++;
+      return Response.json({ outcome: 'abstained' });
+    }
+    return Response.json({
+      hermesCommit: HERMES_COMMIT,
+      executionContract: contract,
+      instructionsSha256: AGENT_INSTRUCTIONS_SHA256,
+      workflowInstructionsSha256: WORKFLOW_INSTRUCTIONS_SHA256,
+    });
+  });
+  const executor = new HermesExecutor(agentConfig(hermesEnv));
+  const request = {
+    runId: 'fixture',
+    subjectId: 'fixture',
+    capability: 'fixture',
+    model: 'z-ai/glm-5.3-flash',
+    mode: 'hermes-live' as const,
+    timeoutMs: 90000,
+  };
+  await assert.rejects(executor.execute(request), /hermes_version_mismatch/);
+  assert.equal(posts, 0);
+  contract = EXECUTION_CONTRACT;
+  await executor.execute(request);
+  assert.equal(posts, 1);
 });

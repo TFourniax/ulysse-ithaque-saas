@@ -2,7 +2,12 @@ name: ul016-validation
 on:
   pull_request:
     branches:
-      ['claude/sweet-tesla-jrnkxs', 'codex/ul-016-hermes-demo', 'codex/ul-017-november-workflows']
+      [
+        'claude/sweet-tesla-jrnkxs',
+        'codex/ul-016-hermes-demo',
+        'codex/ul-017-november-workflows',
+        'codex/ul-018-europe-zdr',
+      ]
   workflow_dispatch:
 permissions:
   contents: read
@@ -105,7 +110,7 @@ jobs:
           $old_compose stop api worker hermes model-stub
       - name: New model identifier through Hermes and the private simulated endpoint
         run: |
-          echo 'AGENT_MODEL_ID=anthropic/claude-haiku-5.5' >> "$GITHUB_ENV"
+          echo 'AGENT_MODEL_ID=z-ai/glm-5.3-flash' >> "$GITHUB_ENV"
           echo 'AGENT_PROVIDER_ROUTE=openrouter-eu-zdr' >> "$GITHUB_ENV"
       - run: docker build -t ulysse-app:local .
       - run: docker build -f services/hermes/Dockerfile -t ulysse-hermes:ul016 .

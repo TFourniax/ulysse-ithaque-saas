@@ -21,6 +21,7 @@ import {
 import type { Pool, PoolClient, WorkflowRequest } from '@ulysse/database';
 import { PgWorkspaceStore } from '@ulysse/database';
 import { z } from 'zod';
+import { workflowFailure, type WorkflowStage } from './agent-errors.ts';
 
 export const WORKFLOW_TOOLS = [
   'get_workflow_context',
@@ -41,6 +42,9 @@ type Settings = {
   mode: 'rules' | 'simulated' | 'hermes-live' | 'hermes-stub';
   model: string;
   providerRoute: string;
+  modelProfile?: object;
+  modelProfileHash?: string;
+  modelSettings?: Parameters<AgentExecutor['execute']>[0]['modelSettings'];
   session: string;
   budgets: { run: number; session: number; month: number };
   hermesVersion: string;
@@ -146,6 +150,8 @@ export class WorkflowRuntime {
             sources: input.sources.map((s) => ({ id: s.id, revision: s.revision })),
             buyerRunId: input.buyer?.id ?? null,
             providerRoute: this.settings.providerRoute,
+            modelProfile: this.settings.modelProfile ?? null,
+            modelProfileHash: this.settings.modelProfileHash ?? null,
           }),
           hash(capability),
           this.settings.session,
@@ -185,6 +191,7 @@ export class WorkflowRuntime {
       return true;
     });
     if (!accepted) return;
+    let stage: WorkflowStage = 'execution';
     try {
       const raw =
         this.settings.mode === 'simulated'
@@ -196,12 +203,15 @@ export class WorkflowRuntime {
                 subjectId: id,
                 mode: this.settings.mode === 'hermes-stub' ? 'hermes-stub' : 'hermes-live',
                 model: this.settings.model,
+                modelSettings: this.settings.modelSettings,
                 timeoutMs: 90000,
                 workflow: kind,
               },
               signal,
             );
+      stage = 'result';
       const result = validateWorkflowResult(raw);
+      stage = 'publication';
       await this.store.transaction(ctx, async (tx, sql) => {
         await tx.lock('analysis');
         const request = await this.store.get(sql, ctx.tenantId, id);
@@ -236,7 +246,7 @@ export class WorkflowRuntime {
         );
         validateWorkflowPublication(result, input, new Set(run.retrieved));
         await sql.query(
-          "UPDATE agent_runs SET status=$3,result=$4,completed_at=clock_timestamp(),reserved_usd=CASE WHEN cost_state='unknown' THEN reserved_usd ELSE committed_usd END WHERE tenant_id=$1 AND id=$2",
+          "UPDATE agent_runs SET status=$3,result=$4,error_code=NULL,completed_at=clock_timestamp(),reserved_usd=CASE WHEN cost_state='unknown' THEN reserved_usd ELSE committed_usd END WHERE tenant_id=$1 AND id=$2",
           [
             ctx.tenantId,
             agentId,
@@ -256,19 +266,17 @@ export class WorkflowRuntime {
       });
     } catch (error) {
       const obsolete = isDomainError(error, 'STALE_EVIDENCE');
-      const code = signal?.aborted
-        ? 'interrupted'
-        : obsolete
-          ? 'versions_changed'
-          : 'result_refused';
+      const code = signal?.aborted ? 'interrupted' : workflowFailure(error, stage);
       await this.store.transaction(ctx, async (_tx, sql) => {
-        await sql.query(
-          "UPDATE agent_runs SET status=$3,error_code=$4,completed_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 AND status='running'",
+        const failed = await sql.query<{ error_code: string }>(
+          "UPDATE agent_runs SET status=$3,error_code=CASE WHEN $3='obsolete' THEN $4 ELSE coalesce(error_code,$4) END,completed_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 AND status='running' RETURNING error_code",
           [ctx.tenantId, agentId, obsolete ? 'obsolete' : 'failed', code],
         );
+        const cause = failed.rows[0]?.error_code ?? code;
         const run = await this.store.get(sql, ctx.tenantId, id);
         if (run.status === 'running')
-          await this.finish(sql, ctx, id, obsolete ? 'obsolete' : 'failed', null, code);
+          await this.finish(sql, ctx, id, obsolete ? 'obsolete' : 'failed', null, cause);
+        if (failed.rowCount) await this.store.event(sql, ctx.tenantId, agentId, 'error', cause);
       });
     }
   }
