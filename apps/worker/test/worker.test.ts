@@ -503,6 +503,72 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     assert.equal((await runner.store.list(w.owner))[0]?.model_calls, 1);
   });
 
+  test('EU inference pins privacy and routing, prices usage correctly, and never retries globally', async (t) => {
+    const w = await world('agent-europe-zdr');
+    let calls = 0;
+    t.mock.method(globalThis, 'fetch', async (url: unknown, init: RequestInit) => {
+      calls++;
+      assert.equal(url, 'https://eu.openrouter.ai/api/v1/chat/completions');
+      assert.equal(init.redirect, 'error');
+      assert.equal(typeof init.body, 'string');
+      if (typeof init.body !== 'string') throw new Error('Expected JSON body');
+      const sent = JSON.parse(init.body) as Record<string, unknown>;
+      assert.equal(sent.model, 'anthropic/claude-haiku-5.5');
+      assert.equal(sent.temperature, undefined);
+      assert.equal(sent.plugins, undefined);
+      assert.equal(sent.models, undefined);
+      assert.deepEqual(sent.reasoning, { enabled: false });
+      assert.deepEqual(sent.provider, {
+        allow_fallbacks: false,
+        require_parameters: true,
+        max_price: { prompt: 0.11, completion: 0.55 },
+        only: ['amazon-bedrock/eu-west-1'],
+        order: ['amazon-bedrock/eu-west-1'],
+        data_collection: 'deny',
+        zdr: true,
+      });
+      if (calls === 2) return new Response(null, { status: 403 });
+      return Response.json({ usage: { prompt_tokens: 1000, completion_tokens: 100 } });
+    });
+    const runner: AgentRuntime = new AgentRuntime(
+      workerPool,
+      {
+        ...liveTestConfig(),
+        AGENT_MODEL_ID: 'anthropic/claude-haiku-5.5',
+        AGENT_PROVIDER_ROUTE: 'openrouter-eu-zdr',
+      },
+      {
+        execute: async (request) => {
+          const body = {
+            ...gatewayBody('Faits fictifs.'),
+            model: 'foreign/model',
+            provider: { zdr: false, only: ['anthropic'] },
+            plugins: [{ id: 'web' }],
+          };
+          const changedModel = new AgentRuntime(workerPool, {
+            ...runner.config,
+            AGENT_MODEL_ID: 'openai/gpt-4.1-mini',
+          });
+          await assert.rejects(changedModel.inference(request.capability, body), /model limit/);
+          assert.equal(calls, 0);
+          await runner.inference(request.capability, body);
+          const first = (await runner.store.list(w.owner))[0]!;
+          assert.equal(Number(first.committed_usd), 0.000165);
+          assert.equal(first.cost_state, 'estimated');
+          await assert.rejects(runner.inference(request.capability, body), /provider failed/);
+          assert.equal(calls, 2);
+          return abstention;
+        },
+      },
+    );
+    await runner.run(w.ctx, w.o.id, 'test');
+    assert.equal(calls, 2);
+    const run = (await runner.store.list(w.owner))[0]!;
+    assert.equal(run.model, 'anthropic/claude-haiku-5.5');
+    assert.equal(run.cost_state, 'unknown');
+    assert.ok(Number(run.committed_usd) > 0.000165);
+  });
+
   test('failed attempts on unchanged input are bounded and release their unused reservation', async () => {
     const w = await world('agent-bounded-attempts');
     let executions = 0;

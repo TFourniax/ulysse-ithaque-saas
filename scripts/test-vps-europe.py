@@ -1,0 +1,68 @@
+"""Exercise the actual deployment config transformation, without Docker or credentials."""
+import copy
+import json
+from pathlib import Path
+import re
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+SCRIPT = Path(__file__).with_name("ulysse-vps-europe.sh").read_text()
+TRANSFORM = re.search(r'python3 - "\$release" "\$tag" <<\'PY\'\n(.*?)\nPY', SCRIPT, re.S).group(1)
+
+
+class DeploymentConfig(unittest.TestCase):
+    def transform(self, route=None, drift=False):
+        with tempfile.TemporaryDirectory() as temp:
+            d = Path(temp)
+            env = {"ULYSSE_ANALYSIS_MODE": "hermes-live", "ULYSSE_DB_NAME": "ulysse_stack"}
+            worker = {**env, "OPENROUTER_API_KEY": "fake-private-test-key", "AGENT_MODEL_ID": "openai/gpt-4.1-mini",
+                      "AGENT_SESSION_ID": "existing-session", "AGENT_RUN_BUDGET_USD": "0.1",
+                      "AGENT_SESSION_BUDGET_USD": "1", "AGENT_MONTH_BUDGET_USD": "3"}
+            if route:
+                worker["AGENT_PROVIDER_ROUTE"] = route
+            original = {"name": "ulysse", "services": {
+                name: {"image": f"old-{name}", "environment": copy.deepcopy(worker if name == "worker" else env),
+                       "volumes": [{"type": "volume", "source": "keep-data", "target": "/data"}]}
+                for name in ("api", "worker", "hermes", "model-stub", "db-init", "demo-seed", "postgres", "keycloak")
+            }, "volumes": {"keep-data": {"name": "ulysse_keep-data"}}}
+            (d / "before.json").write_text(json.dumps(original))
+            services = ("api", "worker", "hermes", "model-stub")
+            (d / "services.txt").write_text("\n".join(services))
+            for name in services:
+                running = copy.deepcopy(original["services"][name]["environment"])
+                if drift and name == "worker":
+                    running["AGENT_SESSION_ID"] = "unexpected-session"
+                (d / f"{name}.inspect.json").write_text(json.dumps([{
+                    "Image": f"sha256:pinned-{name}", "Config": {"Env": [f"{k}={v}" for k, v in running.items()]}, "Mounts": []}]))
+            with patch.object(sys, "argv", ["-", str(d), "test-tag"]):
+                exec(compile(TRANSFORM, "deployment-config", "exec"), {})
+            return original, json.loads((d / "deploy.json").read_text()), json.loads((d / "rollback.json").read_text())
+
+    def test_cutover_preserves_every_unrelated_setting_and_budget(self):
+        original, candidate, rollback = self.transform()
+        expected = copy.deepcopy(original)
+        for name in ("api", "worker", "db-init", "demo-seed"):
+            expected["services"][name]["image"] = "ulysse-app:test-tag"
+        for name in ("hermes", "model-stub"):
+            expected["services"][name]["image"] = "ulysse-hermes:test-tag"
+        expected["services"]["worker"]["environment"].update({
+            "AGENT_MODEL_ID": "anthropic/claude-haiku-5.5", "AGENT_PROVIDER_ROUTE": "openrouter-eu-zdr", "AGENT_STUB_PROVIDER_URL": ""})
+        self.assertEqual(candidate, expected)
+        for name in ("api", "worker"):
+            self.assertEqual(rollback["services"][name]["environment"]["ULYSSE_ANALYSIS_MODE"], "rules")
+        self.assertEqual(rollback["services"]["worker"]["environment"]["AGENT_SESSION_ID"], "existing-session")
+
+    def test_existing_european_profile_can_be_restored_without_going_global(self):
+        _, _, rollback = self.transform("openrouter-eu-zdr")
+        self.assertEqual(rollback["services"]["worker"]["environment"]["ULYSSE_ANALYSIS_MODE"], "hermes-live")
+        self.assertEqual(rollback["services"]["worker"]["environment"]["AGENT_PROVIDER_ROUTE"], "openrouter-eu-zdr")
+
+    def test_runtime_drift_stops_the_deployment(self):
+        with self.assertRaisesRegex(SystemExit, "ecart de configuration"):
+            self.transform(drift=True)
+
+
+if __name__ == "__main__":
+    unittest.main()

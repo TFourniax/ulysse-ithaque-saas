@@ -12,7 +12,7 @@ Ce document décrit les contrats implémentés, leur autorité et leurs limites.
 | subjectId | UUID interne de l'opportunité autorisée, jamais l'identifiant CRM seul |
 | capability | Jeton opaque aléatoire de 32 octets, 43 caractères base64url ; seul son hash est conservé |
 | mode | `hermes-live` ou `hermes-stub` (vrai Hermes, modèle simulé) ; `simulated` reste une exécution du worker sans Hermes |
-| model | `openai/gpt-4.1-mini`, fixé par configuration serveur |
+| model | Liste fermée `openai/gpt-4.1-mini` ou `anthropic/claude-haiku-5.5`, configuration serveur ; Haiku exige le profil Europe ZDR |
 | timeoutMs | 90 000 ms, plafonné par le superviseur ; boucle à 85 s |
 
 Avant chaque demande, le worker lit `GET /health` : `hermesCommit` et `instructionsSha256` doivent égaler le commit épinglé et l'empreinte attendus, sinon le run échoue avec `hermes_version_mismatch` sans appel. Version des instructions enregistrée sur le run : `ulysse-agent-v1+<12 premiers caractères de l'empreinte>`.
@@ -65,3 +65,7 @@ Les statuts persistés sont running, validating, completed, abstained, obsolete,
 La passerelle d'inférence privée compatible OpenAI intercepte chaque transmission, retries compris : huit maximum. En `hermes-live` elle n'appelle qu'OpenRouter (modèle fixe, sans fallback, prix plafonds) ; en `hermes-stub` elle n'appelle que `AGENT_STUB_PROVIDER_URL` (point simulé interne), sans clé, avec une comptabilité séparée du live (`app.reserve_agent_run_budget`, migration 0011). Elle conserve model_calls, tool_calls, input_tokens, output_tokens, reserved_usd, committed_usd et cost_state. `declared` signifie coût fournisseur déclaré, `estimated` borne calculée à partir des tokens/prix plafonds, `unknown` issue incertaine avec réservation conservée. Un appel ultérieur connu ne masque pas un coût antérieur incertain. Réservation atomique avant le premier appel ; plafonds run/session/mois et concurrence contrôlés dans PostgreSQL.
 
 Le navigateur ne connaît ni la capacité, ni le secret Hermes, ni la clé fournisseur. Les traces, résultats et événements sont soumis à la RLS d'entreprise. Les copies ajoutées par l'analyse sont purgées lors de la révocation ; la comptabilité est conservée sans corpus. Les fichiers Hermes temporaires sont supprimés à la fin du sous-processus ; PostgreSQL reste la seule vérité métier.
+
+## Profil européen UL-018
+
+`AGENT_PROVIDER_ROUTE=openrouter-eu-zdr` impose le domaine européen, un endpoint régional nommé, ZDR, non-collecte, absence de fallback/redirection et tarifs régionaux bornés. Haiku 5.5 exige ce profil ; GPT‑4.1 mini peut aussi le sélectionner. Paramètres, conditions de compte et limites de confidentialité : [ADR-0014](adr/0014-europe-zdr-model.md). Le profil global historique reste distinct et ne bénéficie pas de ces garanties.

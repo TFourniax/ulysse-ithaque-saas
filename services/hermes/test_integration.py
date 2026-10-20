@@ -46,7 +46,7 @@ class Endpoint(BaseHTTPRequestHandler):
             else:
                 message = {"role": "assistant", "content": json.dumps({"version": "november-v1" if workflow else "ulysse-agent-v1", "outcome": "abstained", "summary": f"Simulation Hermes pour {token[-3:]}", "proposals": []})}
                 finish = "stop"
-            output = {"id": "simulated-completion", "object": "chat.completion", "created": 1, "model": "openai/gpt-4.1-mini", "choices": [{"index": 0, "message": message, "finish_reason": finish}], "usage": {"prompt_tokens": 100, "completion_tokens": 50}}
+            output = {"id": "simulated-completion", "object": "chat.completion", "created": 1, "model": body.get("model"), "choices": [{"index": 0, "message": message, "finish_reason": finish}], "usage": {"prompt_tokens": 100, "completion_tokens": 50}}
         data = json.dumps(output).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -84,7 +84,7 @@ class HermesIntegration(unittest.TestCase):
         os.environ["ULYSSE_GATEWAY_URL"] = f"http://127.0.0.1:{server.server_port}/agent"
         try:
             for kind in ("buyer", "content"):
-                request = {"runId": str(uuid4()), "subjectId": str(uuid4()), "capability": "w" * 43, "mode": "hermes-live", "model": "openai/gpt-4.1-mini", "timeoutMs": 30000, "workflow": kind}
+                request = {"runId": str(uuid4()), "subjectId": str(uuid4()), "capability": "w" * 43, "mode": "hermes-live", "model": "anthropic/claude-haiku-5.5", "timeoutMs": 30000, "workflow": kind}
                 result = isolated_run(request)
                 self.assertEqual(result["version"], "november-v1")
                 self.assertEqual(result["outcome"], "abstained")
@@ -101,7 +101,7 @@ class HermesIntegration(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         os.environ["ULYSSE_GATEWAY_URL"] = f"http://127.0.0.1:{server.server_port}/agent"
-        requests = [{"runId": str(uuid4()), "subjectId": str(uuid4()), "capability": token, "mode": "hermes-live", "model": "openai/gpt-4.1-mini", "timeoutMs": 30000} for token in ["a" * 43, "b" * 43]]
+        requests = [{"runId": str(uuid4()), "subjectId": str(uuid4()), "capability": token, "mode": "hermes-live", "model": model, "timeoutMs": 30000} for token, model in [("a" * 43, "openai/gpt-4.1-mini"), ("b" * 43, "anthropic/claude-haiku-5.5")]]
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                 results = list(executor.map(isolated_run, requests))

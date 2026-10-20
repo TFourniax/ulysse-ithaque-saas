@@ -31,6 +31,12 @@ import { PgAgentStore } from '@ulysse/database';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
+import {
+  AGENT_MODEL_IDS,
+  MAX_AGENT_CONTEXT_BYTES,
+  MAX_AGENT_OUTPUT_TOKENS,
+  agentProvider,
+} from './agent-provider.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
 /** sha256 of services/hermes/instructions.txt (LF); a unit test keeps both identical. */
@@ -41,7 +47,6 @@ export const WORKFLOW_INSTRUCTIONS_SHA256 =
 export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
 /** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
 export const MAX_ATTEMPTS = 2;
-const LIVE_PROVIDER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export const TOOL_NAMES = [
   'get_opportunity',
   'list_activities',
@@ -58,7 +63,8 @@ const Config = z.object({
   HERMES_URL: z.url().default('http://hermes:8090'),
   HERMES_SERVICE_TOKEN: z.string().min(32).optional(),
   OPENROUTER_API_KEY: z.string().min(16).optional(),
-  AGENT_MODEL_ID: z.literal('openai/gpt-4.1-mini').optional(),
+  AGENT_MODEL_ID: z.enum(AGENT_MODEL_IDS).optional(),
+  AGENT_PROVIDER_ROUTE: z.enum(['openrouter', 'openrouter-eu-zdr']).default('openrouter'),
   AGENT_RUN_BUDGET_USD: z.coerce.number().positive().max(0.25).optional(),
   AGENT_SESSION_BUDGET_USD: z.coerce.number().positive().max(2).optional(),
   AGENT_MONTH_BUDGET_USD: z.coerce.number().positive().max(10).optional(),
@@ -71,6 +77,7 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
   // Empty optional values in Compose mean absent, never automatic paid activation.
   const cleaned = Object.fromEntries(Object.entries(env).filter(([, value]) => value !== ''));
   const c = Config.parse(cleaned);
+  if (c.AGENT_MODEL_ID) agentProvider(c.AGENT_MODEL_ID, c.AGENT_PROVIDER_ROUTE);
   if (c.ULYSSE_ANALYSIS_MODE === 'hermes-live' || c.ULYSSE_ANALYSIS_MODE === 'hermes-stub') {
     const live = c.ULYSSE_ANALYSIS_MODE === 'hermes-live';
     if (
@@ -110,6 +117,7 @@ const Run = z.object({
   workflow_kind: z.enum(['deal', 'buyer', 'content']).default('deal'),
   subject_id: z.uuid(),
   input_hash: z.string(),
+  model: z.string(),
   mode: z.enum(['simulated', 'hermes-live', 'hermes-stub']),
   status: z.string(),
   expires_at: z.string(),
@@ -213,6 +221,7 @@ export class AgentRuntime {
       {
         mode: config.ULYSSE_ANALYSIS_MODE,
         model: config.AGENT_MODEL_ID ?? 'simulation',
+        providerRoute: config.AGENT_PROVIDER_ROUTE,
         session: config.AGENT_SESSION_ID ?? 'simulation',
         hermesVersion: HERMES_COMMIT,
         budgets: {
@@ -283,6 +292,7 @@ export class AgentRuntime {
             doctrineId: d.id,
             doctrineVersion: d.version,
             contextVersion: c?.version ?? null,
+            providerRoute: this.config.AGENT_PROVIDER_ROUTE,
           }),
           hash(capability),
           this.config.AGENT_SESSION_ID ?? 'simulation',
@@ -845,10 +855,12 @@ export class AgentRuntime {
     );
     const messages = body.messages.map((m: unknown) => record(m));
     const bytes = Buffer.byteLength(JSON.stringify(body));
-    ensure(bytes <= 80000, 'INVALID_INPUT', 'context limit');
+    ensure(bytes <= MAX_AGENT_CONTEXT_BYTES, 'INVALID_INPUT', 'context limit');
+    ensure(this.config.AGENT_MODEL_ID, 'INVALID_INPUT', 'model absent');
+    const provider = agentProvider(this.config.AGENT_MODEL_ID, this.config.AGENT_PROVIDER_ROUTE);
     // byte count is a conservative upper bound on text tokens; schema/role overhead is included.
     // Fixed model, no provider/model fallback, maximum prices pinned in request routing.
-    const upperCost = ((bytes + 2048) * 0.4 + 3000 * 1.6) / 1_000_000;
+    const upperCost = provider.estimate(bytes + 2048, MAX_AGENT_OUTPUT_TOKENS);
     const { runId, mode } = await this.store.transaction(ctx, async (tx, sql) => {
       const query = await sql.query(
         'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
@@ -858,6 +870,7 @@ export class AgentRuntime {
       ensure(
         run.mode !== 'simulated' &&
           run.mode === this.config.ULYSSE_ANALYSIS_MODE &&
+          run.model === this.config.AGENT_MODEL_ID &&
           run.status === 'running' &&
           run.model_calls < 8 &&
           Date.parse(run.expires_at) > Date.now(),
@@ -903,7 +916,7 @@ export class AgentRuntime {
         run.id,
         'model',
         run.mode === 'hermes-live'
-          ? 'Appel modèle réservé et transmis'
+          ? `Appel modèle réservé : ${this.config.AGENT_MODEL_ID}, ${this.config.AGENT_PROVIDER_ROUTE}`
           : 'Appel au modèle simulé (aucun fournisseur)',
       );
       return { runId: run.id, mode: run.mode };
@@ -911,9 +924,11 @@ export class AgentRuntime {
     const live = mode === 'hermes-live';
     // The provider key only ever leaves for OpenRouter; the stub endpoint receives none.
     const response = await fetch(
-      live ? LIVE_PROVIDER_URL : (this.config.AGENT_STUB_PROVIDER_URL ?? 'invalid:'),
+      live ? provider.url : (this.config.AGENT_STUB_PROVIDER_URL ?? 'invalid:'),
       {
         method: 'POST',
+        // A regional request must never follow a redirect to another region or host.
+        redirect: 'error',
         headers: {
           authorization: live ? `Bearer ${this.config.OPENROUTER_API_KEY ?? ''}` : 'Bearer none',
           'content-type': 'application/json',
@@ -924,13 +939,8 @@ export class AgentRuntime {
           tools: body.tools,
           tool_choice: body.tools === undefined ? undefined : 'auto',
           stream: false,
-          max_tokens: 3000,
-          temperature: 0.2,
-          provider: {
-            allow_fallbacks: false,
-            require_parameters: true,
-            max_price: { prompt: 0.4, completion: 1.6 },
-          },
+          ...provider.parameters,
+          provider: provider.provider,
         }),
         signal: AbortSignal.timeout(45000),
       },
@@ -946,7 +956,7 @@ export class AgentRuntime {
       .safeParse(payload.usage);
     if (usage.success) {
       const u = usage.data;
-      const actual = u.cost ?? (u.prompt_tokens * 0.4 + u.completion_tokens * 1.6) / 1_000_000;
+      const actual = u.cost ?? provider.estimate(u.prompt_tokens, u.completion_tokens);
       // Record what was charged even above the bound, then refuse to continue.
       await this.store.transaction(ctx, async (_tx, sql) => {
         await sql.query(

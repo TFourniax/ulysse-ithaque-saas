@@ -40,6 +40,7 @@ const Run = z.object({
 type Settings = {
   mode: 'rules' | 'simulated' | 'hermes-live' | 'hermes-stub';
   model: string;
+  providerRoute: string;
   session: string;
   budgets: { run: number; session: number; month: number };
   hermesVersion: string;
@@ -144,6 +145,7 @@ export class WorkflowRuntime {
             doctrineId: input.doctrine?.id,
             sources: input.sources.map((s) => ({ id: s.id, revision: s.revision })),
             buyerRunId: input.buyer?.id ?? null,
+            providerRoute: this.settings.providerRoute,
           }),
           hash(capability),
           this.settings.session,
