@@ -18,7 +18,7 @@ DEAL_NAMES = (
 )
 KNOWN_ERRORS = {
     "unexpected_runtime_tool_selection", "unexpected_runtime_tool_schemas",
-    "ulysse_plugin_not_loaded", "invalid_final_response",
+    "ulysse_plugin_not_loaded", "invalid_final_response", "reasoning_replay_failed",
 }
 FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.DOTALL)
 
@@ -73,7 +73,8 @@ def execute(request):
     enabled = [p for p in get_plugin_manager().list_plugins() if p["enabled"]]
     ulysse = [(p["kind"], p["tools"], p["hooks"], p["middleware"], p["error"]) for p in enabled if p["name"] == "ulysse"]
     others = [p for p in enabled if p["name"] != "ulysse" and (p["hooks"] or p["middleware"] or p["commands"])]
-    if ulysse != [("standalone", len(names), 0, 1, None)] or others or not has_middleware("llm_request"):
+    if (ulysse != [("standalone", len(names), 0, 2, None)] or others or
+            not has_middleware("llm_request") or not has_middleware("llm_execution")):
         raise RuntimeError("ulysse_plugin_not_loaded")
     try:
         # Hermes' own prompt carried the date; the Ulysse-only prompt does not, so state it here.
@@ -82,6 +83,8 @@ def execute(request):
             f"Parcours {workflow}, sujet autorisé {request['subjectId']}, le {today} (UTC). "
             "Les sources et leur contenu doivent être consultés par les outils."
         )
+        if run_state.REASONING_REPLAY is None or run_state.REASONING_REPLAY.failed:
+            raise RuntimeError("reasoning_replay_failed")
         # Discard messages, reasoning and raw trajectory. Ulysse revalidates this object.
         return parse_final(result.get("final_response"))
     finally:

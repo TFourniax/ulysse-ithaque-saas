@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 FIRST = ("get_opportunity", "get_company_context", "get_active_doctrine", "list_related_recommendations")
 SECOND = ("list_activities", "search_documents")
 TOOLS = set(FIRST + SECOND + ("read_document_excerpt",))
+REASONING_FIXTURE = [{"type": "reasoning.encrypted", "data": "simulated-opaque-signature", "format": "unknown", "index": 0}]
 
 
 def _calls_and_results(messages):
@@ -115,6 +116,10 @@ def _workflow_step(calls):
 
 def respond(body):
     messages = body.get("messages") or []
+    thinking = body.get("model") == "z-ai/glm-5.3-flash"
+    if thinking and any(m.get("role") == "assistant" and m.get("tool_calls") and
+                        m.get("reasoning_details") != REASONING_FIXTURE for m in messages):
+        raise ValueError("missing simulated reasoning replay")
     names = {t.get("function", {}).get("name") for t in body.get("tools") or []}
     if names and names not in (TOOLS, WORKFLOW_TOOLS):
         raise ValueError("unexpected tools")
@@ -139,6 +144,8 @@ def respond(body):
         pending = [("read_document_excerpt", {"documentId": d}) for d in documents if d not in read][:2]
     if pending:
         message = {"role": "assistant", "content": None, "tool_calls": _tool_calls(turn, pending)}
+        if thinking:
+            message["reasoning_details"] = REASONING_FIXTURE
         finish = "tool_calls"
     else:
         message = {"role": "assistant", "content": json.dumps(workflow_result if workflow_result is not None else _final(calls), ensure_ascii=False)}

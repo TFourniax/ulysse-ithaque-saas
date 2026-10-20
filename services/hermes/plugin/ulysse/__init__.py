@@ -8,6 +8,7 @@ import json
 import urllib.request
 
 import run_state
+from reasoning_replay import ReasoningReplay
 
 TOOLSET = "ulysse"
 DESCRIPTIONS = {
@@ -78,3 +79,5 @@ def register(ctx):
         schema = {"name": name, "description": DESCRIPTIONS[name], "parameters": _parameters(name)}
         ctx.register_tool(name=name, toolset=TOOLSET, schema=schema, handler=_handler(name))
     ctx.register_middleware("llm_request", _ulysse_system_prompt)
+    run_state.REASONING_REPLAY = ReasoningReplay()
+    ctx.register_middleware("llm_execution", run_state.REASONING_REPLAY.__call__)

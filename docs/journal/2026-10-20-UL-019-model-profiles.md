@@ -22,4 +22,6 @@ Vérifié localement : `npm run verify` (format, lint strict, types, cycles, Ope
 
 ## Restant
 
+La première CI de 50dae7e a détecté la suppression du raisonnement par le transport Hermes custom entre appels d'outils. Correction par le middleware officiel llm_execution du plugin Ulysse : restitution exacte des champs OpenRouter depuis une mémoire bornée du processus isolé ; aucune persistance ni modification du moteur amont. Le test exige désormais aussi la conservation d'une signature opaque, avec test unitaire d'isolation, de borne et d'absence de retry implicite. Les nouveaux résultats CI sont attendus.
+
 Précontrôle réel avec le compte OpenRouter du VPS, génération GLM et revue des trois parcours. Vision/audio non activés : ingestion autorisée, transport et comptabilité spécifique restent nécessaires. Recherche web automatique et vraie doctrine Néreis non ajoutées. UL-019 partial jusqu'à recette live.
