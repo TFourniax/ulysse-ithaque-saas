@@ -32,11 +32,11 @@ Dans PowerShell :
 ssh -o IdentitiesOnly=yes -i "$env:USERPROFILE\.ssh\hermes_prospection_ed25519" hermesadmin@51.91.55.14
 ~~~
 
-Puis, sur le VPS, utiliser le **SHA complet de code vérifié fourni dans la livraison** :
+Puis, sur le VPS, utiliser ce **SHA complet de code** ; les preuves de validation correspondantes sont dans le [journal UL-019](journal/2026-10-20-UL-019-model-profiles.md) :
 
 ~~~bash
 cd /
-ULYSSE_REVISION=REMPLACER_PAR_LE_SHA_COMPLET_VERIFIE
+ULYSSE_REVISION=e793f24a51a437b5b2c27ff6f251c0fe49b04ecf
 
 sudo -Hu ulysse git \
   -C /var/lib/ulysse/home/projects/ulysse-ul016 \
@@ -108,7 +108,7 @@ Pour comparer deux modèles, lancer des demandes buyer/content séparées avec e
 
 Hermes prend en charge les modèles compatibles OpenAI, des fournisseurs multiples et la vision. La source épinglée conserve cette architecture ; ce lot ne met pas à jour Hermes et n'active pas ses outils auxiliaires par défaut. Notre service Hermes n'a plus de liste de marques : il reçoit un modèle et des paramètres d'exécution normalisés, puis passe par la passerelle Ulysse pour l'inférence.
 
-Le port AgentExecutor sépare déjà la boucle agentique du domaine. Les profils séparent désormais fournisseur, paramètres, capacités et prix de cette boucle. Chaque run enregistre le profil validé et son empreinte ; une modification en cours de run, même sur le même identifiant de modèle, est refusée.
+Le port AgentExecutor sépare déjà la boucle agentique du domaine. Les profils séparent désormais fournisseur, paramètres, capacités et prix de cette boucle. Chaque run enregistre le profil validé et son empreinte ; une modification en cours de run, même sur le même identifiant de modèle, est refusée. Le plugin Ulysse utilise le middleware officiel llm_execution pour conserver exactement le raisonnement et ses signatures entre appels d'outils, malgré le filtrage du transport custom Hermes. Cette mémoire bornée appartient uniquement au processus isolé du run, sans persistance ni appel réseau supplémentaire.
 
 La présence de image dans les capacités d'un profil décrit le modèle. **Ulysse reste un harness texte dans ce lot.** Les blocs image/audio/vidéo/fichier et les champs multimodaux hors contrat sont refusés avant transmission. Pour activer la vision : ingestion privée avec tenant/permissions/provenance, récupération des médias autorisés, limites MIME/taille, comptabilité des tokens/images et transport multimodal testé ; les appels auxiliaires Hermes devront aussi passer par cette passerelle. Pour l'audio, ajouter le traitement/transcription et les coûts spécifiques. Une interface fournisseur compatible ne réalise pas ces contrôles à elle seule.
 

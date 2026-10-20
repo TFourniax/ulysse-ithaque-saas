@@ -28,7 +28,7 @@ UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre c
 
 ## Prochain lot à prendre
 
-UL-019 — **partial**, responsable Codex : GLM-5.3-Flash choisi par Thomas, profils déclaratifs sans changement de moteur pour un modèle compatible, contrat Hermes normalisé. [Guide](MODEL-PROFILES.md), [ADR-0015](adr/0015-declarative-model-profiles.md). Clôture : vérifications techniques et recette live sur Paitite. Multimodalité préparée par les frontières et les capacités ; ingestion/media/comptabilité restent un lot distinct.
+UL-019 — **partial**, responsable Codex : GLM-5.3-Flash choisi par Thomas, profils déclaratifs sans changement de moteur pour un modèle compatible, contrat Hermes normalisé. Code e793f24a : 11 jobs CI verts, conservation du raisonnement/signatures et mises à niveau vérifiées avec modèle simulé. [Guide](MODEL-PROFILES.md), [ADR-0015](adr/0015-declarative-model-profiles.md), [preuves](journal/2026-10-20-UL-019-model-profiles.md). Clôture : recette fournisseur et qualité live sur Paitite. Multimodalité préparée par les frontières et les capacités ; ingestion/media/comptabilité restent un lot distinct.
 
 UL-018 — **partial**, responsable Codex : modèle économique et routage européen ZDR demandé par Thomas. Worker, Hermes, configuration, tests et procédure VPS modifiés ; [guide](MODEL-EU.md), [ADR-0014](adr/0014-europe-zdr-model.md). Clôture : inférence Business réelle, revue des trois parcours et coûts mesurés. Les contrôles locaux/CI ne prouvent pas la qualité du fournisseur.
 

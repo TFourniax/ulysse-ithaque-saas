@@ -2,7 +2,9 @@
 
 ## UL-019 — GLM et profils déclaratifs
 
-Thomas choisit GLM-5.3-Flash le 20 octobre. Code sur `codex/ul-019-model-profiles`, base UL-018 : profils JSON validés, paramètres/tarifs/capacités séparés du moteur, import de profil administrateur sans rebuild, contrat Hermes normalisé et empreinte par run. Le script conserve la configuration active UL-017/018 et cible le seul Docker rootless Ulysse. [Procédure](MODEL-PROFILES.md), [ADR-0015](adr/0015-declarative-model-profiles.md), [journal](journal/2026-10-20-UL-019-model-profiles.md). **Partial** : `npm run verify`, 12 tests unitaires worker et 7 tests Python ciblés verts localement ; CI stack attendue, inférence GLM, qualité Paitite et compte Business à valider sur le VPS. Aucun déploiement ici. Le harness reste texte ; capacités multimodales décrites, médias non activés.
+Thomas choisit GLM-5.3-Flash le 20 octobre. Code sur `codex/ul-019-model-profiles`, base UL-018 : profils JSON validés, paramètres/tarifs/capacités séparés du moteur, import de profil administrateur sans rebuild, contrat Hermes normalisé et empreinte par run. Le script conserve la configuration active UL-017/018 et cible le seul Docker rootless Ulysse. [Procédure](MODEL-PROFILES.md), [ADR-0015](adr/0015-declarative-model-profiles.md), [journal](journal/2026-10-20-UL-019-model-profiles.md). **Partial** : `npm run verify`, 12 tests unitaires worker et 8 tests Python ciblés verts localement ; inférence GLM, qualité Paitite et compte Business à valider sur le VPS. Aucun déploiement ici. Le harness reste texte ; capacités multimodales décrites, médias non activés.
+
+Code UL-019 `e793f24a` vérifié : [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39482271129) et [Hermes/mises à niveau 6/6](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39482271316) vertes, dont conservation exacte du raisonnement/signatures, stack GLM simulée neuve et mise à niveau depuis UL-016 avec historique préservé. [PR draft #7](https://github.com/TFourniax/ulysse-ithaque-saas/pull/7). Ces preuves ne remplacent pas la recette fournisseur.
 
 ## UL-018 — candidat économique Europe + ZDR
 

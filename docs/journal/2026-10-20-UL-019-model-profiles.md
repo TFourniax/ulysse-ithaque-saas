@@ -18,10 +18,16 @@ Procédure [MODEL-PROFILES](../MODEL-PROFILES.md), décision [ADR-0015](../adr/0
 - Stacks CI neuve et mise à niveau UL-016 dirigées vers le profil GLM avec modèle simulé privé.
 - Tests de transformation VPS : préservation clé/session/budgets/services, rollback, changement par identifiant et profil JSON, JSON invalide.
 
-Vérifié localement : `npm run verify` (format, lint strict, types, cycles, OpenAPI, tests unitaires et liens documentaires), 12 tests unitaires worker, `bash -n scripts/ulysse-vps-europe.sh`, 5 tests Python de transformation VPS, 2 tests Python de paramètres/résultat et compilation des fichiers Python modifiés. Docker est absent de cet environnement ; la boucle Hermes et les stacks sont déléguées à la CI du dépôt, dont le résultat reste attendu à ce commit. Aucun appel fournisseur. Une boucle simulée ne valide pas la qualité GLM sur Paitite.
+Vérifié localement : `npm run verify` (format, lint strict, types, cycles, OpenAPI, tests unitaires et liens documentaires), 12 tests unitaires worker, `bash -n scripts/ulysse-vps-europe.sh`, 5 tests Python de transformation VPS, 3 tests Python de paramètres/résultat/restitution du raisonnement et compilation des fichiers Python modifiés. Docker est absent de cet environnement ; les vérifications conteneurisées sont exécutées par la CI du dépôt. Aucun appel fournisseur. Une boucle simulée ne valide pas la qualité GLM sur Paitite.
+
+La première CI de 50dae7e a détecté la suppression du raisonnement par le transport Hermes custom entre appels d'outils. Correction par le middleware officiel llm_execution du plugin Ulysse : restitution exacte des champs OpenRouter depuis une mémoire bornée du processus isolé ; aucune persistance ni modification du moteur amont. Le test exige désormais aussi la conservation d'une signature opaque, avec test unitaire d'isolation, de borne et d'absence de retry implicite. Le modèle simulé des stacks GLM refuse lui aussi une signature manquante.
+
+Code final vérifié : **e793f24a51a437b5b2c27ff6f251c0fe49b04ecf**, branche codex/ul-019-model-profiles, [PR draft #7](https://github.com/TFourniax/ulysse-ithaque-saas/pull/7), sans fusion.
+
+- [CI applicative](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39482271129) : **5/5 jobs verts**, unités et contrôles Linux/Windows, PostgreSQL, navigateur et stack conteneurisée.
+- [Hermes et mises à niveau](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39482271316) : **6/6 jobs verts**, dont cinq tests Python/boucle Hermes, stacks neuves, reprise UL-015/UL-016, parcours buyer/content GLM simulés, redémarrage et conservation de l'historique.
+- La procédure est épinglée à ce SHA de code ; le commit documentaire suivant ne modifie pas les images ou scripts.
 
 ## Restant
-
-La première CI de 50dae7e a détecté la suppression du raisonnement par le transport Hermes custom entre appels d'outils. Correction par le middleware officiel llm_execution du plugin Ulysse : restitution exacte des champs OpenRouter depuis une mémoire bornée du processus isolé ; aucune persistance ni modification du moteur amont. Le test exige désormais aussi la conservation d'une signature opaque, avec test unitaire d'isolation, de borne et d'absence de retry implicite. Les nouveaux résultats CI sont attendus.
 
 Précontrôle réel avec le compte OpenRouter du VPS, génération GLM et revue des trois parcours. Vision/audio non activés : ingestion autorisée, transport et comptabilité spécifique restent nécessaires. Recherche web automatique et vraie doctrine Néreis non ajoutées. UL-019 partial jusqu'à recette live.

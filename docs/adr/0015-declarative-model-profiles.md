@@ -15,6 +15,7 @@ UL-018 a isolé les paramètres et tarifs mais gardait une union de modèles Typ
 - Contrat privé ulysse-execution-v2 exposé par la santé Hermes. AgentExecutor porte modelSettings : limite de sortie et mode/effort de raisonnement. Le superviseur vérifie syntaxe et limites ; le worker garde l'autorité sur le modèle réellement appelé. Aucun catalogue Python dupliqué.
 - Snapshot du profil normalisé et empreinte SHA-256 dans les runs deal/buyer/content. Le gateway refuse un profil différent de celui réservé, même si le modèle n'a pas changé. Aucune migration.
 - Les tokens de raisonnement font partie de completion_tokens et de la réservation totale. Les appels incertains restent engagés, les plafonds et sessions restent inchangés. Ni raisonnement brut ni nouvelle trajectoire persistée.
+- Le transport custom Hermes retire les champs de raisonnement. Le middleware officiel llm_execution du plugin Ulysse restitue les champs OpenRouter exacts associés aux appels d'outils depuis une mémoire propre au processus, bornée à huit réponses de 80 000 octets. Le worker recontrôle le contexte et le coût après restitution. Le runner refuse le résultat si cette conservation échoue ; aucune modification du moteur amont et aucun retry supplémentaire.
 - Les capacités multimodales déclarées sont des métadonnées, pas une autorisation. Le gateway accepte uniquement le contrat de messages texte actuellement comptabilisé. Un nouveau protocole, une nouvelle modalité ou tarification appelle un adaptateur/contrat testé.
 
 ## Exploitation et limites
