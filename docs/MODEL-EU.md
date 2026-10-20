@@ -12,20 +12,24 @@ La garantie vise les prompts et réponses des inférences ; elle ne couvre pas t
 
 ## Déployer
 
-Télécharger [ulysse-vps-europe.sh](../scripts/ulysse-vps-europe.sh) au commit vérifié. Depuis PowerShell :
+Le code à déployer est épinglé au commit `857c2aa9fe2b0b6200ef7ff6fdaf37068da66d65`. Le [script](../scripts/ulysse-vps-europe.sh) est dans cette version du dépôt : aucun téléchargement manuel ni nouvelle saisie de clé ne sont nécessaires.
+
+Depuis PowerShell, si vous n'êtes pas déjà connecté au VPS :
 
 ```powershell
-scp -o IdentitiesOnly=yes -i "$env:USERPROFILE\.ssh\hermes_prospection_ed25519" "$env:USERPROFILE\Downloads\ulysse-vps-europe.sh" hermesadmin@51.91.55.14:/tmp/ulysse-vps-europe.sh
 ssh -o IdentitiesOnly=yes -i "$env:USERPROFILE\.ssh\hermes_prospection_ed25519" hermesadmin@51.91.55.14
 ```
 
-Sur le VPS, remplacer `SHA_UL018_VERIFIE` par le SHA complet donné avec le correctif :
+Sur le VPS :
 
 ```bash
 cd /
-chmod 644 /tmp/ulysse-vps-europe.sh
-sudo -Hu ulysse bash /tmp/ulysse-vps-europe.sh audit
-sudo -Hu ulysse bash /tmp/ulysse-vps-europe.sh deploy SHA_UL018_VERIFIE &&
+sudo -Hu ulysse git -C /var/lib/ulysse/home/projects/ulysse-ul016 \
+  fetch origin refs/heads/codex/ul-018-europe-zdr:refs/remotes/origin/codex/ul-018-europe-zdr &&
+sudo -Hu ulysse git -C /var/lib/ulysse/home/projects/ulysse-ul016 \
+  show 857c2aa9fe2b0b6200ef7ff6fdaf37068da66d65:scripts/ulysse-vps-europe.sh > /tmp/ulysse-vps-europe.sh &&
+chmod 644 /tmp/ulysse-vps-europe.sh &&
+sudo -Hu ulysse bash /tmp/ulysse-vps-europe.sh deploy 857c2aa9fe2b0b6200ef7ff6fdaf37068da66d65 &&
 sudo -Hu ulysse bash /tmp/ulysse-vps-europe.sh status
 ```
 
