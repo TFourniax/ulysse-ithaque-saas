@@ -54,6 +54,12 @@ La procédure part de la configuration réellement active, y compris live.json U
 
 Le statut doit afficher le modèle GLM, la route Europe, le profil/empreinte, API/worker sains et le contrat Hermes compatible. Cela ne prouve pas encore la réussite d'une génération.
 
+Un précontrôle /models/user réussi ne prouve pas non plus que le plan de l'organisation autorise l'inférence régionale. Lors de la recette du 20 octobre, le premier appel réel a renvoyé HTTP 403, plan Business/Enterprise requis. L'activation concerne l'organisation associée à la clé existante ; pas de changement de clé ou de redémarrage nécessaire pour ce seul droit. Une nouvelle génération valide doit encore être observée ensuite.
+
+Les nouvelles versions distinguent les codes provider_region_plan_required, provider_http_NNN, provider_timeout, hermes_http_NNN, result_invalid et les refus de preuves. La première cause fournisseur reste enregistrée même si Hermes échoue ensuite à produire son JSON final. L'interface explique les cas courants. Les anciens résultats result_refused n'acquièrent pas de diagnostic rétroactif. Les logs ne contiennent aucun corps fournisseur ; les coûts unknown restent des provisions et non des montants facturés confirmés.
+
+Le script models2 ajoute `diagnose [tenant-slug]`, par défaut acme-demo, utilisable également sur les images précédentes. Il consulte les journaux techniques et les trois derniers parcours buyer/content en SQL READ ONLY, sans source, brief, clé, appel fournisseur ni redémarrage. L'échec post-Business doit être diagnostiqué avant de modifier les paramètres du modèle.
+
 Si le catalogue répond 403 : vérifier Business/Enterprise, la clé et les restrictions du compte. La bascule n'a pas commencé ; la démo précédente reste active. Ne pas contourner ce refus avec le domaine global.
 
 Retour arrière, si nécessaire :

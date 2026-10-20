@@ -1,5 +1,11 @@
 # État actuel
 
+## Recette VPS du 20 octobre — diagnostic des erreurs live
+
+Thomas confirme le déploiement du code UL-019 `e793f24a`, GLM Europe/ZDR et les services sains. Le premier essai acheteur échoue avant toute lecture d'outil : un test technique effectué sur le VPS révèle HTTP 403, plan Business/Enterprise requis. Thomas annonce ensuite l'activation Business ; le nouvel essai de 23 h 07 reste en échec avec l'ancien libellé générique. **Cause du second échec non établie** ; ni génération ni qualité métier validée.
+
+Correctif UL-019 en cours de validation : conservation des codes fournisseur dans les runs et événements, distinction exécution/format/preuves, messages explicites dans l'interface. Pas de corps fournisseur ou de données métier ajoutés aux logs, pas de changement de modèle, de budget ou de routage. Les erreurs des anciens essais ne sont pas reconstituables. [Journal](journal/2026-10-20-UL-019-live-diagnostics.md).
+
 ## UL-019 — GLM et profils déclaratifs
 
 Thomas choisit GLM-5.3-Flash le 20 octobre. Code sur `codex/ul-019-model-profiles`, base UL-018 : profils JSON validés, paramètres/tarifs/capacités séparés du moteur, import de profil administrateur sans rebuild, contrat Hermes normalisé et empreinte par run. Le script conserve la configuration active UL-017/018 et cible le seul Docker rootless Ulysse. [Procédure](MODEL-PROFILES.md), [ADR-0015](adr/0015-declarative-model-profiles.md), [journal](journal/2026-10-20-UL-019-model-profiles.md). **Partial** : `npm run verify`, 12 tests unitaires worker et 8 tests Python ciblés verts localement ; inférence GLM, qualité Paitite et compte Business à valider sur le VPS. Aucun déploiement ici. Le harness reste texte ; capacités multimodales décrites, médias non activés.

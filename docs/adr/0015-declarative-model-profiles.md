@@ -20,6 +20,12 @@ UL-018 a isolé les paramètres et tarifs mais gardait une union de modèles Typ
 
 ## Exploitation et limites
 
+### Diagnostic live après la première recette VPS
+
+Les erreurs de transport, délais, HTTP et enveloppes d'erreur HTTP 200 sont distinguées. Un corps d'erreur HTTP est lu au plus sur 16 384 octets ; aucun texte libre du fournisseur, payload, clé ou raisonnement n'est persisté ou journalisé. Seul le refus régional documenté est reconnu pour produire un code fixe ; les autres refus conservent leur statut HTTP. Le premier code fournisseur est conservé dans agent_runs et workflow_requests si l'exécution échoue ensuite dans Hermes ; une réussite validée efface le code temporaire, les événements restent historiques. La validation de format et la validation de preuves restent strictes et distinguées dans les erreurs des parcours.
+
+Pas de retry, fallback, modification de modèle ou de budget ajouté par ce diagnostic. Un appel incertain reste comptabilisé à sa borne conservatrice ; une erreur HTTP ne démontre pas à elle seule une facturation nulle. Les anciens runs gardent leur code historique faute de détail conservé. Le contrôle /models/user vérifie le catalogue autorisé, pas le droit effectif d'inférence régionale : le premier essai VPS a reçu un 403 de plan après un précontrôle réussi. La recette demeure nécessaire après activation Business/Enterprise.
+
 Le script reconstruit les deux images une fois, sur le seul projet rootless Ulysse ; reprend la configuration active et sauvegarde avant bascule. Ensuite model MODEL_ID ou model /profil.json effectue précontrôle, arrêt gracieux et redémarrage sans rebuild. Le retour conserve les données et neutralise le moteur d'une ancienne route globale.
 
 Hermes upstream sait gérer plusieurs fournisseurs et la vision ; son intégration Ulysse volontairement bornée conserve les seuls outils de lecture, réseau privé, prompt, sources et droits métier. Aucune activation automatique de vision auxiliaire, navigation ou délégation.

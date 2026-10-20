@@ -556,7 +556,7 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
           const first = (await runner.store.list(w.owner))[0]!;
           assert.equal(Number(first.committed_usd), 0.000165);
           assert.equal(first.cost_state, 'estimated');
-          await assert.rejects(runner.inference(request.capability, body), /provider failed/);
+          await assert.rejects(runner.inference(request.capability, body), /provider_http_403/);
           assert.equal(calls, 2);
           return abstention;
         },
@@ -1401,6 +1401,109 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
           r.result === null && r.retrieved.length === 0,
       ),
     );
+  });
+  test('workflow preserves the first provider failure when Hermes subsequently returns an unusable result', async (t) => {
+    const workflowInstructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    for (const scenario of ['plan', 'upstream', 'embedded', 'timeout']) {
+      const w = await setup(`workflow-failure-${scenario}`);
+      let calls = 0;
+      const mock = t.mock.method(globalThis, 'fetch', () => {
+        calls++;
+        if (scenario === 'timeout')
+          return Promise.reject(new DOMException('private-details', 'TimeoutError'));
+        return Promise.resolve(
+          scenario === 'plan'
+            ? Response.json(
+                {
+                  error: {
+                    code: 403,
+                    message:
+                      'Regional routing requires a Business or Enterprise plan. private-details',
+                  },
+                },
+                { status: 403 },
+              )
+            : scenario === 'upstream'
+              ? new Response('private-details', { status: 503 })
+              : Response.json({ error: { code: 429, message: 'private-details' } }),
+        );
+      });
+      const expected = {
+        plan: 'provider_region_plan_required',
+        upstream: 'provider_http_503',
+        embedded: 'provider_http_429',
+        timeout: 'provider_timeout',
+      }[scenario];
+      const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+        execute: async (request) => {
+          await assert.rejects(
+            engine.inference(request.capability, {
+              messages: [{ role: 'system', content: workflowInstructions }],
+            }),
+          );
+          throw new Error('hermes_http_422');
+        },
+      });
+      const id = await w.workspace.create(
+        w.owner,
+        { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+        'hermes-live',
+      );
+      await engine.workflows.run(w.ctx, id);
+      const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+      assert.equal(run.errorCode, expected);
+      assert.equal(run.status, 'failed');
+      assert.equal(run.result, null);
+      const trace = await engine.store.transaction(w.ctx, async (_tx, sql) =>
+        sql.query<{
+          error_code: string;
+          cost_state: string;
+          committed_usd: string;
+          model_calls: number;
+          tool_calls: number;
+        }>(
+          'SELECT error_code,cost_state,committed_usd,model_calls,tool_calls FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+          [w.tenantId, run.agentRunId],
+        ),
+      );
+      const saved = trace.rows[0];
+      assert.ok(saved);
+      assert.equal(saved.error_code, expected);
+      assert.equal(saved.cost_state, 'unknown');
+      assert.ok(Number(saved.committed_usd) > 0);
+      assert.equal(saved.model_calls, 1);
+      assert.equal(saved.tool_calls, 0);
+      assert.equal(calls, 1);
+      mock.mock.restore();
+    }
+  });
+  test('workflow distinguishes invalid final schema from required unread sources', async () => {
+    for (const scenario of ['schema', 'unread']) {
+      const w = await setup(`workflow-result-${scenario}`);
+      const engine = new AgentRuntime(workerPool, liveTestConfig(), {
+        execute: () =>
+          Promise.resolve(
+            scenario === 'schema'
+              ? { private: 'not-a-result' }
+              : pendingWorkflow('buyer', [], 'Fixture'),
+          ),
+      });
+      const id = await w.workspace.create(
+        w.owner,
+        { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+        'hermes-live',
+      );
+      await engine.workflows.run(w.ctx, id);
+      const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+      assert.equal(
+        run.errorCode,
+        scenario === 'schema' ? 'result_invalid' : 'required_source_unread',
+      );
+      assert.equal(run.result, null);
+    }
   });
   test('workflow stub uses its own prompt/tools, refuses deal instructions, and never forwards a provider key', async (t) => {
     const w = await setup('workflow-stub-gateway');

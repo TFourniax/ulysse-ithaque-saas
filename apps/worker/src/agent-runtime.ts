@@ -32,6 +32,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
 import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts';
+import { fetchAgentCompletion, ProviderCallError } from './agent-errors.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
 export const EXECUTION_CONTRACT = 'ulysse-execution-v2';
@@ -142,16 +143,18 @@ const Args = z
 /** Minimized diagnostics: fixed codes and identifiers only, never payloads or secrets. */
 export type AgentLog = Readonly<{ warn: (fields: object, message: string) => void }>;
 const reasonOf = (error: unknown): string =>
-  error instanceof DomainError
-    ? `${error.code}${error.detail ? `:${error.detail}` : ''}`
-    : error instanceof Error &&
-        /^hermes_http_\d{3}$|^hermes_version_mismatch$|^agent_concurrency_limit$/.test(
-          error.message,
-        )
-      ? error.message
-      : error instanceof Error
-        ? error.name
-        : 'unknown';
+  error instanceof ProviderCallError
+    ? error.code
+    : error instanceof DomainError
+      ? `${error.code}${error.detail ? `:${error.detail}` : ''}`
+      : error instanceof Error &&
+          /^hermes_http_\d{3}$|^hermes_version_mismatch$|^agent_concurrency_limit$/.test(
+            error.message,
+          )
+        ? error.message
+        : error instanceof Error
+          ? error.name
+          : 'unknown';
 const sha256 = (text: string) =>
   createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex');
 const oppRef = (o: Opportunity) => `opportunity:${o.id}:r${String(o.revision)}`;
@@ -385,7 +388,7 @@ export class AgentRuntime {
         // committed_usd already holds every uncertain transmission at its upper bound and the
         // gateway refuses calls once the run has stopped: keep that, release the unused rest.
         await sql.query(
-          "UPDATE agent_runs SET status=$3,completed_at=clock_timestamp(),error_code=$4,reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status IN ('running','validating')",
+          "UPDATE agent_runs SET status=$3,completed_at=clock_timestamp(),error_code=coalesce(error_code,$4),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status IN ('running','validating')",
           [ctx.tenantId, id, code, errorCode],
         );
         await this.store.event(
@@ -670,7 +673,7 @@ export class AgentRuntime {
       );
       if (result.outcome === 'technical_error') {
         await sql.query(
-          "UPDATE agent_runs SET status='failed',error_code='agent_reported_error',result=$3,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2",
+          "UPDATE agent_runs SET status='failed',error_code=coalesce(error_code,'agent_reported_error'),result=$3,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2",
           [ctx.tenantId, id, JSON.stringify(result)],
         );
         await this.store.event(
@@ -847,7 +850,7 @@ export class AgentRuntime {
         errorCode: null,
       });
       await sql.query(
-        'UPDATE agent_runs SET status=$3,result=$4,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2',
+        'UPDATE agent_runs SET status=$3,result=$4,error_code=NULL,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2',
         [ctx.tenantId, id, generated ? 'completed' : 'abstained', JSON.stringify(result)],
       );
       await this.store.event(
@@ -942,7 +945,7 @@ export class AgentRuntime {
     });
     const live = mode === 'hermes-live';
     // The provider key only ever leaves for OpenRouter; the stub endpoint receives none.
-    const response = await fetch(
+    const payload = await fetchAgentCompletion(
       live ? provider.url : (this.config.AGENT_STUB_PROVIDER_URL ?? 'invalid:'),
       {
         method: 'POST',
@@ -963,9 +966,22 @@ export class AgentRuntime {
         }),
         signal: AbortSignal.timeout(45000),
       },
-    );
-    ensure(response.ok, 'INVALID_INPUT', 'provider failed');
-    const payload = record(await response.json());
+    ).catch(async (error: unknown) => {
+      if (error instanceof ProviderCallError) {
+        await this.store.transaction(ctx, async (_tx, sql) => {
+          await sql.query(
+            "UPDATE agent_runs SET error_code=coalesce(error_code,$3) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+            [ctx.tenantId, runId, error.code],
+          );
+          await this.store.event(sql, ctx.tenantId, runId, 'error', error.code);
+        });
+        this.log?.warn(
+          { runId, reason: error.code, httpStatus: error.httpStatus },
+          'agent provider failed',
+        );
+      }
+      throw error;
+    });
     const usage = z
       .object({
         prompt_tokens: z.number().int().nonnegative(),

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ulysse demo only. Run as Linux user ulysse (UID 10002), never as root.
-# audit | deploy <40-character commit> | status | model MODEL_ID|/chemin/profil.json | rollback
+# audit | diagnose [tenant-slug] | deploy <commit> | status | model MODEL_ID|/chemin/profil.json | rollback
 # This script never runs a global docker command, down, prune, seed or reset.
 set -Eeuo pipefail
 umask 077
@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-20.models1
+ULYSSE_SCRIPT_VERSION=2026-10-20.models2
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -73,6 +73,40 @@ check_health() {
   '
 
 }
+diagnose() {
+  local slug=${1:-acme-demo} worker postgres hermes database
+  [[ "$slug" =~ ^[a-z0-9][a-z0-9-]{1,62}$ ]] || die 'identifiant entreprise invalide'
+  worker=$(container_id worker); postgres=$(container_id postgres); hermes=$(container_id hermes)
+  for cid in "$worker" "$postgres" "$hermes"; do
+    [[ -n "$cid" && "$cid" != *$'\n'* ]] || die 'conteneur Ulysse absent ou ambigu'
+  done
+  database=$(ud exec "$worker" node -e 'process.stdout.write(process.env.ULYSSE_DB_NAME||"")')
+  [[ -n "$database" ]] || die 'base Ulysse non determinee'
+  say 'Diagnostic en lecture seule : aucun appel modele, aucune modification.'
+  ud logs --timestamps --since 24h --tail 50 "$hermes" 2>&1
+  ud logs --since 24h --tail 500 "$worker" 2>&1 | python3 -c '
+import json,sys
+for line in sys.stdin:
+    try: row=json.loads(line)
+    except ValueError: continue
+    if isinstance(row,dict) and row.get("msg") in ("agent gateway refused a call","agent provider failed","agent run not published"):
+        print(json.dumps({k:row.get(k) for k in ("time","msg","runId","path","reason","httpStatus")},ensure_ascii=False))
+'
+  ud exec -i "$postgres" sh -c 'exec psql -X -U "$POSTGRES_USER" -d "$1" -v ON_ERROR_STOP=1 -P pager=off -v tenant_slug="$2" -x' sh "$database" "$slug" <<'SQL'
+BEGIN READ ONLY;
+SELECT r.id,r.workflow_kind,r.model,r.status,r.error_code,r.started_at,
+       round(extract(epoch FROM (r.completed_at-r.started_at))::numeric,1) AS duration_seconds,
+       r.model_calls,r.tool_calls,r.input_tokens,r.output_tokens,r.uncertain_calls,
+       r.cost_state,r.committed_usd,
+       ARRAY(SELECT e.label FROM agent_events e
+             WHERE e.tenant_id=r.tenant_id AND e.run_id=r.id AND e.kind='tool'
+             ORDER BY e.sequence) AS tools_used
+FROM agent_runs r JOIN tenants t ON t.id=r.tenant_id
+WHERE t.slug=:'tenant_slug' AND r.workflow_kind IN ('buyer','content')
+ORDER BY r.started_at DESC LIMIT 3;
+ROLLBACK;
+SQL
+}
 ULYSSE_RESTORE_CONFIG=''
 ULYSSE_STOPPED=0
 declare -a ULYSSE_SERVICES=()
@@ -97,13 +131,14 @@ action=${1:-audit}
 case "$action" in
   audit) audit; exit 0 ;;
   status) audit; check_health; exit 0 ;;
+  diagnose) diagnose "${2:-acme-demo}"; exit 0 ;;
   deploy|model|rollback) ;;
   models)
     worker=$(container_id worker)
     [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
     ud exec "$worker" node --input-type=module -e 'import {modelProfiles} from "./apps/worker/dist/src/agent-provider.js"; console.log(JSON.stringify(modelProfiles(),null,2))'
     exit 0 ;;
-  *) die 'actions : audit | deploy COMMIT | status | model MODEL_ID|/chemin/profil.json | rollback' ;;
+  *) die 'actions : audit | diagnose [tenant] | deploy COMMIT | status | model MODEL_ID|/chemin/profil.json | rollback' ;;
 esac
 mkdir -p "$ULYSSE_RELEASES"
 exec 9>"$ULYSSE_PRIVATE/november-deploy.lock"
