@@ -573,3 +573,4 @@ export type ConnectorInfo = {
   capabilities: Record<string, unknown>;
   fields: Record<string, { source: string; meaning: string; unit?: string }>;
 };
+export * from './workflows.ts';

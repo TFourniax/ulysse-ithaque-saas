@@ -25,7 +25,7 @@ import type { Job, SendOptions } from 'pg-boss';
 import { PgBoss } from 'pg-boss';
 import type { z } from 'zod';
 import type { WorkerConfig } from './config.ts';
-import { ConnectionJob, RecommendationJob, SyncJob, TenantJob } from './jobs.ts';
+import { ConnectionJob, RecommendationJob, SyncJob, TenantJob, WorkflowJob } from './jobs.ts';
 
 /** Resolves an opaque credential reference server-side. Secrets never go to logs, browsers or models. */
 export interface CredentialStore {
@@ -246,6 +246,11 @@ export class WorkerRuntime {
         this.handlePurge(parse(ConnectionJob, job), job.id),
       ),
     );
+    await this.boss.work(
+      QUEUES.workflowRun,
+      tenantScoped,
+      instrument(QUEUES.workflowRun, (job) => this.handleWorkflow(parse(WorkflowJob, job), job.id)),
+    );
     if (this.#deps.model?.provider) {
       await this.boss.work(
         QUEUES.recommendationFormulate,
@@ -315,6 +320,12 @@ export class WorkerRuntime {
     const tenantId = event.tenant_id;
     const group = { id: tenantId };
     switch (event.event_type) {
+      case 'workflow.requested':
+        return {
+          name: QUEUES.workflowRun,
+          data: { tenantId, workflowId: event.subject_id },
+          options: { singletonKey: event.subject_id, group },
+        };
       case 'source.changed':
         return {
           name: QUEUES.tenantAnalyze,
@@ -356,6 +367,15 @@ export class WorkerRuntime {
         // recommendation.decided: no background action in this version (no external execution, ADR-0002).
         return null;
     }
+  }
+
+  async handleWorkflow(job: WorkflowJob, jobId: string): Promise<void> {
+    if (!this.#deps.agent) throw new Error('workflow_engine_unavailable');
+    await this.#deps.agent.workflows.run(
+      serviceContext(job.tenantId, `job:${jobId}`, ['analysis:run']),
+      job.workflowId,
+      this.#abort.signal,
+    );
   }
 
   /** Enqueues due connections; stately queues coalesce duplicates per connection. */
@@ -513,7 +533,7 @@ export class WorkerRuntime {
 
   async handleAnalyze(job: TenantJob, jobId: string): Promise<void> {
     const ctx = serviceContext(job.tenantId, `job:${jobId}`, ['analysis:run']);
-    if (this.#deps.agent) {
+    if (this.#deps.agent && this.#deps.agent.config.ULYSSE_ANALYSIS_MODE !== 'rules') {
       await this.#deps.agent.analyze(ctx, job.trigger, this.#abort.signal);
       return;
     }
@@ -546,7 +566,7 @@ export class WorkerRuntime {
     await this.#maintenance.expireDue(ctx);
     // A process crash can leave an expired lease without a fresh source event.
     // Periodic reconciliation retries it; completed input hashes are skipped.
-    if (this.#deps.agent)
+    if (this.#deps.agent && this.#deps.agent.config.ULYSSE_ANALYSIS_MODE !== 'rules')
       await this.#deps.agent.analyze(
         serviceContext(job.tenantId, `job:${jobId}:resume`, ['analysis:run']),
         'scheduled',

@@ -51,6 +51,7 @@ import { PgAgentStore } from '@ulysse/database';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { registerWorkflowRoutes } from './workflows.ts';
 import type { ApiDeps } from '../deps.ts';
 import {
   analysisDto,
@@ -118,6 +119,7 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
   });
 
   const ctxOf = (request: FastifyRequest): Context => contextFor(authOf(request), request.id);
+  registerWorkflowRoutes(app, deps, ctxOf);
   const agentStore = new PgAgentStore(deps.pool);
   app.get(
     '/agent-runs',

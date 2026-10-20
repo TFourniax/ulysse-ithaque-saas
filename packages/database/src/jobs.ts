@@ -12,6 +12,7 @@ export const QUEUES = {
   tenantAnalyze: 'ulysse.tenant-analyze',
   tenantMaintain: 'ulysse.tenant-maintain',
   recommendationFormulate: 'ulysse.recommendation-formulate',
+  workflowRun: 'ulysse.workflow-run',
   deadLetter: 'ulysse.dead-letter',
 } as const;
 
@@ -37,6 +38,16 @@ export const QUEUE_DEFINITIONS: readonly QueueDefinition[] = [
     retryDelay: 0,
     retryBackoff: false,
     expireInSeconds: 60,
+  },
+  {
+    name: QUEUES.workflowRun,
+    policy: 'stately',
+    retryLimit: 3,
+    retryDelay: 10,
+    retryBackoff: true,
+    retryDelayMax: 120,
+    expireInSeconds: 120,
+    deadLetter: QUEUES.deadLetter,
   },
   {
     name: QUEUES.dispatchSyncs,

@@ -145,6 +145,7 @@ export interface AgentExecutor {
       capability: string;
       subjectId: string;
       mode: 'simulated' | 'hermes-live';
+      workflow?: 'buyer' | 'content';
       model: string;
       timeoutMs: number;
     }>,

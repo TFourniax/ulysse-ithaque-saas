@@ -16,6 +16,8 @@ SLOTS = threading.BoundedSemaphore(2)
 def isolated_run(request):
     UUID(request["runId"])
     UUID(request["subjectId"])
+    if request.get("workflow", "deal") not in ("deal", "buyer", "content"):
+        raise ValueError("unsupported_workflow")
     if request["mode"] != "hermes-live" or request["model"] != "openai/gpt-4.1-mini":
         raise ValueError("unsupported_execution")
     if not isinstance(request["capability"], str) or len(request["capability"]) != 43:

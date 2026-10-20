@@ -53,7 +53,7 @@ export class PgAgentStore {
       async (_tx, sql) =>
         (
           await sql.query<Row>(
-            'SELECT id,subject_id,mode,status,trigger,snapshot,model,hermes_version,instructions_version,started_at,completed_at,result,error_code,retrieved,tool_calls,model_calls,input_tokens,output_tokens,reserved_usd,committed_usd,cost_state,correlation_id FROM agent_runs WHERE tenant_id=$1 ORDER BY started_at DESC LIMIT 50',
+            "SELECT id,subject_id,mode,status,trigger,snapshot,model,hermes_version,instructions_version,started_at,completed_at,result,error_code,retrieved,tool_calls,model_calls,input_tokens,output_tokens,reserved_usd,committed_usd,cost_state,correlation_id FROM agent_runs WHERE tenant_id=$1 AND workflow_kind='deal' ORDER BY started_at DESC LIMIT 50",
             [ctx.tenantId],
           )
         ).rows,

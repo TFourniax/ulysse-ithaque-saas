@@ -1,5 +1,11 @@
 # État actuel
 
+## UL-017 — priorité novembre confirmée
+
+En cours sur `codex/ul-017-november-workflows`, base UL-016 `0282c19`. Trois parcours assemblés : client synthétique/crash test, contenus contextualisés et prochaine interaction par affaire. Sources métier communes, lien diagnostic → contenu, questions de cadrage, revue, versions et retraits. Voir [guide](NOVEMBER-WORKFLOWS.md), [ADR-0013](adr/0013-november-workflows.md), [journal](journal/2026-10-20-UL-017-november-workflows.md).
+
+Contrôles locaux et CI en cours. Le moteur live, la collecte/veille web automatique et le déploiement VPS ne sont pas validés par ce lot à ce stade. Thomas confirme un VPS et une démo existants ; leur état actuel n'a pas été inspecté ici. Ne pas utiliser l'ancien cadrage « recommandations seulement » pour différer les deux autres priorités.
+
 ## UL-016 — analyse agentique fictive
 
 Lot **partial** sur `codex/ul-016-hermes-demo`, [PR draft #3](https://github.com/TFourniax/ulysse-ithaque-saas/pull/3). Base UL-015 exacte `598f082ab33fb87faf5ff357285dc95b536bb1b3`, interface conservée. Intégration et recette simulée vertes au `562cf83` : vraie boucle Hermes avec endpoint simulé, deux entreprises, budgets, reprise, stack neuve et upgrade UL-015. Live non validé sans clé ; revue de pertinence et lancement Docker Desktop personnel attendus. Voir [guide](DEMO-AGENTIQUE.md), [rapport](VALIDATION-UL-016.md), [journal](journal/2026-10-07-UL-016-hermes-demo.md). Les sources réelles, la doctrine réelle et le pilote restent ouverts.
@@ -50,7 +56,7 @@ Captures et preuves UL-016 actuelles : [rapport](VALIDATION-UL-016.md). Les autr
 
 ## Prochaine étape
 
-Terminer la recette UL-016 avec une clé autorisée, la revue de pertinence et le lancement Docker Desktop. Les lots de pilote réel restent distincts et dépendent des réponses listées dans [PILOT](PILOT.md) : UL-008 (première source réelle, dès qu'un accès est fourni), UL-009 (doctrine validée), UL-011b (environnement), puis UL-012c (pilote). En attendant : DEBT-013 (traces) ou DEBT-017 (autres navigateurs) si le pilote l'exige.
+Terminer les contrôles UL-017, puis charger l’entreprise fictive pour la recette des trois parcours, dont les scénarios UL-016 avec une clé autorisée, la revue de pertinence et le lancement Docker Desktop. Les lots de pilote réel restent distincts et dépendent des réponses listées dans [PILOT](PILOT.md) : UL-008 (première source réelle, dès qu'un accès est fourni), UL-009 (doctrine validée), UL-011b (environnement), puis UL-012c (pilote). En attendant : DEBT-013 (traces) ou DEBT-017 (autres navigateurs) si le pilote l'exige.
 
 ## Source et publication
 

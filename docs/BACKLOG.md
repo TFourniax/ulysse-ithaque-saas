@@ -22,12 +22,13 @@ Mis à jour le 7 octobre 2026. Ce fichier fait foi tant qu'un passage documenté
 | UL-014 | Licence, hébergement et conditions d'exploitation | blocked | Arbitrages responsables | Décisions consignées dans OPEN-QUESTIONS/ADR sans inventer contrat, coûts ou droits ; questions préparées dans [PILOT](PILOT.md) |
 | UL-015 | Refonte visuelle « tech minimaliste » de l'interface | done | UL-006 | Jetons clair/sombre, Mona Sans auto-hébergée, rail, jauges, transitions, `TableScroll` ; axe 0 violation sérieuse sur 48 combinaisons ; CSP de production vérifiée ; [CI run 37628909866](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/37628909866) au commit `2364d93` : 5 jobs verts dont recette Playwright 12/12 ; captures validées par le responsable produit le 2026-10-07 ([journal](journal/2026-10-07-UL-015-interface.md)). Captures `docs/evidence` à régénérer : DEBT-019 |
 | UL-016 | Intégration Hermes et démonstration agentique fictive | partial | UL-015, clé modèle autorisée | Prise Codex, PR #3 depuis `598f082`. Outils bornés, pipeline PostgreSQL/worker, corpus, opportunités ouvrables, Analyses et décisions intégrés. Recette dans [VALIDATION](VALIDATION-UL-016.md). Vraie boucle Hermes avec endpoint simulé, stack neuve/mise à niveau et recette applicative vertes au `562cf83`. Reste : cinq scénarios avec fournisseur live, revue sémantique et lancement Docker Desktop. Aucun appel live observé faute de clé. |
+| UL-017 | Trois parcours prioritaires de novembre | in_progress | UL-016 | Prise Codex le 20 octobre. Sources communes, client synthétique/crash test, contenu contextualisé lié au diagnostic et prochaine interaction par affaire. Migration 0012, API, worker/Hermes et interface ; vérifications en cours. Guide : [NOVEMBER-WORKFLOWS](NOVEMBER-WORKFLOWS.md). Pas de nouveau tenant fictif chargé ni de déploiement VPS. |
 
 UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre convenu. Une intégration réelle et des utilisateurs pilotes le sont pour qualifier la valeur réelle.
 
 ## Prochain lot à prendre
 
-Priorité de cette branche : terminer la recette UL-016 live et la revue de pertinence selon [DEMO-AGENTIQUE](DEMO-AGENTIQUE.md). Les lots ci-dessous restent indépendants et ne sont pas clôturés par des données fictives.
+Priorité de cette branche : assembler et vérifier UL-017, puis terminer la recette des trois parcours et UL-016 live et la revue de pertinence selon [DEMO-AGENTIQUE](DEMO-AGENTIQUE.md). Les lots ci-dessous restent indépendants et ne sont pas clôturés par des données fictives.
 
 1. **UL-008** dès qu'une source et un accès sont fournis, en suivant [CONNECTORS](CONNECTORS.md).
 2. **UL-009** dès que la doctrine Néreis/Odyssée est fournie et validée par ses responsables.

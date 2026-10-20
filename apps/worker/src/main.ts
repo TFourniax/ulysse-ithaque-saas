@@ -27,10 +27,7 @@ if (
   agentSettings.ULYSSE_ANALYSIS_MODE === 'rules'
 )
   throw new Error('Legacy paid wording is disabled: use the bounded hermes-live execution path');
-const agent =
-  agentSettings.ULYSSE_ANALYSIS_MODE === 'rules'
-    ? undefined
-    : new AgentRuntime(pool, agentSettings);
+const agent = new AgentRuntime(pool, agentSettings);
 if (config.ENABLE_FIXTURE_CONNECTOR)
   connectors.push(new FixtureConnector(new PgFixtureStore(pool)));
 
@@ -44,13 +41,13 @@ const runtime = new WorkerRuntime({
   clock: systemClock,
   logger,
   metrics,
-  model: agent ? undefined : modelSettingsFromEnv(),
+  model: agentSettings.ULYSSE_ANALYSIS_MODE === 'rules' ? modelSettingsFromEnv() : undefined,
   agent,
 });
 
 let ready = false;
 const server = http.createServer((req, res) => {
-  if (req.url?.startsWith('/agent/') && agent) {
+  if (req.url?.startsWith('/agent/')) {
     void agent.handleHttp(req, res);
     return;
   }

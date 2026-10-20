@@ -12,9 +12,12 @@ import {
   MemoryFixtureStore,
 } from '@ulysse/connectors';
 import type { Pool } from '@ulysse/database';
-import { AdminClient, createPool, PgUnitOfWork, QUEUES } from '@ulysse/database';
+import { AdminClient, createPool, PgUnitOfWork, PgWorkspaceStore, QUEUES } from '@ulysse/database';
 import type { TestDatabase } from '@ulysse/database/testing';
 import { createTestDatabase } from '@ulysse/database/testing';
+import type { WorkflowBrief, WorkflowResult } from '@ulysse/domain';
+import { pendingWorkflow } from '@ulysse/domain';
+import { z } from 'zod';
 import type { ServiceDeps } from '@ulysse/domain';
 import {
   CompanyContextService,
@@ -39,6 +42,18 @@ import { AgentRuntime, agentConfig } from '../src/agent-runtime.ts';
 import type { FaultHooks } from '../src/runtime.ts';
 import { noCredentialStore, WorkerRuntime } from '../src/runtime.ts';
 
+const liveTestConfig = () =>
+  agentConfig({
+    ULYSSE_ANALYSIS_MODE: 'hermes-live',
+    ENABLE_FIXTURE_CONNECTOR: 'true',
+    HERMES_SERVICE_TOKEN: 'x'.repeat(32),
+    OPENROUTER_API_KEY: 'test-only-never-transmitted',
+    AGENT_MODEL_ID: 'openai/gpt-4.1-mini',
+    AGENT_RUN_BUDGET_USD: '.25',
+    AGENT_SESSION_BUDGET_USD: '2',
+    AGENT_MONTH_BUDGET_USD: '10',
+    AGENT_SESSION_ID: `test-${crypto.randomUUID()}`,
+  });
 describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
   async function world(
     name: string,
@@ -301,18 +316,6 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     });
     await assert.rejects(w.agent.tool(capability, 'get_active_doctrine', {}));
   });
-  const liveTestConfig = () =>
-    agentConfig({
-      ULYSSE_ANALYSIS_MODE: 'hermes-live',
-      ENABLE_FIXTURE_CONNECTOR: 'true',
-      HERMES_SERVICE_TOKEN: 'x'.repeat(32),
-      OPENROUTER_API_KEY: 'test-only-never-transmitted',
-      AGENT_MODEL_ID: 'openai/gpt-4.1-mini',
-      AGENT_RUN_BUDGET_USD: '.25',
-      AGENT_SESSION_BUDGET_USD: '2',
-      AGENT_MONTH_BUDGET_USD: '10',
-      AGENT_SESSION_ID: `test-${crypto.randomUUID()}`,
-    });
   const abstention = {
     version: 'ulysse-agent-v1',
     outcome: 'no_signal',
@@ -1014,5 +1017,193 @@ describe('background ingestion with pg-boss', () => {
     } finally {
       await runtime.stop(5000);
     }
+  });
+});
+
+describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
+  const brief: WorkflowBrief = {
+    offer: 'Offre de test',
+    target: 'Acheteur de test',
+    phase: 'comparison',
+    objective: 'Clarifier le bénéfice',
+    channel: 'Article',
+    constraints: '',
+    buyerRunId: null,
+  };
+  async function setup(name: string) {
+    const w = await tenantWorld(name, name);
+    const workspace = new PgWorkspaceStore(appPool);
+    const source = await workspace.saveSource(w.owner, {
+      kind: 'offer',
+      title: 'Offre de test',
+      text: 'Service de test : accompagnement documenté.',
+      url: null,
+      observedAt: new Date().toISOString(),
+      origin: 'company',
+    });
+    return { ...w, workspace, source, ctx: serviceContext(w.tenantId, ['analysis:run']) };
+  }
+  test('outbox processes a content request, asks missing questions and replay makes no duplicate', async () => {
+    const w = await setup('workflow-questions');
+    const engine = new AgentRuntime(workerPool, agentConfig({ ULYSSE_ANALYSIS_MODE: 'simulated' }));
+    const runtime = runtimeWith({ agent: engine });
+    const request = {
+      kind: 'content' as const,
+      brief: { ...brief, phase: 'unknown' as const, objective: '' },
+      sourceIds: [w.source.id],
+      requestKey: crypto.randomUUID(),
+    };
+    const id = await w.workspace.create(w.owner, request, 'simulated');
+    assert.equal(await w.workspace.create(w.owner, request, 'simulated'), id);
+    await runtime.start({ schedule: false });
+    try {
+      const run = await waitFor(async () => {
+        const r = (await w.workspace.listWorkflows(w.owner))[0];
+        return r?.status === 'needs_context' ? r : null;
+      });
+      assert.equal(run.result?.questions.length, 2);
+      assert.equal(run.agentRunId, null);
+      await runtime.handleWorkflow({ tenantId: w.tenantId, workflowId: id }, crypto.randomUUID());
+      assert.equal((await w.workspace.listWorkflows(w.owner)).length, 1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+  test('buyer result feeds content, provenance is retained, source change blocks approval and withdrawal erases copies', async () => {
+    const w = await setup('workflow-chain');
+    const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        const context = z
+          .object({ kind: z.enum(['buyer', 'content']), buyer: z.unknown() })
+          .parse(await engine.tool(request.capability, 'get_workflow_context', {}));
+        await engine.tool(request.capability, 'list_company_sources', {});
+        const source = z
+          .object({ reference: z.string() })
+          .parse(
+            await engine.tool(request.capability, 'read_company_source', { sourceId: w.source.id }),
+          );
+        const base = pendingWorkflow(context.kind, [], 'Résultat fournisseur scripté de test');
+        if (context.kind === 'buyer')
+          return {
+            ...base,
+            outcome: 'draft',
+            findings: [
+              {
+                topic: 'Offre',
+                analysis: 'Accompagnement documenté.',
+                references: [source.reference],
+              },
+            ],
+            buyerQuestions: ['Quelle preuve peut être montrée ?'],
+            uniqueness: {
+              verdict: 'insufficient_evidence',
+              reason: 'Pas de source concurrente.',
+              references: [source.reference],
+            },
+          } satisfies WorkflowResult;
+        assert.ok(context.buyer);
+        return {
+          ...base,
+          outcome: 'draft',
+          content: {
+            title: 'Accompagnement',
+            body: 'L’offre de test décrit un accompagnement.',
+            callToAction: 'Préciser le besoin',
+            rationale: 'Comparaison avant une décision ; question simulée à vérifier.',
+            references: [source.reference],
+          },
+        } satisfies WorkflowResult;
+      },
+    });
+    const buyer = await w.workspace.create(
+      w.owner,
+      { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    await engine.workflows.run(w.ctx, buyer);
+    const first = (await w.workspace.listWorkflows(w.owner))[0]!;
+    assert.equal(first.status, 'draft', first.errorCode ?? '');
+    const content = await w.workspace.create(
+      w.owner,
+      {
+        kind: 'content',
+        brief: { ...brief, buyerRunId: buyer },
+        sourceIds: [w.source.id],
+        requestKey: crypto.randomUUID(),
+      },
+      'hermes-live',
+    );
+    await engine.workflows.run(w.ctx, content);
+    const second = (await w.workspace.listWorkflows(w.owner))[0]!;
+    assert.equal(second.status, 'draft', second.errorCode ?? '');
+    await w.workspace.saveSource(
+      w.owner,
+      { ...w.source, text: 'Service modifié.' },
+      { id: w.source.id, revision: 1 },
+    );
+    await assert.rejects(
+      w.workspace.review(w.owner, content, second.revision, 'approve'),
+      /STALE_EVIDENCE/,
+    );
+    const stale = await w.workspace.listWorkflows(w.owner);
+    assert.ok(stale.every((r) => r.stale));
+    await w.workspace.withdraw(w.owner, w.source.id, 2);
+    const erased = await w.workspace.listWorkflows(w.owner);
+    assert.ok(erased.every((r) => r.status === 'obsolete' && r.result === null));
+    const copies = await engine.store.transaction(w.ctx, async (_tx, sql) =>
+      sql.query(
+        "SELECT result,retrieved FROM agent_runs WHERE tenant_id=$1 AND workflow_kind<>'deal'",
+        [w.tenantId],
+      ),
+    );
+    assert.ok(
+      copies.rows.every(
+        (r: { result: unknown; retrieved: unknown[] }) =>
+          r.result === null && r.retrieved.length === 0,
+      ),
+    );
+  });
+  test('withdrawal during model execution prevents publication; foreign sources and viewer decisions are denied', async () => {
+    const w = await setup('workflow-race');
+    const b = await setup('workflow-foreign');
+    await assert.rejects(
+      b.workspace.create(
+        b.owner,
+        { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+        'simulated',
+      ),
+      /NOT_FOUND/,
+    );
+    const id = await w.workspace.create(
+      w.owner,
+      { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    const engine = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async () => {
+        await w.workspace.withdraw(w.owner, w.source.id, 1);
+        return pendingWorkflow('buyer', [], 'Ne pas publier.');
+      },
+    });
+    await engine.workflows.run(w.ctx, id);
+    const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+    assert.equal(run.status, 'obsolete');
+    assert.equal(run.result, null);
+    await assert.rejects(
+      w.workspace.review(
+        {
+          ...w.owner,
+          actor: {
+            kind: 'user',
+            userId: w.owner.actor.kind === 'user' ? w.owner.actor.userId : '',
+            role: 'viewer',
+          },
+        },
+        id,
+        run.revision,
+        'approve',
+      ),
+      /FORBIDDEN/,
+    );
   });
 });

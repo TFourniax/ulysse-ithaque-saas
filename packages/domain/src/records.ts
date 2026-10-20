@@ -117,6 +117,7 @@ export const OUTBOX_EVENTS = [
   'recommendation.decided',
   'doctrine.changed',
   'context.changed',
+  'workflow.requested',
 ] as const;
 export type OutboxEventType = (typeof OUTBOX_EVENTS)[number];
 

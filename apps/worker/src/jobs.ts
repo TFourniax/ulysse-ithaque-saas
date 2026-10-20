@@ -23,3 +23,6 @@ export type ConnectionJob = z.infer<typeof ConnectionJob>;
 
 export const RecommendationJob = z.object({ tenantId: z.uuid(), recommendationId: z.uuid() });
 export type RecommendationJob = z.infer<typeof RecommendationJob>;
+
+export const WorkflowJob = z.object({ tenantId: z.uuid(), workflowId: z.uuid() }).strict();
+export type WorkflowJob = z.infer<typeof WorkflowJob>;

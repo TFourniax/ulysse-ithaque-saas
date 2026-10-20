@@ -29,6 +29,7 @@ import {
 import { PgAgentStore } from '@ulysse/database';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
 export const TOOL_NAMES = [
@@ -80,6 +81,7 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 const Run = z.object({
   id: z.uuid(),
+  workflow_kind: z.enum(['deal', 'buyer', 'content']).default('deal'),
   subject_id: z.uuid(),
   input_hash: z.string(),
   mode: z.enum(['simulated', 'hermes-live']),
@@ -134,6 +136,7 @@ export class AgentRuntime {
   readonly store: PgAgentStore;
   readonly config: AgentConfig;
   readonly executor: AgentExecutor;
+  readonly workflows: WorkflowRuntime;
   constructor(
     pool: Pool,
     config: AgentConfig,
@@ -142,6 +145,21 @@ export class AgentRuntime {
     this.store = new PgAgentStore(pool);
     this.config = config;
     this.executor = executor;
+    this.workflows = new WorkflowRuntime(
+      pool,
+      {
+        mode: config.ULYSSE_ANALYSIS_MODE,
+        model: config.AGENT_MODEL_ID ?? 'simulation',
+        session: config.AGENT_SESSION_ID ?? 'simulation',
+        hermesVersion: HERMES_COMMIT,
+        budgets: {
+          run: config.AGENT_RUN_BUDGET_USD ?? 0,
+          session: config.AGENT_SESSION_BUDGET_USD ?? 0,
+          month: config.AGENT_MONTH_BUDGET_USD ?? 0,
+        },
+      },
+      executor,
+    );
   }
 
   async analyze(ctx: Context, trigger: string, signal?: AbortSignal): Promise<void> {
@@ -301,6 +319,8 @@ export class AgentRuntime {
     return { opportunity: o, doctrine, context, connection };
   }
   async tool(capability: string, name: string, rawArgs: unknown): Promise<unknown> {
+    if ((WORKFLOW_TOOLS as readonly string[]).includes(name))
+      return this.workflows.tool(capability, name, rawArgs);
     ensure((TOOL_NAMES as readonly string[]).includes(name), 'FORBIDDEN');
     const args = Args.parse(rawArgs);
     const ctx = await this.store.resolve(hash(capability));
@@ -749,7 +769,7 @@ export class AgentRuntime {
     ensure(bytes <= 80000, 'INVALID_INPUT', 'context limit');
     // byte count is a conservative upper bound on text tokens; schema/role overhead is included.
     // Fixed model, no provider/model fallback, maximum prices pinned in request routing.
-    const upperCost = ((bytes + 2048) * 0.4 + 1500 * 1.6) / 1_000_000;
+    const upperCost = ((bytes + 2048) * 0.4 + 3000 * 1.6) / 1_000_000;
     let runId = '';
     await this.store.transaction(ctx, async (tx, sql) => {
       const query = await sql.query(
@@ -766,8 +786,10 @@ export class AgentRuntime {
         'FORBIDDEN',
         'model limit',
       );
-      const { opportunity: o, doctrine: d, context: c } = await this.current(tx, run.subject_id);
-      ensure(agentInputHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
+      if (run.workflow_kind === 'deal') {
+        const { opportunity: o, doctrine: d, context: c } = await this.current(tx, run.subject_id);
+        ensure(agentInputHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
+      } else await this.workflows.assertCurrent(ctx, tx, sql, run.subject_id, run.input_hash);
       ensure(run.committed_usd + upperCost <= run.reserved_usd, 'FORBIDDEN', 'budget limit');
       await sql.query(
         "UPDATE agent_runs SET model_calls=model_calls+1,uncertain_calls=uncertain_calls+1,committed_usd=committed_usd+$3,cost_state='unknown' WHERE tenant_id=$1 AND id=$2",
@@ -793,7 +815,7 @@ export class AgentRuntime {
         tools: body.tools,
         tool_choice: 'auto',
         stream: false,
-        max_tokens: 1500,
+        max_tokens: 3000,
         temperature: 0.2,
         provider: {
           allow_fallbacks: false,

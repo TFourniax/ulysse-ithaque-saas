@@ -9,6 +9,7 @@ import { ErrorBanner, Instrument, Loading } from './components/ui.tsx';
 import { ROLE_LABELS } from './format.ts';
 import type { Session } from './session.tsx';
 import { can, SessionContext } from './session.tsx';
+import { WorkflowsPage, WorkspacePage } from './pages/Workflows.tsx';
 import { AdminPage } from './pages/Admin.tsx';
 import { ConnectionsPage } from './pages/Connections.tsx';
 import { HistoryPage } from './pages/History.tsx';
@@ -184,7 +185,10 @@ function Layout() {
   if (!me.data.activeTenant) return <TenantPicker me={me.data} />;
   const session = { ...me.data, activeTenant: me.data.activeTenant };
   const nav = [
-    { to: '/recommendations', label: 'Propositions' },
+    { to: '/buyer', label: 'Client synthétique' },
+    { to: '/content', label: 'Contenus' },
+    { to: '/recommendations', label: 'Prochaine interaction' },
+    { to: '/workspace', label: 'Sources métier' },
     { to: '/opportunities', label: 'Opportunités' },
     { to: '/analyses', label: 'Analyses' },
     { to: '/connections', label: 'Connexions' },
@@ -208,7 +212,7 @@ function Layout() {
                     {({ isActive }) => (
                       <>
                         {isActive && <span className="nav-indicator" aria-hidden="true" />}
-                        {NavIcons[item.to]}
+                        {NavIcons[item.to] ?? NavIcons['/analyses']}
                         <span>{item.label}</span>
                       </>
                     )}
@@ -248,6 +252,9 @@ const router = createBrowserRouter([
   {
     element: <Layout />,
     children: [
+      { path: '/buyer', element: <WorkflowsPage kind="buyer" /> },
+      { path: '/content', element: <WorkflowsPage kind="content" /> },
+      { path: '/workspace', element: <WorkspacePage /> },
       { path: '/recommendations', element: <RecommendationsPage /> },
       { path: '/recommendations/:id', element: <RecommendationDetailPage /> },
       { path: '/opportunities', element: <OpportunitiesPage /> },
