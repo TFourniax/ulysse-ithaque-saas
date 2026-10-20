@@ -104,6 +104,14 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: apps/web
       - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: november-browser-evidence
+          path: |
+            apps/web/test-results/november-*.png
+            apps/web/test-results/**/test-failed-*.png
+            apps/web/playwright-report/
 
   container-stack:
     # Builds the image, runs the complete compose stack (profile app) with fictional

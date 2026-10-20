@@ -10,7 +10,7 @@ Périmètre confirmé par Thomas le 20 octobre 2026 : ces trois capacités sont 
 
 ## Parcours dans l'application
 
-1. Renseigner le contexte de l'entreprise et valider une doctrine dans Administration. La doctrine de démonstration existante reste fictive ; le corpus privé devra être importé et validé séparément.
+1. Renseigner le contexte de l'entreprise et valider une doctrine dans Administration. Les principes métier sont éditables dans une nouvelle version et visibles avant validation. La doctrine de démonstration existante reste fictive ; le corpus privé devra être importé et validé séparément.
 2. Dans Sources métier, ajouter des extraits datés : offre/site, concurrents, contenus déjà produits, demandes observées. Une URL est une provenance, pas une collecte automatique. Les questions imaginées ont leur catégorie distincte.
 3. Dans Client synthétique, préciser l'offre et la cible, sélectionner au plus huit sources, lancer. Une donnée manquante produit une question ; l'absence de concurrents interdit un verdict positif d'unicité.
 4. Depuis un diagnostic actuel, utiliser « Créer un contenu à partir du diagnostic », renseigner phase, canal et progression attendue. Le diagnostic conserve son statut synthétique.

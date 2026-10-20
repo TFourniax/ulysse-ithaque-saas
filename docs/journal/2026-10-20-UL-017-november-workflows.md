@@ -6,4 +6,12 @@ Responsable : Codex. Branche : `codex/ul-017-november-workflows`, base UL-016 `0
 
 Périmètre : domaine, contrats, migration additive, API, worker/Hermes, interface, tests et documentation. Les PDFs privés ne sont pas publiés. Aucun tenant de démonstration supplémentaire n'est chargé par la migration.
 
-Validation et limites : à compléter après exécution des contrôles. Le VPS et le fournisseur live ne sont pas accessibles dans cette session à ce stade.
+[PR draft #5](https://github.com/TFourniax/ulysse-ithaque-saas/pull/5), empilée sur UL-016. Première version publiée : `80a13274229a9ae5b84821568d3e16a32773ca8b`.
+
+Validation locale : `npm run verify`, `npm run build`, compilation Python. Docker et PostgreSQL locaux indisponibles ; Chromium non téléchargeable ici. La validation complète est exécutée dans la CI du dépôt.
+
+[CI application du premier head](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39449505513) : cinq jobs verts (Linux, Windows, PostgreSQL/API/worker, navigateur, stack et sauvegarde/restauration). PostgreSQL 50/50, API 18/18, worker 25/25. Les contrôles nouveaux couvrent le chaînage buyer → content, les questions préalables, le rejeu, le retrait concurrent, la péremption, les rôles et l'isolation tenant. La boucle Hermes officielle avec endpoint modèle simulé est également verte dans [UL-016 validation](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39449505529).
+
+Finition : les principes métier deviennent éditables et visibles dans la doctrine ; les instructions de prochaine interaction portent leur propre version dans l'empreinte des analyses afin qu'un changement de consignes ne réutilise pas un ancien run. Captures navigateur desktop/mobile conservées par la CI.
+
+Limites : aucune inférence fournisseur live ni validation de pertinence métier ; collecte et veille web automatiques non raccordées ; le VPS déclaré par Thomas n'a pas été inspecté ni modifié. Les sources privées ne sont pas publiées. Le scénario d'entreprise fictive décrit dans le guide constitue la prochaine recette métier, sans préchargement sur le VPS.

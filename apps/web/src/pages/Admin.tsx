@@ -204,6 +204,22 @@ function DoctrineEditor({ base }: { base: DoctrineDto }) {
           </fieldset>
         );
       })}
+      <label>
+        Principes métier pour les analyses
+        <textarea
+          rows={6}
+          maxLength={4000}
+          value={content.agentGuidance ?? ''}
+          onChange={(e) => {
+            const { agentGuidance: _old, ...rest } = content;
+            setContent(e.target.value.trim() ? { ...rest, agentGuidance: e.target.value } : rest);
+          }}
+        />
+      </label>
+      <p className="muted small">
+        Ces principes guident le client synthétique, les contenus et les prochaines interactions
+        après validation de cette version. Ils restent propres à votre entreprise.
+      </p>
       <fieldset>
         <legend>Politique</legend>
         <label htmlFor={policyIds.age}>Âge maximal des données (heures)</label>
@@ -308,6 +324,12 @@ function Doctrines() {
                 {d.content.policy.rejectionCooldownDays} j
               </li>
             </ul>
+            {d.content.agentGuidance && (
+              <details>
+                <summary>Principes métier de cette version</summary>
+                <p className="workflow-copy">{d.content.agentGuidance}</p>
+              </details>
+            )}
             {validator && d.status === 'draft' && (
               <div className="actions">
                 <button

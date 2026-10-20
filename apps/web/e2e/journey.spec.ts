@@ -219,7 +219,7 @@ test('logout ends the server session', async ({ page }) => {
 
 test('November workspace connects sources, buyer and content; missing context is asked before drafting @mobile', async ({
   page,
-}) => {
+}, testInfo) => {
   await login(page, 'alice');
   await page.goto('/workspace');
   await expect(page.getByRole('heading', { name: 'Sources métier' })).toBeVisible();
@@ -241,6 +241,10 @@ test('November workspace connects sources, buyer and content; missing context is
   for (const url of ['/buyer', '/content', '/workspace']) {
     await page.goto(url);
     await settle(page);
+    await page.screenshot({
+      path: `test-results/november-${testInfo.project.name}-${url.slice(1)}.png`,
+      fullPage: true,
+    });
     const results = await new AxeBuilder({ page }).analyze();
     expect(
       results.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious'),

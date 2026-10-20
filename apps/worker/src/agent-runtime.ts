@@ -11,6 +11,7 @@ import type {
 } from '@ulysse/domain';
 import {
   AGENT_RULE_ID,
+  AGENT_INSTRUCTIONS_VERSION,
   AGENT_VERSION,
   agentFingerprint,
   agentInputHash,
@@ -221,7 +222,7 @@ export class AgentRuntime {
           this.config.AGENT_SESSION_ID ?? 'simulation',
           this.config.AGENT_MODEL_ID ?? 'simulation',
           HERMES_COMMIT,
-          AGENT_VERSION,
+          AGENT_INSTRUCTIONS_VERSION,
           ctx.correlationId,
         ],
       );
@@ -728,7 +729,7 @@ export class AgentRuntime {
         formulation: {
           provider: run.mode,
           model: this.config.AGENT_MODEL_ID ?? null,
-          promptVersion: AGENT_VERSION,
+          promptVersion: AGENT_INSTRUCTIONS_VERSION,
         },
         inputHash: run.input_hash,
         startedAt: at,
