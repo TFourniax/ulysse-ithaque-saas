@@ -641,3 +641,107 @@ describe('API hygiene', () => {
     assert.ok(limited > 0);
   });
 });
+
+describe('UL-017 workspace authorization and provenance', () => {
+  test('owner imports a source, viewer cannot write, another tenant cannot use it, and CSRF remains required', async () => {
+    const alice = await signedIn('alice');
+    const viewer = await signedIn('vera');
+    const gina = await signedIn('gina');
+    const body = {
+      kind: 'offer',
+      title: 'Offre test UL-017',
+      url: null,
+      text: 'Extrait de test sans donnée client.',
+      observedAt: new Date().toISOString(),
+      origin: 'company',
+    };
+    const headers = { cookie: alice.cookie, 'x-csrf-token': alice.csrf };
+    const noCsrf = await app.inject({
+      method: 'POST',
+      url: '/v1/workspace/sources',
+      headers: { cookie: alice.cookie },
+      payload: body,
+    });
+    assert.equal(noCsrf.statusCode, 403);
+    const forbidden = await app.inject({
+      method: 'POST',
+      url: '/v1/workspace/sources',
+      headers: { cookie: viewer.cookie, 'x-csrf-token': viewer.csrf },
+      payload: body,
+    });
+    assert.equal(forbidden.statusCode, 403);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/v1/workspace/sources',
+      headers,
+      payload: body,
+    });
+    assert.equal(created.statusCode, 201, created.body);
+    const source = created.json<{ id: string; revision: number }>();
+    const brief = {
+      offer: 'Offre',
+      target: 'Cible',
+      phase: 'exploration',
+      objective: 'Comprendre',
+      channel: 'Site',
+      constraints: '',
+      buyerRunId: null,
+    };
+    const request = {
+      kind: 'buyer',
+      brief,
+      sourceIds: [source.id],
+      requestKey: crypto.randomUUID(),
+    };
+    const foreign = await app.inject({
+      method: 'POST',
+      url: '/v1/workflows',
+      headers: { cookie: gina.cookie, 'x-csrf-token': gina.csrf },
+      payload: request,
+    });
+    assert.equal(foreign.statusCode, 404, foreign.body);
+    const run = await app.inject({
+      method: 'POST',
+      url: '/v1/workflows',
+      headers,
+      payload: request,
+    });
+    assert.equal(run.statusCode, 202, run.body);
+    const replay = await app.inject({
+      method: 'POST',
+      url: '/v1/workflows',
+      headers,
+      payload: request,
+    });
+    assert.deepEqual(replay.json(), run.json());
+    const other = await app.inject({
+      method: 'GET',
+      url: '/v1/workflows',
+      headers: { cookie: gina.cookie },
+    });
+    assert.deepEqual(other.json(), []);
+    const invented = await app.inject({
+      method: 'POST',
+      url: '/v1/workspace/sources',
+      headers,
+      payload: { ...body, kind: 'consumer_query', origin: 'simulated' },
+    });
+    assert.equal(invented.statusCode, 422);
+    const future = await app.inject({
+      method: 'POST',
+      url: '/v1/workspace/sources',
+      headers,
+      payload: { ...body, observedAt: new Date(Date.now() + 86400000).toISOString() },
+    });
+    assert.equal(future.statusCode, 422);
+    const retired = await app.inject({
+      method: 'DELETE',
+      url: `/v1/workspace/sources/${source.id}`,
+      headers,
+      payload: { revision: source.revision },
+    });
+    assert.equal(retired.statusCode, 200, retired.body);
+    const runs = await app.inject({ method: 'GET', url: '/v1/workflows', headers });
+    assert.equal(runs.json<Array<{ status: string }>>()[0]?.status, 'obsolete');
+  });
+});

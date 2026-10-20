@@ -1,5 +1,9 @@
 # Produit : exigences de référence
 
+## Périmètre novembre confirmé le 20 octobre 2026
+
+Les trois priorités vendues aux entreprises sont : (1) client synthétique qui comprend l'offre, confronte ses bénéfices et ses preuves au marché et aboutit au crash test de l'unicité ; (2) contenu contextualisé fondé sur l'existant, les demandes observées et les hypothèses issues du diagnostic acheteur, avec cible, phase et progression attendue explicites ; (3) prochaine interaction utile par affaire. Les questions intelligentes précèdent toute conclusion insuffisamment étayée. Le cadrage de la V1 historique ci-dessous est complété par cette instruction ; marketing et client synthétique ne sont plus différés. Voir [parcours de novembre](NOVEMBER-WORKFLOWS.md).
+
 Établi le 6 octobre 2026 à partir du cadrage utilisateur confirmé. La pièce jointe fournie à l'ouverture n'a pas pu être lue. Ce document n'atteste donc pas sa conformité intégrale ; une réconciliation du document est inscrite au backlog. Les détails d'implémentation sont des propositions techniques.
 
 ## Objectif

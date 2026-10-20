@@ -1,5 +1,6 @@
 import {
   Analysis,
+  AgentRun,
   AgentStatus,
   AgentEvent,
   DemoScenarioBody,
@@ -51,6 +52,7 @@ import { PgAgentStore } from '@ulysse/database';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { registerWorkflowRoutes } from './workflows.ts';
 import type { ApiDeps } from '../deps.ts';
 import {
   analysisDto,
@@ -118,6 +120,7 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
   });
 
   const ctxOf = (request: FastifyRequest): Context => contextFor(authOf(request), request.id);
+  registerWorkflowRoutes(app, deps, ctxOf);
   const agentStore = new PgAgentStore(deps.pool);
   app.get(
     '/agent-runs',
@@ -134,6 +137,17 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
           config.NODE_ENV !== 'production',
         runs: await agentStore.list(ctx),
       });
+    },
+  );
+  app.get(
+    '/agent-runs/:id',
+    { schema: { tags: ['analyses'], params: IdParam, response: { 200: AgentRun } } },
+    async (request) => {
+      const ctx = ctxOf(request);
+      requirePermission(ctx, 'analysis:read');
+      const [run] = await agentStore.list(ctx, request.params.id);
+      ensure(run, 'NOT_FOUND');
+      return AgentRun.parse(run);
     },
   );
   app.get(
@@ -205,9 +219,12 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
           connection.config.dataset === 'acme-demo' || connection.config.dataset === 'globex-demo',
           'FORBIDDEN',
         );
+        // Each opportunity has its own fictional corpus; the event is phrased for it.
         const data = commercialFixture(
           connection.config.dataset === 'acme-demo' ? 'acme' : 'globex',
           request.body.scenario,
+          Date.now(),
+          o.externalId,
         );
         await sql.query('SELECT app.demo_update_source($1,$2)', [o.id, JSON.stringify(data)]);
         await tx.appendAudit({

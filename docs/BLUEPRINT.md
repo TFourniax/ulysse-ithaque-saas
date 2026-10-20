@@ -8,7 +8,7 @@ Web → API pour identité/permissions/lectures/décisions ; PostgreSQL pour ét
 
 Une capacité opaque expirante fixe tenant/sujet côté serveur. Chaque lecture et chaque publication recontrôlent permissions, sources actives, versions et fraîcheur. Les appels modèle sont hors transaction PostgreSQL et transitent par une passerelle financière. Les registres/plugins/caches d'Hermes sont isolés par processus et ses fichiers temporaires supprimés ; PostgreSQL demeure l'unique base métier.
 
-Modes : `rules`, `simulated`, `hermes-live`. Activation live explicite, aucune configuration absente ne lance un appel payant, aucune double publication par les règles en mode agentique, aucun repli invisible. Sources et doctrine de ce lot entièrement fictives. Voir [scénarios](SCENARIOS-AGENTIQUES.md) et [validation](VALIDATION-UL-016.md).
+Modes : `rules`, `simulated`, `hermes-stub` (vrai Hermes, modèle simulé, pour la recette sans dépense), `hermes-live`. Le plugin Hermes `ulysse` fournit les outils et réduit le prompt système aux seules instructions versionnées d'Ulysse ; la passerelle le vérifie avant toute transmission (révision ADR-0012). Activation live explicite, aucune configuration absente ne lance un appel payant, aucune double publication par les règles en mode agentique, aucun repli invisible. Sources et doctrine de ce lot entièrement fictives. Voir [scénarios](SCENARIOS-AGENTIQUES.md) et [validation](VALIDATION-UL-016.md).
 
 Statut : architecture cible proposée pour démarrer le développement ; composants livrés décrits dans STATUS. Référence produit : PRODUCT. Les interfaces externes non documentées restent des contrats à obtenir. Aucune intégration partenaire n'est supposée fonctionnelle.
 

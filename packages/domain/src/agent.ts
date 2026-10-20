@@ -7,6 +7,7 @@ import { fingerprintOf } from './hash.ts';
 import type { Opportunity } from './opportunity.ts';
 
 export const AGENT_VERSION = 'ulysse-agent-v1';
+export const AGENT_INSTRUCTIONS_VERSION = 'ulysse-deal-november-v1';
 export const AGENT_RULE_ID = 'ulysse.agent.v1';
 export const AGENT_ACTIONS = [
   'follow_up',
@@ -101,6 +102,7 @@ export function validateAgentResult(input: unknown): AgentResult {
 }
 export function agentInputHash(o: Opportunity, d: Doctrine, c: CompanyContext | null): string {
   return fingerprintOf({
+    instructions: AGENT_INSTRUCTIONS_VERSION,
     tenant: o.tenantId,
     subject: o.id,
     fields: o.fields,
@@ -144,7 +146,8 @@ export interface AgentExecutor {
       runId: string;
       capability: string;
       subjectId: string;
-      mode: 'simulated' | 'hermes-live';
+      mode: 'simulated' | 'hermes-live' | 'hermes-stub';
+      workflow?: 'buyer' | 'content';
       model: string;
       timeoutMs: number;
     }>,

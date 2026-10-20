@@ -216,3 +216,42 @@ test('logout ends the server session', async ({ page }) => {
   const me = await page.request.get('/v1/me');
   expect(me.status()).toBe(401);
 });
+
+test('November workspace connects sources, buyer and content; missing context is asked before drafting @mobile', async ({
+  page,
+}, testInfo) => {
+  await login(page, 'alice');
+  await page.goto('/workspace');
+  await expect(page.getByRole('heading', { name: 'Sources métier' })).toBeVisible();
+  const title = `Source technique ${Date.now()}`;
+  await page.getByLabel('Nature').selectOption('offer');
+  await page.getByLabel('Titre', { exact: true }).fill(title);
+  await page
+    .getByLabel('Extrait, faits et provenance')
+    .fill('Source de test technique : offre avec accompagnement.');
+  await page.getByRole('button', { name: 'Ajouter au corpus' }).click();
+  await expect(page.getByRole('heading', { name: title })).toBeVisible();
+  await page.goto('/content');
+  await page.getByRole('checkbox', { name: new RegExp(title) }).check();
+  await page.getByRole('button', { name: 'Préparer le contenu' }).click();
+  await expect(page.getByRole('heading', { name: 'Pour avancer' }).first()).toBeVisible();
+  await expect(
+    page.getByText('Que doit comprendre, dire ou faire le lecteur après ce contenu ?').first(),
+  ).toBeVisible();
+  for (const url of ['/buyer', '/content', '/workspace']) {
+    await page.goto(url);
+    await settle(page);
+    await page.screenshot({
+      path: `test-results/november-${testInfo.project.name}-${url.slice(1)}.png`,
+      fullPage: true,
+    });
+    const results = await new AxeBuilder({ page }).analyze();
+    expect(
+      results.violations.filter((v) => v.impact === 'critical' || v.impact === 'serious'),
+    ).toEqual([]);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+  }
+  await page.screenshot({ path: 'test-results/november-workspace.png', fullPage: true });
+});
