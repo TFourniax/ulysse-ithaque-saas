@@ -1,5 +1,6 @@
 import {
   Analysis,
+  AgentRun,
   AgentStatus,
   AgentEvent,
   DemoScenarioBody,
@@ -139,6 +140,17 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
     },
   );
   app.get(
+    '/agent-runs/:id',
+    { schema: { tags: ['analyses'], params: IdParam, response: { 200: AgentRun } } },
+    async (request) => {
+      const ctx = ctxOf(request);
+      requirePermission(ctx, 'analysis:read');
+      const [run] = await agentStore.list(ctx, request.params.id);
+      ensure(run, 'NOT_FOUND');
+      return AgentRun.parse(run);
+    },
+  );
+  app.get(
     '/agent-runs/:id/events',
     { schema: { tags: ['analyses'], params: IdParam, response: { 200: z.array(AgentEvent) } } },
     async (request) => {
@@ -207,9 +219,12 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
           connection.config.dataset === 'acme-demo' || connection.config.dataset === 'globex-demo',
           'FORBIDDEN',
         );
+        // Each opportunity has its own fictional corpus; the event is phrased for it.
         const data = commercialFixture(
           connection.config.dataset === 'acme-demo' ? 'acme' : 'globex',
           request.body.scenario,
+          Date.now(),
+          o.externalId,
         );
         await sql.query('SELECT app.demo_update_source($1,$2)', [o.id, JSON.stringify(data)]);
         await tx.appendAudit({

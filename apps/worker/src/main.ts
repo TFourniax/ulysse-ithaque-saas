@@ -27,7 +27,7 @@ if (
   agentSettings.ULYSSE_ANALYSIS_MODE === 'rules'
 )
   throw new Error('Legacy paid wording is disabled: use the bounded hermes-live execution path');
-const agent = new AgentRuntime(pool, agentSettings);
+const agent = new AgentRuntime(pool, agentSettings, undefined, logger);
 if (config.ENABLE_FIXTURE_CONNECTOR)
   connectors.push(new FixtureConnector(new PgFixtureStore(pool)));
 

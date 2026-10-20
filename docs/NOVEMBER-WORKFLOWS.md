@@ -27,6 +27,7 @@ Modes :
 
 - `rules` : les nouveaux parcours signalent que leur moteur n'est pas activé ; les questions de cadrage restent disponibles.
 - `simulated` : le circuit lit les sources et s'abstient explicitement de produire un diagnostic métier. Ce mode ne remplace pas une recette de pertinence.
+- `hermes-stub` : vraie boucle Hermes avec modèle scripté, corpus lu puis abstention explicite pour buyer/content ; les analyses par affaire conservent leur scénario UL-016. Aucun appel fournisseur ni validation de pertinence.
 - `hermes-live` : moteur préparé, activation explicite et budgets UL-016 inchangés ; réservations et usages partagés. La restriction actuelle de configuration à l'environnement de démonstration demeure. L'ouverture aux données d'entreprises réelles relève de la recette fournisseur et du paramétrage des droits, pas d'une modification silencieuse de ces protections.
 
 Toute mise à jour d'une source, du contexte ou de la doctrine rend les résultats concernés périmés et empêche l'approbation. Le retrait d'une source efface les résultats des parcours buyer/content de cette entreprise, y compris les copies d'exécution : invalidation conservatrice pour couvrir les réutilisations. Les recommandations par affaire restent dans leur circuit de retrait existant.
@@ -45,3 +46,5 @@ Vérifier : bénéfice distinct de fonctionnalité ; différence de marché born
 - Déploiement et état du VPS déclaré par Thomas non inspectés dans cette session ; aucun changement sur le serveur.
 
 La branche et la PR contiennent le code déployable et la recette. « Assemblé dans le code » ne signifie pas « déjà activé sur le VPS ».
+
+Compatibilité VPS : la lignée UL-016 `5a7cf27` est réconciliée avec UL-017. Conserver toutes les migrations historiques ; 0013 ajoute le mode stub aux nouveaux parcours sans modifier 0012. Reconstruire l’application ET Hermes/model-stub ensemble. Les outils et le prompt sont contrôlés selon le parcours, les coûts simulés restent séparés des coûts live.

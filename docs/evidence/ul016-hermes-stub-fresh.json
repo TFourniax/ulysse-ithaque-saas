@@ -1,0 +1,124 @@
+{
+  "testedCommit": "c85282c54422a04356c6630d4bda3e7eceddb9f3",
+  "mode": "hermes-stub",
+  "hermesVersion": "e76fb951a1d207c9596032426e7e0eadfb197bea",
+  "instructionsVersion": "ulysse-agent-v1+b7abcb4abab6",
+  "model": "openai/gpt-4.1-mini",
+  "modelCalls": 4,
+  "toolCalls": 7,
+  "costState": "declared",
+  "committedUsd": 0,
+  "opportunityId": "fecb3a80-0f5d-431b-83ed-2099d9fd6cec",
+  "recommendationId": "e500fe8c-5809-481a-a3a3-c01701997fac",
+  "initialRun": "4b7cc55a-6773-47f4-ba76-494805a9e150",
+  "evolvedRun": "1fa48ee3-8c5d-4663-9a4f-0b30b73f4769",
+  "sourceRevision": 2,
+  "events": [
+    {
+      "sequence": 1,
+      "kind": "started",
+      "label": "Hermes démarré avec le modèle simulé",
+      "references": [],
+      "created_at": "2026-10-07T17:50:15.444Z"
+    },
+    {
+      "sequence": 2,
+      "kind": "model",
+      "label": "Appel au modèle simulé (aucun fournisseur)",
+      "references": [],
+      "created_at": "2026-10-07T17:50:21.059Z"
+    },
+    {
+      "sequence": 3,
+      "kind": "tool",
+      "label": "get_opportunity",
+      "references": ["opportunity:fecb3a80-0f5d-431b-83ed-2099d9fd6cec:r2"],
+      "created_at": "2026-10-07T17:50:21.244Z"
+    },
+    {
+      "sequence": 4,
+      "kind": "tool",
+      "label": "get_company_context",
+      "references": ["context:v1"],
+      "created_at": "2026-10-07T17:50:21.255Z"
+    },
+    {
+      "sequence": 5,
+      "kind": "tool",
+      "label": "get_active_doctrine",
+      "references": ["doctrine:0fd7b4ed-bb5d-4833-8a98-90f7c11060ff:v1"],
+      "created_at": "2026-10-07T17:50:21.265Z"
+    },
+    {
+      "sequence": 6,
+      "kind": "tool",
+      "label": "list_related_recommendations",
+      "references": ["recommendation:d010d63a-60f3-4262-9bae-6373aa7c9846:r1"],
+      "created_at": "2026-10-07T17:50:21.279Z"
+    },
+    {
+      "sequence": 7,
+      "kind": "model",
+      "label": "Appel au modèle simulé (aucun fournisseur)",
+      "references": [],
+      "created_at": "2026-10-07T17:50:21.295Z"
+    },
+    {
+      "sequence": 8,
+      "kind": "tool",
+      "label": "list_activities",
+      "references": [
+        "material:fecb3a80-0f5d-431b-83ed-2099d9fd6cec:crm-call:v1:r2",
+        "material:fecb3a80-0f5d-431b-83ed-2099d9fd6cec:workshop-note:v1:r2",
+        "material:fecb3a80-0f5d-431b-83ed-2099d9fd6cec:calendar-email:v1:r2",
+        "material:fecb3a80-0f5d-431b-83ed-2099d9fd6cec:prior-decision:v1:r2",
+        "material:fecb3a80-0f5d-431b-83ed-2099d9fd6cec:new-reply:v1:r2"
+      ],
+      "created_at": "2026-10-07T17:50:21.313Z"
+    },
+    {
+      "sequence": 9,
+      "kind": "tool",
+      "label": "search_documents",
+      "references": [],
+      "created_at": "2026-10-07T17:50:21.324Z"
+    },
+    {
+      "sequence": 10,
+      "kind": "model",
+      "label": "Appel au modèle simulé (aucun fournisseur)",
+      "references": [],
+      "created_at": "2026-10-07T17:50:21.340Z"
+    },
+    {
+      "sequence": 11,
+      "kind": "tool",
+      "label": "read_document_excerpt",
+      "references": ["material:fecb3a80-0f5d-431b-83ed-2099d9fd6cec:offer-sheet:v1:r2"],
+      "created_at": "2026-10-07T17:50:21.359Z"
+    },
+    {
+      "sequence": 12,
+      "kind": "model",
+      "label": "Appel au modèle simulé (aucun fournisseur)",
+      "references": [],
+      "created_at": "2026-10-07T17:50:21.374Z"
+    },
+    {
+      "sequence": 13,
+      "kind": "validating",
+      "label": "Validation des références, versions, doctrine et décisions",
+      "references": [],
+      "created_at": "2026-10-07T17:50:21.953Z"
+    },
+    {
+      "sequence": 14,
+      "kind": "completed",
+      "label": "1 proposition(s) publiée(s)",
+      "references": [],
+      "created_at": "2026-10-07T17:50:21.970Z"
+    }
+  ],
+  "decision": "approved",
+  "externalWrites": 0
+}

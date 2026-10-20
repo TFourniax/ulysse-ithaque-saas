@@ -38,7 +38,7 @@ export type WorkflowRequest = {
     | 'rejected'
     | 'obsolete'
     | 'failed';
-  mode: 'rules' | 'simulated' | 'hermes-live';
+  mode: 'rules' | 'simulated' | 'hermes-live' | 'hermes-stub';
   result: WorkflowResult | null;
   errorCode: string | null;
   createdAt: string;
@@ -64,7 +64,7 @@ function requestFrom(r: Row): WorkflowRequest {
       'obsolete',
       'failed',
     ]),
-    mode: oneOf(r, 'mode', ['rules', 'simulated', 'hermes-live']),
+    mode: oneOf(r, 'mode', ['rules', 'simulated', 'hermes-live', 'hermes-stub']),
     result: json(r, 'result'),
     errorCode: strOrNull(r, 'error_code'),
     createdAt: str(r, 'created_at'),

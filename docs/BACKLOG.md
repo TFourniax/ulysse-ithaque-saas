@@ -52,9 +52,13 @@ Priorité de cette branche : assembler et vérifier UL-017, puis terminer la rec
 | DEBT-011 | Stockage des credentials de connecteurs réels non conçu (`noCredentialStore`) | ouverte — UL-008 |
 | DEBT-012 | Doctrine par entreprise seulement ; pas de doctrine commune sous licence partagée entre entreprises | ouverte — UL-009, Q-011 |
 | DEBT-013 | Pas de traces OpenTelemetry ; corrélation par `correlationId` dans journaux et erreurs | ouverte — avant pilote multi-services |
-| DEBT-014 | Coût inconnu et concurrence des budgets modèle | fermée dans UL-016 pour le pipeline activable : réservation atomique avant transmission ; coût déclaré/estimé/inconnu conservateur, plafonds run/session/mois ; tests PG et passerelle verts au `562cf83`. Ancienne formulation payante désactivée. La qualité et les coûts réels restent à mesurer lors de la recette live. |
+| DEBT-014 | Coût inconnu et concurrence des budgets modèle | fermée dans UL-016 pour le pipeline activable : réservation atomique avant transmission ; coût déclaré/estimé/inconnu conservateur, plafonds run/session/mois ; tentatives échouées bornées à deux par entrée et session, réservation ramenée au montant engagé (transmissions incertaines à leur borne haute). Ancienne formulation payante désactivée. La qualité et les coûts réels restent à mesurer lors de la recette live. |
 | DEBT-015 | Règles d'alerte non déployées (aucun Prometheus/Alertmanager) | ouverte — UL-011b |
 | DEBT-016 | Avertissement de dépréciation Fastify `requestIdLogLabel` (option retirée en Fastify 6) | fermée — `LogController` ; journaux toujours corrélés par `correlationId` |
 | DEBT-017 | Recette navigateur sur Chromium seulement | ouverte — ajouter Firefox/WebKit si le pilote l'exige |
 | DEBT-018 | Coût de la formulation assistée sur des données réelles inconnu | ouverte — UL-010 |
-| DEBT-019 | Captures de `docs/evidence` antérieures à la refonte visuelle | partielle — captures des trois nouveaux parcours UL-016 obtenues en CI, liées dans VALIDATION-UL-016 ; les anciennes captures des autres pages restent à régénérer |
+| DEBT-019 | Captures de `docs/evidence` antérieures à la refonte visuelle | partielle — captures UL-016 versionnées (`08` à `10`, stack Hermes réelle) et artefacts CI ; les anciennes captures `01` à `07` restent à régénérer |
+| DEBT-020 | Hermes épinglé sur un commit de `main`, pas sur une release (la release `v2026.9.24` précède l'installateur scellé et exclut Python 3.14) | ouverte — passer à la première release officielle contenant l'installateur scellé, puis rejouer `hermes-loop` et `hermes-stack` |
+| DEBT-021 | Urgence et limites proposées par l'agent lues dans le résultat du run (rapprochement par titre), non portées par la recommandation | ouverte — si elles deviennent des critères de tri ou d'export, les ajouter au modèle de recommandation par une migration |
+
+UL-017 — complément de compatibilité VPS : réunir la lignée déployée `5a7cf27`, préserver les anciennes migrations et contrôler une mise à niveau depuis cette version avec des analyses et une décision existantes. Responsable : Codex. Voir le journal UL-017 du 20 octobre.

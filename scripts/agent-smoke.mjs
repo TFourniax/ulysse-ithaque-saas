@@ -6,8 +6,20 @@ import AxeBuilder from '@axe-core/playwright';
 const origin = process.env.ULYSSE_SMOKE_ORIGIN ?? 'http://localhost:3000';
 const output = process.env.ULYSSE_EVIDENCE_DIR ?? 'test-results/ul016';
 const resume = process.argv.includes('--resume');
+// simulated (worker-only simulation), hermes-stub (real Hermes, simulated model) or hermes-live.
+const expectedMode = process.env.ULYSSE_EXPECT_MODE ?? 'simulated';
+const MODE_TEXT = {
+  simulated: 'Agentique simulé',
+  'hermes-stub': 'Hermes réel — modèle simulé',
+  'hermes-live': 'Hermes live',
+};
+assert.ok(MODE_TEXT[expectedMode], `unknown ULYSSE_EXPECT_MODE ${expectedMode}`);
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+const browser = await chromium.launch({
+  headless: true,
+  ...(executablePath ? { executablePath } : {}),
+});
 const context = await browser.newContext(resume ? { storageState: `${output}/session.json` } : {});
 const page = await context.newPage();
 async function json(path) {
@@ -15,7 +27,7 @@ async function json(path) {
   assert.equal(response.ok(), true, path);
   return response.json();
 }
-async function until(probe, timeout = 60000) {
+async function until(probe, timeout = 180000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const value = await probe();
@@ -85,9 +97,11 @@ try {
       const s = await json('/v1/agent-runs');
       return s.runs.find((r) => r.subject_id === o.id && r.status === 'completed');
     });
-    assert.equal(initial.mode, 'simulated');
+    assert.equal(initial.mode, expectedMode);
     assert.ok(initial.tool_calls >= 6);
-    assert.equal(initial.model_calls, 0);
+    if (expectedMode === 'simulated') assert.equal(initial.model_calls, 0);
+    // A real Hermes loop decides tool calls over several model turns.
+    else assert.ok(initial.model_calls >= 2);
     const baseline = (await json(`/v1/opportunities/${o.id}`)).recommendations.find(
       (r) => r.status === 'pending',
     );
@@ -110,7 +124,7 @@ try {
     assert.notEqual(detail.recommendation.proposedAction, before);
     assert.ok(detail.evidence.some((e) => e.factType === 'commercial_context'));
     await page.goto(`${origin}/analyses#${evolved.id}`);
-    await page.getByText('Agentique simulé', { exact: false }).first().waitFor();
+    await page.getByText(MODE_TEXT[expectedMode], { exact: false }).first().waitFor();
     await checkAccessibility();
     await page.screenshot({ path: `${output}/analyses.png`, fullPage: true });
     await page.goto(`${origin}/recommendations/${next.id}`);
@@ -128,9 +142,14 @@ try {
       JSON.stringify(
         {
           testedCommit: process.env.GITHUB_SHA ?? null,
-          mode: 'simulated',
+          mode: evolved.mode,
           hermesVersion: evolved.hermes_version,
+          instructionsVersion: evolved.instructions_version,
+          model: evolved.model,
           modelCalls: evolved.model_calls,
+          toolCalls: evolved.tool_calls,
+          costState: evolved.cost_state,
+          committedUsd: evolved.committed_usd,
           opportunityId: o.id,
           recommendationId: next.id,
           initialRun: initial.id,
@@ -144,7 +163,7 @@ try {
         2,
       ),
     );
-    console.log('UL016_SIMULATED_JOURNEY=passed');
+    console.log(`UL016_JOURNEY_${expectedMode.toUpperCase().replace('-', '_')}=passed`);
     console.log('UL016_ACCESSIBILITY_AND_MOBILE=passed');
     const viewer = await browser.newContext();
     const viewerPage = await viewer.newPage();

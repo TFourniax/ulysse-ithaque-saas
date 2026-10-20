@@ -3,10 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { api } from '../api.ts';
-import { Banner, ErrorBanner, Loading, PageHeader } from '../components/ui.tsx';
+import { Banner, ErrorBanner, Loading, PageHeader, StatusBadge } from '../components/ui.tsx';
 import { formatDateTime, formatFactValue } from '../format.ts';
 import { can, useSession } from '../session.tsx';
 import { MODE_LABELS, RunCard, useAgentRuns } from './Analyses.tsx';
+import { OPPORTUNITY_FIELDS } from './Opportunities.tsx';
+
+const FIELD_LABELS = new Map(OPPORTUNITY_FIELDS);
 
 const SCENARIOS: Array<[DemoScenarioName, string]> = [
   ['baseline', 'Opportunité inactive'],
@@ -39,6 +42,20 @@ export function OpportunityDetailPage() {
   if (detail.isPending) return <Loading />;
   if (detail.error) return <ErrorBanner error={detail.error} />;
   const o = detail.data.opportunity;
+  // Runs are listed newest first. A newer ingested revision than the last analysed one means
+  // the worker has not analysed the current sources yet (it never runs in rules mode).
+  const subjectRuns = runs.data?.runs.filter((r) => r.subject_id === id) ?? [];
+  const latest = subjectRuns[0];
+  const analysed = latest?.snapshot.sourceRevision;
+  const awaiting =
+    runs.data !== undefined &&
+    runs.data.configuredMode !== 'rules' &&
+    o.stage === 'open' &&
+    (latest === undefined ||
+      (latest.status !== 'running' &&
+        latest.status !== 'validating' &&
+        typeof analysed === 'number' &&
+        analysed < o.revision));
   return (
     <>
       <PageHeader title={o.name}>
@@ -50,12 +67,18 @@ export function OpportunityDetailPage() {
         Entreprise, sources et doctrine fictives. Mode :{' '}
         {runs.data ? MODE_LABELS[runs.data.configuredMode] : 'chargement'}.
       </Banner>
+      {awaiting && (
+        <Banner kind="info">
+          Analyse en attente : la révision {o.revision} des sources est ingérée et sera analysée en
+          arrière-plan par le worker.
+        </Banner>
+      )}
       <section className="section">
         <h2>Données CRM normalisées</h2>
         <dl>
           {Object.entries(o.fields).map(([key, field]) => (
             <div key={key}>
-              <dt>{key}</dt>
+              <dt>{FIELD_LABELS.get(key) ?? key}</dt>
               <dd>
                 {typeof field === 'string' ? field : formatFactValue(field.state, field.value)}
               </dd>
@@ -135,18 +158,17 @@ export function OpportunityDetailPage() {
         <ul>
           {detail.data.recommendations.map((r) => (
             <li key={r.id}>
-              <Link to={`/recommendations/${r.id}`}>{r.title}</Link> · {r.status} ·{' '}
+              <Link to={`/recommendations/${r.id}`}>{r.title}</Link> ·{' '}
+              <StatusBadge status={r.status} /> ·{' '}
               <Link to={`/analyses#${r.analysisId}`}>Analyse</Link>
             </li>
           ))}
         </ul>
       </section>
       {runs.error && <ErrorBanner error={runs.error} />}
-      {runs.data?.runs
-        .filter((r) => r.subject_id === id)
-        .map((r) => (
-          <RunCard key={r.id} run={r} />
-        ))}
+      {subjectRuns.map((r) => (
+        <RunCard key={r.id} run={r} />
+      ))}
     </>
   );
 }

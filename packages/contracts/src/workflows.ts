@@ -103,7 +103,7 @@ export const WorkflowRun = z.object({
     'obsolete',
     'failed',
   ]),
-  mode: z.enum(['rules', 'simulated', 'hermes-live']),
+  mode: z.enum(['rules', 'simulated', 'hermes-live', 'hermes-stub']),
   result: WorkflowResult.nullable(),
   errorCode: z.string().nullable(),
   createdAt: z.iso.datetime(),

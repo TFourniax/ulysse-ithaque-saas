@@ -11,11 +11,17 @@ Ce document décrit les contrats implémentés, leur autorité et leurs limites.
 | runId | UUID créé et persisté par le worker avant l'appel |
 | subjectId | UUID interne de l'opportunité autorisée, jamais l'identifiant CRM seul |
 | capability | Jeton opaque aléatoire de 32 octets, 43 caractères base64url ; seul son hash est conservé |
-| mode | `hermes-live` dans ce service ; `simulated` reste une exécution explicite du worker |
+| mode | `hermes-live` ou `hermes-stub` (vrai Hermes, modèle simulé) ; `simulated` reste une exécution du worker sans Hermes |
 | model | `openai/gpt-4.1-mini`, fixé par configuration serveur |
 | timeoutMs | 90 000 ms, plafonné par le superviseur ; boucle à 85 s |
 
+Avant chaque demande, le worker lit `GET /health` : `hermesCommit` et `instructionsSha256` doivent égaler le commit épinglé et l'empreinte attendus, sinon le run échoue avec `hermes_version_mismatch` sans appel. Version des instructions enregistrée sur le run : `ulysse-agent-v1+<12 premiers caractères de l'empreinte>`.
+
 Entreprise, périmètre, déclencheur, versions de source/doctrine/contexte, modèle, Hermes, instructions et corrélation sont établis dans PostgreSQL. Hermes n'a aucun champ permettant de choisir une entreprise. La capacité retrouve exclusivement le run actif, non expiré et son entreprise ; chaque outil recontrôle également la source et les versions. Elle expire après 90 s et cesse d'autoriser dès que le run est terminé, révoqué ou interrompu. Elle n'est ni un identifiant utilisateur ni une session navigateur.
+
+## Instructions transmises au modèle
+
+Le plugin Hermes `ulysse` (seul plugin activé, chargé depuis le répertoire temporaire du run) enregistre les sept outils et un middleware officiel `llm_request` qui remplace le prompt générique d'Hermes par `services/hermes/instructions.txt`, seul message système. La date d'analyse figure dans le message utilisateur. La passerelle refuse (`FORBIDDEN:foreign instructions`) toute requête dont le message système n'est pas exactement ces instructions (empreinte sha256, unique message `system`/`developer`, en tête), et (`FORBIDDEN:foreign tools`) toute liste d'outils différente des sept outils Ulysse. Le runner échoue fermé (`ulysse_plugin_not_loaded`) si un autre plugin enregistre hooks, middleware ou commandes.
 
 ## Outils et références
 
@@ -54,8 +60,8 @@ Le worker vérifie schéma, références réellement récupérées, versions, fr
 
 Les événements sont exposés par `GET /v1/agent-runs/{id}/events`, après identité et autorisation Ulysse. Ils contiennent `sequence`, `kind`, `label`, `references`, `created_at`. Ordre croissant par run, quarante événements maximum, labels factuels : démarrage, outil consulté, validation, publication ou abandon. Aucune chaîne de pensée.
 
-Les statuts persistés sont running, validating, completed, abstained, obsolete, budget_reached, failed et interrupted. L'interface les traduit en français. Les erreurs sont des codes minimisés (`error_code` / `correlation_id`), jamais des secrets ou une réponse brute fournisseur. Les erreurs HTTP du superviseur distinguent accès refusé, concurrence, timeout et échec de l'exécution. Un résultat technique n'est pas une proposition.
+Les statuts persistés sont running, validating, completed, abstained, obsolete, budget_reached, failed et interrupted. Deux tentatives `failed`/`interrupted`/`budget_reached` sur une même entrée et une même session arrêtent les relances automatiques ; une nouvelle version des sources relance l'analyse. Codes d'erreur notables : `hermes_version_mismatch`, `agent_reported_error`, `versions_changed`, `history_changed`, `lease_expired`, `source_purged`. À l'arrêt d'un run, la réservation est ramenée au montant engagé, qui contient chaque transmission incertaine à sa borne haute. L'interface les traduit en français. Les erreurs sont des codes minimisés (`error_code` / `correlation_id`), jamais des secrets ou une réponse brute fournisseur. Les erreurs HTTP du superviseur distinguent accès refusé, concurrence, timeout et échec de l'exécution. Un résultat technique n'est pas une proposition.
 
-La passerelle d'inférence privée compatible OpenAI intercepte chaque transmission, retries compris : huit maximum. Elle conserve model_calls, tool_calls, input_tokens, output_tokens, reserved_usd, committed_usd et cost_state. `declared` signifie coût fournisseur déclaré, `estimated` borne calculée à partir des tokens/prix plafonds, `unknown` issue incertaine avec réservation conservée. Un appel ultérieur connu ne masque pas un coût antérieur incertain. Réservation atomique avant le premier appel ; plafonds run/session/mois et concurrence contrôlés dans PostgreSQL.
+La passerelle d'inférence privée compatible OpenAI intercepte chaque transmission, retries compris : huit maximum. En `hermes-live` elle n'appelle qu'OpenRouter (modèle fixe, sans fallback, prix plafonds) ; en `hermes-stub` elle n'appelle que `AGENT_STUB_PROVIDER_URL` (point simulé interne), sans clé, avec une comptabilité séparée du live (`app.reserve_agent_run_budget`, migration 0011). Elle conserve model_calls, tool_calls, input_tokens, output_tokens, reserved_usd, committed_usd et cost_state. `declared` signifie coût fournisseur déclaré, `estimated` borne calculée à partir des tokens/prix plafonds, `unknown` issue incertaine avec réservation conservée. Un appel ultérieur connu ne masque pas un coût antérieur incertain. Réservation atomique avant le premier appel ; plafonds run/session/mois et concurrence contrôlés dans PostgreSQL.
 
 Le navigateur ne connaît ni la capacité, ni le secret Hermes, ni la clé fournisseur. Les traces, résultats et événements sont soumis à la RLS d'entreprise. Les copies ajoutées par l'analyse sont purgées lors de la révocation ; la comptabilité est conservée sans corpus. Les fichiers Hermes temporaires sont supprimés à la fin du sous-processus ; PostgreSQL reste la seule vérité métier.

@@ -38,7 +38,7 @@ const Run = z.object({
   tool_calls: z.number(),
 });
 type Settings = {
-  mode: 'rules' | 'simulated' | 'hermes-live';
+  mode: 'rules' | 'simulated' | 'hermes-live' | 'hermes-stub';
   model: string;
   session: string;
   budgets: { run: number; session: number; month: number };
@@ -158,10 +158,10 @@ export class WorkflowRuntime {
         "UPDATE workflow_requests SET status='running',input_hash=$3,agent_run_id=$4,revision=revision+1 WHERE tenant_id=$1 AND id=$2",
         [ctx.tenantId, id, inputHash, agentId],
       );
-      if (this.settings.mode === 'hermes-live') {
+      if (this.settings.mode !== 'simulated') {
         const b = this.settings.budgets;
         const reserved = await sql.query<{ accepted: boolean }>(
-          'SELECT app.reserve_agent_budget($1,$2,$3,$4) AS accepted',
+          'SELECT app.reserve_agent_run_budget($1,$2,$3,$4) AS accepted',
           [agentId, b.run, b.session, b.month],
         );
         if (!reserved.rows[0]?.accepted) {
@@ -192,7 +192,7 @@ export class WorkflowRuntime {
                 runId: agentId,
                 capability,
                 subjectId: id,
-                mode: 'hermes-live',
+                mode: this.settings.mode === 'hermes-stub' ? 'hermes-stub' : 'hermes-live',
                 model: this.settings.model,
                 timeoutMs: 90000,
                 workflow: kind,

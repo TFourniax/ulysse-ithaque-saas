@@ -10,6 +10,9 @@ Les preuves historiques ci-dessous restent applicables. [VALIDATION-UL-016](VALI
 | Rôles réels, capacités, références interentreprises et coût inconnu | `apps/worker/test/worker.test.ts`, migration 0009 et catalogue des privilèges |
 | Versions modifiées, rejeu, décisions et révocation | Même suite PostgreSQL ; aucune publication du résultat obsolète |
 | Sept outils réels ; registres et homes isolés | `services/hermes/test_integration.py`, vrai AIAgent épinglé, fournisseur simulé |
+| Le modèle ne reçoit que les instructions Ulysse ; outils et prompt étrangers refusés | `test_integration.py` (message système exact), `apps/worker/test/worker.test.ts` (refus sans transmission), `agent.unit.test.ts` (empreinte) |
+| Vrai Hermes dans la stack : outils décidés, publication, interface, redémarrage | Job CI `hermes-stack` et `scripts/agent-smoke.mjs` avec `ULYSSE_EXPECT_MODE=hermes-stub` ; [preuve](evidence/ul016-hermes-stub-fresh.json) |
+| Outillage de validation live et décision humaine | `scripts/live-validation.mjs` ; [répétition](evidence/ul016-live-rehearsal.md) ; exécution live attendue |
 | Sources, ingestion, évolution, preuves, décision, viewer et Globex | `scripts/agent-smoke.mjs` sur l'image complète, captures CI |
 | Mise à niveau et état durable | Matrice fresh/upgrade UL-015 ; `scripts/upgrade-smoke.mjs`, même volume et décision antérieure |
 | Pertinence commerciale et résistance sémantique aux injections | Catalogue [SCENARIOS-AGENTIQUES](SCENARIOS-AGENTIQUES.md), revue de sorties live requise |
