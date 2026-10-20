@@ -4,7 +4,7 @@
 
 Assemblage implémenté sur `codex/ul-017-november-workflows`, [PR draft #5](https://github.com/TFourniax/ulysse-ithaque-saas/pull/5), base UL-016 `0282c19`. Trois parcours assemblés : client synthétique/crash test, contenus contextualisés et prochaine interaction par affaire. Sources métier communes, lien diagnostic → contenu, questions de cadrage, revue, versions et retraits. Voir [guide](NOVEMBER-WORKFLOWS.md), [ADR-0013](adr/0013-november-workflows.md), [journal](journal/2026-10-20-UL-017-november-workflows.md).
 
-Contrôles locaux et première CI applicative verts au `80a1327` (50 tests PostgreSQL, 18 API, 25 worker, navigateur et stack). Finitions et captures en vérification au head de la PR. Le moteur live, la collecte/veille web automatique et le déploiement VPS ne sont pas validés par ce lot à ce stade. Thomas confirme un VPS et une démo existants ; leur état actuel n'a pas été inspecté ici. Ne pas utiliser l'ancien cadrage « recommandations seulement » pour différer les deux autres priorités.
+Contrôles locaux et première CI applicative verts au `80a1327` (50 tests PostgreSQL, 18 API, 25 worker, navigateur et stack). Finitions fonctionnelles vérifiées au `05abe52` : neuf jobs verts, 14 parcours navigateur, captures desktop/mobile relues. Une harmonisation des champs URL/date complète cette version. Le moteur live, la collecte/veille web automatique et le déploiement VPS ne sont pas validés par ce lot à ce stade. Thomas confirme un VPS et une démo existants ; leur état actuel n'a pas été inspecté ici. Ne pas utiliser l'ancien cadrage « recommandations seulement » pour différer les deux autres priorités.
 
 ## UL-016 — analyse agentique fictive
 
