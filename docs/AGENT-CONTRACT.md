@@ -12,10 +12,11 @@ Ce document décrit les contrats implémentés, leur autorité et leurs limites.
 | subjectId | UUID interne de l'opportunité autorisée, jamais l'identifiant CRM seul |
 | capability | Jeton opaque aléatoire de 32 octets, 43 caractères base64url ; seul son hash est conservé |
 | mode | `hermes-live` ou `hermes-stub` (vrai Hermes, modèle simulé) ; `simulated` reste une exécution du worker sans Hermes |
-| model | Liste fermée `openai/gpt-4.1-mini` ou `anthropic/claude-haiku-5.5`, configuration serveur ; Haiku exige le profil Europe ZDR |
+| model | Identifiant du profil serveur validé ; aucun modèle/fournisseur choisi par une source ou par Hermes |
+| modelSettings | maxOutputTokens et reasoning normalisés, bornés côté worker et superviseur ; aucun secret/URL |
 | timeoutMs | 90 000 ms, plafonné par le superviseur ; boucle à 85 s |
 
-Avant chaque demande, le worker lit `GET /health` : `hermesCommit` et `instructionsSha256` doivent égaler le commit épinglé et l'empreinte attendus, sinon le run échoue avec `hermes_version_mismatch` sans appel. Version des instructions enregistrée sur le run : `ulysse-agent-v1+<12 premiers caractères de l'empreinte>`.
+Avant chaque demande, le worker lit `GET /health` : `executionContract` doit être `ulysse-execution-v2` ; `hermesCommit` et `instructionsSha256` doivent égaler le commit épinglé et l'empreinte attendus, sinon le run échoue avec `hermes_version_mismatch` sans appel. Version des instructions enregistrée sur le run : `ulysse-agent-v1+<12 premiers caractères de l'empreinte>`.
 
 Entreprise, périmètre, déclencheur, versions de source/doctrine/contexte, modèle, Hermes, instructions et corrélation sont établis dans PostgreSQL. Hermes n'a aucun champ permettant de choisir une entreprise. La capacité retrouve exclusivement le run actif, non expiré et son entreprise ; chaque outil recontrôle également la source et les versions. Elle expire après 90 s et cesse d'autoriser dès que le run est terminé, révoqué ou interrompu. Elle n'est ni un identifiant utilisateur ni une session navigateur.
 
@@ -69,3 +70,7 @@ Le navigateur ne connaît ni la capacité, ni le secret Hermes, ni la clé fourn
 ## Profil européen UL-018
 
 `AGENT_PROVIDER_ROUTE=openrouter-eu-zdr` impose le domaine européen, un endpoint régional nommé, ZDR, non-collecte, absence de fallback/redirection et tarifs régionaux bornés. Haiku 5.5 exige ce profil ; GPT‑4.1 mini peut aussi le sélectionner. Paramètres, conditions de compte et limites de confidentialité : [ADR-0014](adr/0014-europe-zdr-model.md). Le profil global historique reste distinct et ne bénéficie pas de ces garanties.
+
+## Profils déclaratifs UL-019
+
+Le profil modèle, ses paramètres et prix ainsi que son empreinte sont enregistrés dans le snapshot du run. Le gateway refuse toute dérive, même sur le même modèle, avant une nouvelle transmission. Le raisonnement GLM reste dans la boucle temporaire et sa consommation est incluse dans le coût de sortie ; il n'est pas ajouté aux traces métier. Les messages restent texte : déclarer une capacité image dans le profil n'autorise pas les médias. [Guide](MODEL-PROFILES.md), [ADR-0015](adr/0015-declarative-model-profiles.md).

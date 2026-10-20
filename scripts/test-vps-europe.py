@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name("ulysse-vps-europe.sh").read_text()
 TRANSFORM = re.search(r'python3 - "\$release" "\$tag" <<\'PY\'\n(.*?)\nPY', SCRIPT, re.S).group(1)
+MODEL_TRANSFORM = re.search(r'<<\'PYMODEL\'\n(.*?)\nPYMODEL', SCRIPT, re.S).group(1)
 
 
 class DeploymentConfig(unittest.TestCase):
@@ -48,7 +49,7 @@ class DeploymentConfig(unittest.TestCase):
         for name in ("hermes", "model-stub"):
             expected["services"][name]["image"] = "ulysse-hermes:test-tag"
         expected["services"]["worker"]["environment"].update({
-            "AGENT_MODEL_ID": "anthropic/claude-haiku-5.5", "AGENT_PROVIDER_ROUTE": "openrouter-eu-zdr", "AGENT_STUB_PROVIDER_URL": ""})
+            "AGENT_MODEL_ID": "z-ai/glm-5.3-flash", "AGENT_MODEL_PROFILE_JSON": "", "AGENT_PROVIDER_ROUTE": "openrouter-eu-zdr", "AGENT_STUB_PROVIDER_URL": ""})
         self.assertEqual(candidate, expected)
         for name in ("api", "worker"):
             self.assertEqual(rollback["services"][name]["environment"]["ULYSSE_ANALYSIS_MODE"], "rules")
@@ -62,6 +63,40 @@ class DeploymentConfig(unittest.TestCase):
     def test_runtime_drift_stops_the_deployment(self):
         with self.assertRaisesRegex(SystemExit, "ecart de configuration"):
             self.transform(drift=True)
+
+    def test_builtin_and_custom_profile_switches_preserve_session_credentials_and_all_other_services(self):
+        _, original, _ = self.transform()
+        original['services']['worker']['environment']['AGENT_MODEL_PROFILE_JSON'] = 'previous-profile'
+        for custom in (False, True):
+            with self.subTest(custom=custom), tempfile.TemporaryDirectory() as temp:
+                d = Path(temp)
+                (d/'rollback.json').write_text(json.dumps(original))
+                selector = 'openai/gpt-4.1-mini'
+                profile = {'model': 'example/future-model', 'version': 1}
+                if custom:
+                    path = d/'profile.json'
+                    path.write_text(json.dumps(profile))
+                    selector = str(path)
+                with patch.object(sys, 'argv', ['-', str(d), selector]):
+                    exec(compile(MODEL_TRANSFORM, 'model-config', 'exec'), {})
+                candidate = json.loads((d/'deploy.json').read_text())
+                expected = copy.deepcopy(original)
+                expected['services']['worker']['environment'].update({
+                    'AGENT_MODEL_ID': profile['model'] if custom else selector,
+                    'AGENT_MODEL_PROFILE_JSON': json.dumps(profile, separators=(',', ':')) if custom else ''})
+                self.assertEqual(candidate, expected)
+                self.assertEqual(json.loads((d/'rollback.json').read_text()), original)
+
+    def test_invalid_profile_file_stops_before_candidate_write(self):
+        _, original, _ = self.transform()
+        with tempfile.TemporaryDirectory() as temp:
+            d = Path(temp)
+            (d/'rollback.json').write_text(json.dumps(original))
+            path = d/'profile.json'
+            path.write_text('not-json')
+            with patch.object(sys, 'argv', ['-', str(d), str(path)]), self.assertRaisesRegex(SystemExit, 'profil JSON invalide'):
+                exec(compile(MODEL_TRANSFORM, 'model-config', 'exec'), {})
+            self.assertFalse((d/'deploy.json').exists())
 
 
 if __name__ == "__main__":

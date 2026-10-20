@@ -11,12 +11,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from uuid import uuid4
 
-from server import isolated_run
+from server import isolated_run, model_settings
 
 
 class Endpoint(BaseHTTPRequestHandler):
     calls = []
     systems = []
+    replayed_reasoning = []
     lock = threading.Lock()
 
     def log_message(self, *_args):
@@ -39,10 +40,19 @@ class Endpoint(BaseHTTPRequestHandler):
             workflow = "get_workflow_context" in names
             with self.lock:
                 self.systems.append([m.get("content") for m in body["messages"] if m.get("role") in ("system", "developer")])
+                if body.get("model") == "z-ai/glm-5.3-flash" and any(m.get("role") == "tool" for m in body["messages"]):
+                    self.replayed_reasoning.append(any(
+                        m.get("role") == "assistant" and m.get("tool_calls") and
+                        (m.get("reasoning") == "fixture-reasoning" or m.get("reasoning_content") == "fixture-reasoning" or
+                         any(r.get("text") == "fixture-reasoning" for r in m.get("reasoning_details", [])))
+                        for m in body["messages"]))
             print(json.dumps({"path": self.path, "model": body.get("model"), "tools": names, "roles": [m.get("role") for m in body.get("messages", [])]}), flush=True)
             if not any(m.get("role") == "tool" for m in body["messages"]):
                 message = {"role": "assistant", "content": None, "tool_calls": [{"id": "call_fixture", "type": "function", "function": {"name": "get_workflow_context" if workflow else "get_opportunity", "arguments": json.dumps({} if workflow else {"subjectId": str(uuid4())})}}]}
                 finish = "tool_calls"
+                if body.get("model") == "z-ai/glm-5.3-flash":
+                    message["reasoning"] = "fixture-reasoning"
+                    message["reasoning_details"] = [{"type": "reasoning.text", "text": "fixture-reasoning", "format": "unknown", "index": 0}]
             else:
                 message = {"role": "assistant", "content": json.dumps({"version": "november-v1" if workflow else "ulysse-agent-v1", "outcome": "abstained", "summary": f"Simulation Hermes pour {token[-3:]}", "proposals": []})}
                 finish = "stop"
@@ -62,6 +72,19 @@ class Endpoint(BaseHTTPRequestHandler):
             raise AssertionError(f"unexpected tools: {names}")
 
 
+class ModelSettings(unittest.TestCase):
+    def test_settings_are_model_independent_and_bounded(self):
+        request = {"model": "example/next-model", "modelSettings": {"maxOutputTokens": 8192, "reasoning": "low"}}
+        self.assertEqual(model_settings(request), request["modelSettings"])
+        for settings in ({"maxOutputTokens": 999999, "reasoning": "low"},
+                         {"maxOutputTokens": True, "reasoning": "low"},
+                         {"maxOutputTokens": 3000, "reasoning": "invalid"},
+                         {"maxOutputTokens": 3000, "reasoning": "low", "base_url": "https://example.com"}):
+            with self.assertRaises(ValueError): model_settings({**request, "modelSettings": settings})
+        for model in ("https://example.com/model", "@preset/test", "x\n/y", None):
+            with self.assertRaises(ValueError): model_settings({**request, "model": model})
+
+
 class FinalResponse(unittest.TestCase):
     def test_only_a_surrounding_code_fence_is_tolerated(self):
         from runner import parse_final
@@ -77,6 +100,7 @@ class HermesIntegration(unittest.TestCase):
     def setUp(self):
         Endpoint.calls = []
         Endpoint.systems = []
+        Endpoint.replayed_reasoning = []
 
     def test_workflows_select_their_own_tools(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
@@ -84,13 +108,15 @@ class HermesIntegration(unittest.TestCase):
         os.environ["ULYSSE_GATEWAY_URL"] = f"http://127.0.0.1:{server.server_port}/agent"
         try:
             for kind in ("buyer", "content"):
-                request = {"runId": str(uuid4()), "subjectId": str(uuid4()), "capability": "w" * 43, "mode": "hermes-live", "model": "anthropic/claude-haiku-5.5", "timeoutMs": 30000, "workflow": kind}
+                request = {"runId": str(uuid4()), "subjectId": str(uuid4()), "capability": "w" * 43, "mode": "hermes-live", "model": "z-ai/glm-5.3-flash", "modelSettings": {"maxOutputTokens": 8192, "reasoning": "low"}, "timeoutMs": 30000, "workflow": kind}
                 result = isolated_run(request)
                 self.assertEqual(result["version"], "november-v1")
                 self.assertEqual(result["outcome"], "abstained")
                 instructions = Path(__file__).with_name("workflows.txt").read_text(encoding="utf-8")
                 self.assertTrue(Endpoint.systems)
                 self.assertTrue(all(system == [instructions] for system in Endpoint.systems))
+            self.assertTrue(Endpoint.replayed_reasoning)
+            self.assertTrue(all(Endpoint.replayed_reasoning), "Hermes must preserve reasoning across tool calls")
         finally:
             server.shutdown()
             server.server_close()
@@ -102,13 +128,14 @@ class HermesIntegration(unittest.TestCase):
         thread.start()
         os.environ["ULYSSE_GATEWAY_URL"] = f"http://127.0.0.1:{server.server_port}/agent"
         requests = [{"runId": str(uuid4()), "subjectId": str(uuid4()), "capability": token, "mode": "hermes-live", "model": model, "timeoutMs": 30000} for token, model in [("a" * 43, "openai/gpt-4.1-mini"), ("b" * 43, "anthropic/claude-haiku-5.5")]]
+        requests.append({"runId": str(uuid4()), "subjectId": str(uuid4()), "capability": "c" * 43, "mode": "hermes-live", "model": "example/next-model", "modelSettings": {"maxOutputTokens": 8192, "reasoning": "low"}, "timeoutMs": 30000})
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                 results = list(executor.map(isolated_run, requests))
-            self.assertEqual([r["outcome"] for r in results], ["abstained", "abstained"])
+            self.assertEqual([r["outcome"] for r in results], ["abstained"] * 3)
             self.assertIn("aaa", results[0]["summary"])
             self.assertIn("bbb", results[1]["summary"])
-            for token in ["a" * 43, "b" * 43]:
+            for token in ["a" * 43, "b" * 43, "c" * 43]:
                 calls = [path for path, authorization in Endpoint.calls if authorization == f"Bearer {token}"]
                 self.assertIn("/agent/tools/get_opportunity", calls)
                 self.assertGreaterEqual(calls.count("/agent/v1/chat/completions"), 2)

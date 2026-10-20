@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ulysse demo only. Run as Linux user ulysse (UID 10002), never as root.
-# audit | deploy <40-character commit> | status | model haiku|gpt41 | rollback
+# audit | deploy <40-character commit> | status | model MODEL_ID|/chemin/profil.json | rollback
 # This script never runs a global docker command, down, prune, seed or reset.
 set -Eeuo pipefail
 umask 077
@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-20.eu1
+ULYSSE_SCRIPT_VERSION=2026-10-20.models1
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -48,6 +48,13 @@ audit() {
   local worker; worker=$(container_id worker)
   [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'un unique worker Ulysse actif est requis'
   ud exec "$worker" node -e 'console.log("mode_worker="+process.env.ULYSSE_ANALYSIS_MODE); console.log("cle_fournisseur_presente="+Boolean(process.env.OPENROUTER_API_KEY)); for(const k of ["AGENT_MODEL_ID","AGENT_PROVIDER_ROUTE","AGENT_RUN_BUDGET_USD","AGENT_SESSION_BUDGET_USD","AGENT_MONTH_BUDGET_USD"]) console.log(k+"="+(process.env[k]||""));'
+  ud exec "$worker" node --input-type=module -e '
+    try {
+      const {agentProvider}=await import("./apps/worker/dist/src/agent-provider.js");
+      const p=agentProvider(process.env.AGENT_MODEL_ID,process.env.AGENT_PROVIDER_ROUTE||"openrouter",process.env.AGENT_MODEL_PROFILE_JSON||undefined);
+      if(p.profile) console.log("profil="+p.profile.id+" | empreinte="+p.profileHash+" | sortie_max="+p.profile.generation.maxOutputTokens+" | raisonnement="+p.profile.generation.reasoning);
+    } catch { console.log("profil_declaratif=indisponible"); }
+  '
   if [[ -f "$ULYSSE_ACTIVE" ]]; then say "Configuration active : $(cat "$ULYSSE_ACTIVE")"; fi
 }
 check_health() {
@@ -55,6 +62,16 @@ check_health() {
   [[ -n "$api" && -n "$worker" ]] || die 'API ou worker absent'
   ud exec "$api" node -e 'fetch("http://127.0.0.1:3000/health/ready").then(async r=>{console.log("API",r.status,await r.text());if(!r.ok)process.exit(1)},()=>process.exit(1))'
   ud exec "$worker" node -e 'fetch("http://127.0.0.1:3001/health/ready").then(async r=>{console.log("WORKER",r.status,await r.text());if(!r.ok)process.exit(1)},()=>process.exit(1))'
+  ud exec "$worker" node --input-type=module -e '
+    const m=await import("./apps/worker/dist/src/agent-runtime.js");
+    if(m.EXECUTION_CONTRACT && ["hermes-live","hermes-stub"].includes(process.env.ULYSSE_ANALYSIS_MODE)) {
+      const response=await fetch("http://hermes:8090/health",{signal:AbortSignal.timeout(5000)});
+      const h=await response.json();
+      if(!response.ok || h.executionContract!==m.EXECUTION_CONTRACT || h.hermesCommit!==m.HERMES_COMMIT || h.instructionsSha256!==m.AGENT_INSTRUCTIONS_SHA256 || h.workflowInstructionsSha256!==m.WORKFLOW_INSTRUCTIONS_SHA256) throw new Error("Contrat Hermes incompatible");
+      console.log("HERMES contrat et instructions compatibles");
+    }
+  '
+
 }
 ULYSSE_RESTORE_CONFIG=''
 ULYSSE_STOPPED=0
@@ -81,7 +98,12 @@ case "$action" in
   audit) audit; exit 0 ;;
   status) audit; check_health; exit 0 ;;
   deploy|model|rollback) ;;
-  *) die 'actions : audit | deploy COMMIT | status | model haiku|gpt41 | rollback' ;;
+  models)
+    worker=$(container_id worker)
+    [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
+    ud exec "$worker" node --input-type=module -e 'import {modelProfiles} from "./apps/worker/dist/src/agent-provider.js"; console.log(JSON.stringify(modelProfiles(),null,2))'
+    exit 0 ;;
+  *) die 'actions : audit | deploy COMMIT | status | model MODEL_ID|/chemin/profil.json | rollback' ;;
 esac
 mkdir -p "$ULYSSE_RELEASES"
 exec 9>"$ULYSSE_PRIVATE/november-deploy.lock"
@@ -109,31 +131,58 @@ preflight() {
     try {
       const c=agentConfig();
       if(c.ULYSSE_ANALYSIS_MODE!=="hermes-live" || c.AGENT_PROVIDER_ROUTE!=="openrouter-eu-zdr") throw new Error("Profil Europe live requis");
-      console.log(JSON.stringify(await checkEuropeanProvider(c.AGENT_MODEL_ID,c.OPENROUTER_API_KEY)));
+      console.log(JSON.stringify(await checkEuropeanProvider(c.AGENT_MODEL_ID,c.OPENROUTER_API_KEY,fetch,c.AGENT_MODEL_PROFILE_JSON)));
       console.log("Catalogue et endpoint ZDR verifies ; inference live et qualite restant a tester.");
     } catch(e) { console.error(e.message); process.exit(1); }
   '
 }
 if [[ "$action" == model ]]; then
-  case "${2:-}" in
+  target_model=${2:-}
+  case "$target_model" in
+    glm) target_model=z-ai/glm-5.3-flash ;;
     haiku) target_model=anthropic/claude-haiku-5.5 ;;
     gpt41) target_model=openai/gpt-4.1-mini ;;
-    *) die 'modele : haiku ou gpt41 (les deux en Europe + ZDR)' ;;
+    mistral) target_model=mistralai/mistral-small-2603 ;;
+    '') die 'fournir un identifiant de modele ou le chemin absolu de son profil JSON' ;;
   esac
-  [[ -f "$ULYSSE_ACTIVE" ]] || die 'installer UL-018 avant de changer de modele'
+  [[ -f "$ULYSSE_ACTIVE" ]] || die 'installer UL-019 avant de changer de modele'
   cfg=$(cat "$ULYSSE_ACTIVE")
   [[ "$cfg" == "$ULYSSE_RELEASES/"* && -f "$cfg" ]] || die 'configuration active invalide'
   release=$(mktemp -d "$ULYSSE_RELEASES/model-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
   current_config > "$release/rollback.json"
+  worker=$(container_id worker)
+  [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
+  ud inspect "$worker" > "$release/worker.inspect.json"
+  python3 - "$release" <<'PYDRIFT'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1]); expected=json.loads((p/'rollback.json').read_text())['services']['worker'].get('environment',{})
+running=json.loads((p/'worker.inspect.json').read_text())[0]
+actual=dict(x.split('=',1) for x in running['Config']['Env'])
+for k,v in expected.items():
+    if str(v).replace('$$','$') != actual.get(k): raise SystemExit(f'ARRET : ecart de configuration worker, variable {k}.')
+PYDRIFT
   cp "$ULYSSE_ACTIVE" "$release/previous-active.txt"
   printf '%s\n' api worker > "$release/services.txt"
   python3 - "$release" "$target_model" <<'PYMODEL'
 import json,sys,pathlib,copy
 p=pathlib.Path(sys.argv[1]); c=json.loads((p/'rollback.json').read_text())
 e=c['services']['worker']['environment']
-if e.get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr': raise SystemExit('ARRET : deploy UL-018 Europe requis avant model.')
+if e.get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr': raise SystemExit('ARRET : deploy Europe requis avant model.')
 if c['services']['api']['environment'].get('ULYSSE_ANALYSIS_MODE')!='hermes-live' or e.get('ULYSSE_ANALYSIS_MODE')!='hermes-live': raise SystemExit('ARRET : mode live Europe requis.')
-e['AGENT_MODEL_ID']=sys.argv[2]
+selector=sys.argv[2]
+if selector.startswith('/'):
+    profile_path=pathlib.Path(selector)
+    if not profile_path.is_file() or profile_path.stat().st_size>16384: raise SystemExit('ARRET : fichier de profil absent ou trop volumineux.')
+    try: profile=json.loads(profile_path.read_text())
+    except (ValueError, UnicodeError): raise SystemExit('ARRET : profil JSON invalide.') from None
+    if not isinstance(profile,dict) or not isinstance(profile.get('model'),str): raise SystemExit('ARRET : profil sans identifiant modele.')
+    e['AGENT_MODEL_ID']=profile['model']
+    # Compose interpolates dollar signs in values. Preserve them exactly; the runtime schema
+    # then rejects unknown fields, URLs, credentials, plugins and out-of-bound settings.
+    e['AGENT_MODEL_PROFILE_JSON']=json.dumps(profile,separators=(',',':')).replace('$','$$')
+else:
+    e['AGENT_MODEL_ID']=selector
+    e['AGENT_MODEL_PROFILE_JSON']=''
 (p/'deploy.json').write_text(json.dumps(c,indent=2))
 PYMODEL
   preflight "$release/deploy.json"
@@ -154,9 +203,9 @@ revision=${2:-}
 git -C "$ULYSSE_REPO" diff --quiet && git -C "$ULYSSE_REPO" diff --cached --quiet || die 'correctifs locaux suivis par Git : les conserver et les examiner avant la mise a jour'
 # Mettre aussi a jour la reference distante dans les clones mono-branche.
 git -C "$ULYSSE_REPO" fetch origin \
-  refs/heads/codex/ul-018-europe-zdr:refs/remotes/origin/codex/ul-018-europe-zdr
+  refs/heads/codex/ul-019-model-profiles:refs/remotes/origin/codex/ul-019-model-profiles
 git -C "$ULYSSE_REPO" cat-file -e "$revision^{commit}"
-git -C "$ULYSSE_REPO" merge-base --is-ancestor "$revision" origin/codex/ul-018-europe-zdr || die 'commit hors de la branche Europe UL-018'
+git -C "$ULYSSE_REPO" merge-base --is-ancestor "$revision" origin/codex/ul-019-model-profiles || die 'commit hors de la branche profils UL-019'
 git -C "$ULYSSE_REPO" merge-base --is-ancestor HEAD "$revision" || die 'le depot VPS contient une lignee qui manque dans la version demandee'
 release=$(mktemp -d "$ULYSSE_RELEASES/${revision:0:7}-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
 current_config > "$release/before.json"
@@ -178,7 +227,7 @@ for service in api worker hermes model-stub; do
   fi
 done
 printf '%s\n' "${ULYSSE_SERVICES[@]}" > "$release/services.txt"
-tag="ul018-${revision:0:12}-$(date -u +%s)"
+tag="ul019-${revision:0:12}-$(date -u +%s)"
 python3 - "$release" "$tag" <<'PY'
 import json,sys,pathlib,copy
 d=pathlib.Path(sys.argv[1]); c=json.loads((d/'before.json').read_text()); old=copy.deepcopy(c)
@@ -203,7 +252,8 @@ for service in ('hermes','model-stub'):
 e=c['services']['worker']['environment']
 if api_mode!='hermes-live' or worker_mode!='hermes-live' or len(e.get('OPENROUTER_API_KEY','') or '')<16:
     raise SystemExit('ARRET : cette mise a niveau exige le mode live et la cle deja actifs.')
-e['AGENT_MODEL_ID']='anthropic/claude-haiku-5.5'
+e['AGENT_MODEL_ID']='z-ai/glm-5.3-flash'
+e['AGENT_MODEL_PROFILE_JSON']=''
 e['AGENT_PROVIDER_ROUTE']='openrouter-eu-zdr'
 e['AGENT_STUB_PROVIDER_URL']=''
 # On a failed cutover, restore availability without resuming global inference.
@@ -251,4 +301,4 @@ ULYSSE_STOPPED=0
 say "Version installee : $revision"
 say "Sauvegarde et retour arriere : $release"
 say 'Sauvegarde chiffree et catalogue lisible ; cela ne remplace pas un exercice complet de restauration.'
-say 'Haiku 5.5 actif : Europe + ZDR. Budgets/session/cle conserves. Tester les trois parcours sur https://demo-ulysse.paitite.com.'
+say 'GLM 5.3 Flash actif : Europe + ZDR. Budgets/session/cle conserves. Tester les trois parcours sur https://demo-ulysse.paitite.com.'

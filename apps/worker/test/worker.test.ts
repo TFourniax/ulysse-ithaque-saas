@@ -40,6 +40,7 @@ import {
 import { createLogger, createMetrics } from '@ulysse/observability';
 import { loadWorkerConfig } from '../src/config.ts';
 import { AgentRuntime, agentConfig, MAX_ATTEMPTS, TOOL_NAMES } from '../src/agent-runtime.ts';
+import { agentProvider } from '../src/agent-provider.ts';
 import type { FaultHooks } from '../src/runtime.ts';
 import { noCredentialStore, WorkerRuntime } from '../src/runtime.ts';
 
@@ -567,6 +568,94 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     assert.equal(run.model, 'anthropic/claude-haiku-5.5');
     assert.equal(run.cost_state, 'unknown');
     assert.ok(Number(run.committed_usd) > 0.000165);
+  });
+
+  test('GLM reserves reasoning tokens, blocks profile drift and media before transmission, and records its profile', async (t) => {
+    const w = await world('agent-glm-profile');
+    const provider = agentProvider('z-ai/glm-5.3-flash', 'openrouter-eu-zdr');
+    let calls = 0;
+    t.mock.method(globalThis, 'fetch', async (url: unknown, init: RequestInit) => {
+      calls++;
+      assert.equal(url, provider.url);
+      assert.equal(init.redirect, 'error');
+      assert.equal(typeof init.body, 'string');
+      if (typeof init.body !== 'string') throw new Error('Expected JSON body');
+      const sent = JSON.parse(init.body) as Record<string, unknown>;
+      assert.equal(sent.model, provider.profile.model);
+      assert.equal(sent.max_tokens, 8192);
+      assert.equal(sent.max_completion_tokens, undefined);
+      assert.deepEqual(sent.reasoning, { enabled: true, effort: 'low' });
+      assert.deepEqual(sent.provider, provider.provider);
+      assert.equal(sent.plugins, undefined);
+      return Response.json({
+        usage: {
+          prompt_tokens: 1000,
+          completion_tokens: 2000,
+          completion_tokens_details: { reasoning_tokens: 1800 },
+        },
+      });
+    });
+    const runner: AgentRuntime = new AgentRuntime(
+      workerPool,
+      {
+        ...liveTestConfig(),
+        AGENT_MODEL_ID: provider.profile.model,
+        AGENT_PROVIDER_ROUTE: 'openrouter-eu-zdr',
+      },
+      {
+        execute: async (request) => {
+          assert.deepEqual(request.modelSettings, provider.executionSettings);
+          await runner.tool(request.capability, 'get_opportunity', { subjectId: w.o.id });
+          await runner.tool(request.capability, 'get_active_doctrine', {});
+          await runner.tool(request.capability, 'get_company_context', {});
+          const body = {
+            ...gatewayBody('Fixture'),
+            reasoning: { enabled: false },
+            max_tokens: 999999,
+            provider: { zdr: false },
+          };
+          const profile = {
+            ...provider.profile,
+            generation: { ...provider.profile.generation, temperature: 0.5 },
+          };
+          const drift = new AgentRuntime(workerPool, {
+            ...runner.config,
+            AGENT_MODEL_PROFILE_JSON: JSON.stringify(profile),
+          });
+          await assert.rejects(drift.inference(request.capability, body), /model limit/);
+          await assert.rejects(
+            runner.inference(request.capability, {
+              ...body,
+              messages: [
+                ...body.messages,
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'image_url', image_url: { url: 'https://example.com/private.png' } },
+                  ],
+                },
+              ],
+            }),
+            /unsupported_content_modality/,
+          );
+          assert.equal(calls, 0);
+          await runner.inference(request.capability, body);
+          const run = (await runner.store.list(w.owner))[0]!;
+          // All completion tokens, including 1800 reasoning tokens, are charged once.
+          assert.equal(Number(run.committed_usd), 0.00148);
+          assert.equal(run.cost_state, 'estimated');
+          const snapshot = z
+            .object({ modelProfileHash: z.string(), modelProfile: z.unknown() })
+            .parse(run.snapshot);
+          assert.equal(snapshot.modelProfileHash, provider.profileHash);
+          assert.deepEqual(snapshot.modelProfile, provider.profile);
+          return abstention;
+        },
+      },
+    );
+    await runner.run(w.ctx, w.o.id, 'test');
+    assert.equal(calls, 1);
+    assert.equal((await runner.store.list(w.owner))[0]?.status, 'abstained');
   });
 
   test('failed attempts on unchanged input are bounded and release their unused reservation', async () => {

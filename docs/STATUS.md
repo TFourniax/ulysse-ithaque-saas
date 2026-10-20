@@ -1,5 +1,9 @@
 # État actuel
 
+## UL-019 — GLM et profils déclaratifs
+
+Thomas choisit GLM-5.3-Flash le 20 octobre. Code sur `codex/ul-019-model-profiles`, base UL-018 : profils JSON validés, paramètres/tarifs/capacités séparés du moteur, import de profil administrateur sans rebuild, contrat Hermes normalisé et empreinte par run. Le script conserve la configuration active UL-017/018 et cible le seul Docker rootless Ulysse. [Procédure](MODEL-PROFILES.md), [ADR-0015](adr/0015-declarative-model-profiles.md), [journal](journal/2026-10-20-UL-019-model-profiles.md). **Partial** : `npm run verify`, 12 tests unitaires worker et 7 tests Python ciblés verts localement ; CI stack attendue, inférence GLM, qualité Paitite et compte Business à valider sur le VPS. Aucun déploiement ici. Le harness reste texte ; capacités multimodales décrites, médias non activés.
+
 ## UL-018 — candidat économique Europe + ZDR
 
 Thomas confirme le 20 octobre la démo UL-017 en `hermes-live` avec GPT‑4.1 mini, clé présente et services sains. UL-018 prépare Haiku 5.5 sur OpenRouter Europe / Bedrock Irlande : ZDR et non-collecte forcés, prix régionaux bornés, précontrôle sans prompt, modèles bornés worker/Hermes et script ciblé rootless Ulysse. [Procédure](MODEL-EU.md), [ADR-0014](adr/0014-europe-zdr-model.md), [journal](journal/2026-10-20-UL-018-europe-zdr.md). **Partial** : accès Business, réglages de compte, inférence et pertinence métier à valider. Aucun déploiement VPS effectué depuis cet environnement.

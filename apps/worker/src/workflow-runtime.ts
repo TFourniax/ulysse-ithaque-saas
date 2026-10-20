@@ -41,6 +41,9 @@ type Settings = {
   mode: 'rules' | 'simulated' | 'hermes-live' | 'hermes-stub';
   model: string;
   providerRoute: string;
+  modelProfile?: object;
+  modelProfileHash?: string;
+  modelSettings?: Parameters<AgentExecutor['execute']>[0]['modelSettings'];
   session: string;
   budgets: { run: number; session: number; month: number };
   hermesVersion: string;
@@ -146,6 +149,8 @@ export class WorkflowRuntime {
             sources: input.sources.map((s) => ({ id: s.id, revision: s.revision })),
             buyerRunId: input.buyer?.id ?? null,
             providerRoute: this.settings.providerRoute,
+            modelProfile: this.settings.modelProfile ?? null,
+            modelProfileHash: this.settings.modelProfileHash ?? null,
           }),
           hash(capability),
           this.settings.session,
@@ -196,6 +201,7 @@ export class WorkflowRuntime {
                 subjectId: id,
                 mode: this.settings.mode === 'hermes-stub' ? 'hermes-stub' : 'hermes-live',
                 model: this.settings.model,
+                modelSettings: this.settings.modelSettings,
                 timeoutMs: 90000,
                 workflow: kind,
               },

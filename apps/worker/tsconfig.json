@@ -5,7 +5,7 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "include": ["src", "test"],
+  "include": ["src", "src/**/*.json", "test"],
   "references": [
     {
       "path": "../../packages/domain"

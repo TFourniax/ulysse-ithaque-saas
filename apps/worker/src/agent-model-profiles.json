@@ -1,0 +1,127 @@
+[
+  {
+    "version": 1,
+    "id": "glm53flash-eu",
+    "model": "z-ai/glm-5.3-flash",
+    "route": "openrouter-eu-zdr",
+    "endpoint": "inceptron/fp8",
+    "prices": {
+      "prompt": 0.1,
+      "completion": 0.69
+    },
+    "generation": {
+      "maxOutputTokens": 8192,
+      "tokenParameter": "max_tokens",
+      "temperature": 1,
+      "topP": 0.95,
+      "reasoning": "low"
+    },
+    "protocol": "openai-chat-completions",
+    "capabilities": {
+      "input": ["text", "image"],
+      "output": ["text"],
+      "tools": true,
+      "structuredOutput": true
+    },
+    "maxContextBytes": 80000
+  },
+  {
+    "version": 1,
+    "id": "haiku55-eu",
+    "model": "anthropic/claude-haiku-5.5",
+    "route": "openrouter-eu-zdr",
+    "endpoint": "amazon-bedrock/eu-west-1",
+    "prices": {
+      "prompt": 0.11,
+      "completion": 0.55
+    },
+    "generation": {
+      "maxOutputTokens": 3000,
+      "tokenParameter": "max_tokens",
+      "reasoning": "disabled"
+    },
+    "protocol": "openai-chat-completions",
+    "capabilities": {
+      "input": ["text", "image"],
+      "output": ["text"],
+      "tools": true,
+      "structuredOutput": true
+    },
+    "maxContextBytes": 80000
+  },
+  {
+    "version": 1,
+    "id": "gpt41-eu",
+    "model": "openai/gpt-4.1-mini",
+    "route": "openrouter-eu-zdr",
+    "endpoint": "azure/swedencentral",
+    "prices": {
+      "prompt": 0.44,
+      "completion": 1.76
+    },
+    "generation": {
+      "maxOutputTokens": 3000,
+      "tokenParameter": "max_completion_tokens",
+      "temperature": 0.2,
+      "reasoning": "omit"
+    },
+    "protocol": "openai-chat-completions",
+    "capabilities": {
+      "input": ["text", "image"],
+      "output": ["text"],
+      "tools": true,
+      "structuredOutput": true
+    },
+    "maxContextBytes": 80000
+  },
+  {
+    "version": 1,
+    "id": "gpt41-legacy",
+    "model": "openai/gpt-4.1-mini",
+    "route": "openrouter",
+    "endpoint": "legacy",
+    "prices": {
+      "prompt": 0.4,
+      "completion": 1.6
+    },
+    "generation": {
+      "maxOutputTokens": 3000,
+      "tokenParameter": "max_completion_tokens",
+      "temperature": 0.2,
+      "reasoning": "omit"
+    },
+    "protocol": "openai-chat-completions",
+    "capabilities": {
+      "input": ["text", "image"],
+      "output": ["text"],
+      "tools": true,
+      "structuredOutput": true
+    },
+    "maxContextBytes": 80000
+  },
+  {
+    "version": 1,
+    "id": "mistral-small4-eu",
+    "model": "mistralai/mistral-small-2603",
+    "route": "openrouter-eu-zdr",
+    "endpoint": "mistral/eu",
+    "prices": {
+      "prompt": 0.165,
+      "completion": 0.66
+    },
+    "generation": {
+      "maxOutputTokens": 3000,
+      "tokenParameter": "max_tokens",
+      "temperature": 0.2,
+      "reasoning": "disabled"
+    },
+    "protocol": "openai-chat-completions",
+    "capabilities": {
+      "input": ["text", "image"],
+      "output": ["text"],
+      "tools": true,
+      "structuredOutput": true
+    },
+    "maxContextBytes": 80000
+  }
+]

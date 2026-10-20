@@ -1,7 +1,19 @@
 import { z } from 'zod';
-import { agentProvider, type AgentModel } from './agent-provider.ts';
+import { agentProvider } from './agent-provider.ts';
 
-const Catalog = z.object({ data: z.array(z.object({ id: z.string() })) });
+const Catalog = z.object({
+  data: z.array(
+    z.object({
+      id: z.string(),
+      reasoning: z
+        .object({
+          mandatory: z.boolean().optional(),
+          supported_efforts: z.array(z.string()).nullable().optional(),
+        })
+        .optional(),
+    }),
+  ),
+});
 const Endpoints = z.object({
   data: z.array(
     z.object({
@@ -19,11 +31,12 @@ const Endpoints = z.object({
 
 /** Read-only preflight: no client text, paid inference, raw response, or key in diagnostics. */
 export async function checkEuropeanProvider(
-  model: AgentModel,
+  model: string,
   key: string,
   request: typeof fetch = fetch,
+  profileJson?: string,
 ) {
-  const route = agentProvider(model, 'openrouter-eu-zdr');
+  const route = agentProvider(model, 'openrouter-eu-zdr', profileJson);
   const options = { redirect: 'error' as const, signal: AbortSignal.timeout(20000) };
   const catalog = await request('https://eu.openrouter.ai/api/v1/models/user', {
     ...options,
@@ -33,8 +46,17 @@ export async function checkEuropeanProvider(
     throw new Error(
       `Catalogue Europe HTTP ${catalog.status} : verifier la cle, le plan Business/Enterprise et les restrictions du compte.`,
     );
-  if (!Catalog.parse(await catalog.json()).data.some((m) => m.id === model))
-    throw new Error('Modele absent du catalogue autorise pour cette cle en Europe.');
+  const entry = Catalog.parse(await catalog.json()).data.find((m) => m.id === model);
+  if (!entry) throw new Error('Modele absent du catalogue autorise pour cette cle en Europe.');
+  const reasoning = route.profile.generation.reasoning;
+  if (entry.reasoning?.mandatory && ['omit', 'disabled'].includes(reasoning))
+    throw new Error('Ce modele exige le raisonnement ; profil incompatible.');
+  if (
+    !['omit', 'disabled'].includes(reasoning) &&
+    entry.reasoning?.supported_efforts &&
+    !entry.reasoning.supported_efforts.includes(reasoning)
+  )
+    throw new Error('Niveau de raisonnement absent du catalogue fournisseur.');
   // Public policy metadata only; no credential or company content goes to this global URL.
   const registry = await request('https://openrouter.ai/api/v1/endpoints/zdr', {
     redirect: 'error',
@@ -50,11 +72,14 @@ export async function checkEuropeanProvider(
     endpoint.pricing.completion * 1_000_000 > route.prices.completion + 1e-9
   )
     throw new Error('Tarif fournisseur superieur au plafond epingle ; mise a jour necessaire.');
-  const parameters =
-    model === 'anthropic/claude-haiku-5.5'
-      ? ['tools', 'tool_choice', 'max_tokens', 'reasoning']
-      : ['tools', 'tool_choice', 'max_completion_tokens', 'temperature'];
-  if (!parameters.every((p) => endpoint.supported_parameters.includes(p)))
+  if (!route.requiredParameters.every((p) => endpoint.supported_parameters.includes(p)))
     throw new Error('Endpoint incompatible avec les parametres Ulysse.');
-  return { model, route: 'openrouter-eu-zdr', endpoint: endpoint.tag, prices: route.prices };
+  return {
+    model,
+    profile: route.profile.id,
+    profileHash: route.profileHash,
+    route: 'openrouter-eu-zdr',
+    endpoint: endpoint.tag,
+    prices: route.prices,
+  };
 }

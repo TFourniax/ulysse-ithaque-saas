@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import run_state
+from server import model_settings
 
 DEAL_NAMES = (
     "get_opportunity", "list_activities", "search_documents", "read_document_excerpt",
@@ -38,6 +39,10 @@ def parse_final(final):
 
 
 def execute(request):
+    settings = model_settings(request)
+    reasoning = settings["reasoning"]
+    reasoning_config = (None if reasoning == "omit" else {"enabled": False}
+                        if reasoning == "disabled" else {"enabled": True, "effort": reasoning})
     workflow = request.get("workflow", "deal")
     names = DEAL_NAMES if workflow == "deal" else ("get_workflow_context", "list_company_sources", "read_company_source")
     run_state.NAMES = names
@@ -51,12 +56,12 @@ def execute(request):
     agent = AIAgent(
         model=request["model"], api_key=run_state.CAPABILITY, base_url=f"{run_state.GATEWAY_URL}/v1",
         provider="custom", api_mode="chat_completions", enabled_toolsets=["ulysse"],
-        max_iterations=8, max_tokens=3000, run_budget_seconds=85,
+        max_iterations=8, max_tokens=settings["maxOutputTokens"], run_budget_seconds=85,
         ephemeral_system_prompt=run_state.INSTRUCTIONS, quiet_mode=True, verbose_logging=False,
         save_trajectories=False, skip_context_files=True, load_soul_identity=False,
         skip_memory=True, skip_background_review=True, session_db=None,
         checkpoints_enabled=False, fallback_model=None, credential_pool=None,
-        cwd=os.environ["HERMES_HOME"], reasoning_config={"enabled": False},
+        cwd=os.environ["HERMES_HOME"], reasoning_config=reasoning_config,
     )
     # A prompt cannot impose the allowlist: fail closed on the actual runtime selection.
     if set(agent.valid_tool_names) != set(names):

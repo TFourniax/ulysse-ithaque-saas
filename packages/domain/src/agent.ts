@@ -149,6 +149,11 @@ export interface AgentExecutor {
       mode: 'simulated' | 'hermes-live' | 'hermes-stub';
       workflow?: 'buyer' | 'content';
       model: string;
+      /** Normalized execution settings; no URL, credential, tool or provider policy. */
+      modelSettings?: Readonly<{
+        maxOutputTokens: number;
+        reasoning: 'omit' | 'disabled' | 'low' | 'medium' | 'high' | 'max';
+      }>;
       timeoutMs: number;
     }>,
     signal?: AbortSignal,
