@@ -14,6 +14,7 @@ from uuid import UUID
 
 SLOTS = threading.BoundedSemaphore(2)
 MODES = {"hermes-live", "hermes-stub"}
+MODELS = {"openai/gpt-4.1-mini", "anthropic/claude-haiku-5.5"}
 _pinned = Path(os.environ.get("HERMES_SOURCE", "/opt/hermes"), ".ulysse-pinned-commit")
 PINNED_COMMIT = _pinned.read_text(encoding="utf-8").strip() if _pinned.exists() else "unknown"
 INSTRUCTIONS_SHA256 = hashlib.sha256(Path(__file__).with_name("instructions.txt").read_bytes()).hexdigest()
@@ -54,7 +55,7 @@ def isolated_run(request):
         raise ValueError("unsupported_workflow")
     # hermes-stub: the real Hermes loop against the stack's simulated model endpoint (CI and
     # local acceptance). The worker gateway, not this service, decides which provider is called.
-    if request["mode"] not in MODES or request["model"] != "openai/gpt-4.1-mini":
+    if request["mode"] not in MODES or request["model"] not in MODELS:
         raise ValueError("unsupported_execution")
     if not isinstance(request["capability"], str) or len(request["capability"]) != 43:
         raise ValueError("invalid_capability")

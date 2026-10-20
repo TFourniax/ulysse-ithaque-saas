@@ -28,6 +28,8 @@ UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre c
 
 ## Prochain lot à prendre
 
+UL-018 — **partial**, responsable Codex : modèle économique et routage européen ZDR demandé par Thomas. Worker, Hermes, configuration, tests et procédure VPS modifiés ; [guide](MODEL-EU.md), [ADR-0014](adr/0014-europe-zdr-model.md). Clôture : inférence Business réelle, revue des trois parcours et coûts mesurés. Les contrôles locaux/CI ne prouvent pas la qualité du fournisseur.
+
 Priorité de cette branche : assembler et vérifier UL-017, puis terminer la recette des trois parcours et UL-016 live et la revue de pertinence selon [DEMO-AGENTIQUE](DEMO-AGENTIQUE.md). Les lots ci-dessous restent indépendants et ne sont pas clôturés par des données fictives.
 
 1. **UL-008** dès qu'une source et un accès sont fournis, en suivant [CONNECTORS](CONNECTORS.md).

@@ -1,5 +1,11 @@
 # État actuel
 
+## UL-018 — candidat économique Europe + ZDR
+
+Thomas confirme le 20 octobre la démo UL-017 en `hermes-live` avec GPT‑4.1 mini, clé présente et services sains. UL-018 prépare Haiku 5.5 sur OpenRouter Europe / Bedrock Irlande : ZDR et non-collecte forcés, prix régionaux bornés, précontrôle sans prompt, modèles bornés worker/Hermes et script ciblé rootless Ulysse. [Procédure](MODEL-EU.md), [ADR-0014](adr/0014-europe-zdr-model.md), [journal](journal/2026-10-20-UL-018-europe-zdr.md). **Partial** : accès Business, réglages de compte, inférence et pertinence métier à valider. Aucun déploiement VPS effectué depuis cet environnement.
+
+Code UL-018 `857c2aa9` vérifié : [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39475316258) et [Hermes/mises à niveau 6/6](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39475315988), dont stack Haiku simulée et historique conservé. [PR draft #6](https://github.com/TFourniax/ulysse-ithaque-saas/pull/6), sans fusion automatique. Ces preuves ne remplacent pas la recette fournisseur.
+
 ## UL-017 — priorité novembre confirmée
 
 Assemblage implémenté sur `codex/ul-017-november-workflows`, [PR draft #5](https://github.com/TFourniax/ulysse-ithaque-saas/pull/5), base UL-016 `0282c19`. Trois parcours assemblés : client synthétique/crash test, contenus contextualisés et prochaine interaction par affaire. Sources métier communes, lien diagnostic → contenu, questions de cadrage, revue, versions et retraits. Voir [guide](NOVEMBER-WORKFLOWS.md), [ADR-0013](adr/0013-november-workflows.md), [journal](journal/2026-10-20-UL-017-november-workflows.md).

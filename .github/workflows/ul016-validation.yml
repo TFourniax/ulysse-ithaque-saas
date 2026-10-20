@@ -1,7 +1,8 @@
 name: ul016-validation
 on:
   pull_request:
-    branches: ['claude/sweet-tesla-jrnkxs', 'codex/ul-016-hermes-demo']
+    branches:
+      ['claude/sweet-tesla-jrnkxs', 'codex/ul-016-hermes-demo', 'codex/ul-017-november-workflows']
   workflow_dispatch:
 permissions:
   contents: read
@@ -30,6 +31,7 @@ jobs:
           name: ul016-generated
           path: /tmp/ul016-generated.patch
       - run: npm run verify
+      - run: bash -n scripts/ulysse-vps-europe.sh && python3 scripts/test-vps-europe.py
   hermes-loop:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -101,6 +103,10 @@ jobs:
           $old_compose up -d --wait --wait-timeout 600 hermes model-stub api worker
           node scripts/agent-smoke.mjs
           $old_compose stop api worker hermes model-stub
+      - name: New model identifier through Hermes and the private simulated endpoint
+        run: |
+          echo 'AGENT_MODEL_ID=anthropic/claude-haiku-5.5' >> "$GITHUB_ENV"
+          echo 'AGENT_PROVIDER_ROUTE=openrouter-eu-zdr' >> "$GITHUB_ENV"
       - run: docker build -t ulysse-app:local .
       - run: docker build -f services/hermes/Dockerfile -t ulysse-hermes:ul016 .
       - run: |
