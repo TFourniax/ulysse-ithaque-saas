@@ -371,6 +371,7 @@ describe('definer function privileges', () => {
         agent_slot_available: 'ulysse_worker',
         reserve_agent_budget: 'ulysse_worker',
         reserve_agent_run_budget: 'ulysse_worker',
+        reserve_research_call: 'ulysse_worker',
         resolve_agent_capability: 'ulysse_worker',
         purge_agent_artifacts: 'ulysse_worker',
         withdraw_workspace_source: 'ulysse_app',

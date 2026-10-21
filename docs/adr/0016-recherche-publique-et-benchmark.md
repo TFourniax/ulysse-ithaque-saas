@@ -26,6 +26,8 @@ Les décisions humaines sont versionnées dans une table séparée, avec un inst
 
 La migration additive 0014 crée les politiques, campagnes, tâches, candidats, pages, appels et revues avec RLS forcée et clés composites tenant. Les permissions de l’API et du worker restent distinctes. L’autorisation active du propriétaire et les versions sont revérifiées avant collecte, réservation et publication. L’arrêt de la recherche ne supprime pas son historique; il empêche la publication de la réponse d’un appel déjà en vol.
 
+La première CI a détecté le droit manquant pour `SELECT FOR UPDATE` dans la réservation. La migration additive 0015 accorde `UPDATE(id)` uniquement au rôle NOLOGIN `ulysse_definer`, afin de permettre ce verrou sans élargir l’accès des comptes d’exécution. La migration 0014 déjà exécutée en CI est conservée. Le contrôle exhaustif des ACL inclut la nouvelle fonction, exécutable uniquement par le worker.
+
 Les réservations de recherche et de modèle utilisent le même verrou financier que les parcours existants, avec un plafond par campagne, par session et par mois. Une réponse perdue conserve son coût supérieur réservé. Les reprises n’effacent ni appels ni dépenses. Les plafonds historiques de 2 USD/session et 10 USD/mois restent en vigueur. Un changement de fournisseur ne réinitialise pas ces compteurs.
 
 ## Limites de cette première implémentation

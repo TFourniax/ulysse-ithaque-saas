@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ulysse demo only. Run as Linux user ulysse (UID 10002), never as root.
-# audit | diagnose [tenant-slug] | deploy <commit> | status | model MODEL_ID|/chemin/profil.json | rollback
+# audit | diagnose [tenant-slug] | deploy <commit> | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback
 # This script never runs a global docker command, down, prune, seed or reset.
 set -Eeuo pipefail
 umask 077
@@ -321,7 +321,7 @@ for service in api worker hermes model-stub; do
   fi
 done
 printf '%s\n' "${ULYSSE_SERVICES[@]}" > "$release/services.txt"
-tag="ul019-${revision:0:12}-$(date -u +%s)"
+tag="ul020-${revision:0:12}-$(date -u +%s)"
 python3 - "$release" "$tag" <<'PY'
 import json,sys,pathlib,copy
 d=pathlib.Path(sys.argv[1]); c=json.loads((d/'before.json').read_text()); old=copy.deepcopy(c)
@@ -396,4 +396,4 @@ ULYSSE_STOPPED=0
 say "Version installee : $revision"
 say "Sauvegarde et retour arriere : $release"
 say 'Sauvegarde chiffree et catalogue lisible ; cela ne remplace pas un exercice complet de restauration.'
-say 'GLM 5.3 Flash actif : Europe + ZDR. Budgets/session/cle conserves. Tester les trois parcours sur https://demo-ulysse.paitite.com.'
+say 'Modele Europe + ZDR, budgets, session et cle conserves. Tester la recherche et les parcours sur https://demo-ulysse.paitite.com.'

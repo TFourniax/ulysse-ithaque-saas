@@ -4,7 +4,7 @@
 
 ## Préparer et déployer
 
-La branche est `codex/ul-020-web-research`, issue d’UL-019. Publier la branche et retenir le SHA complet dont les contrôles sont verts. La migration additive 0014 conserve les données existantes. L’application et Hermes doivent être reconstruits ensemble : les outils de lecture par lots et l’empreinte du prompt évoluent. Le script conserve le modèle européen, les clés, la session et les plafonds actifs.
+La branche est `codex/ul-020-web-research`, issue d’UL-019. Retenir le SHA complet dont les contrôles sont verts dans la [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). Les migrations additives 0014 et 0015 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : les outils de lecture par lots et l’empreinte du prompt évoluent. Le script conserve le modèle européen, les clés, la session et les plafonds actifs.
 
 Sur le VPS, exécuter en tant qu’utilisateur `ulysse` avec le script provenant du SHA retenu, selon la procédure [modèles Europe](MODEL-EU.md). Le script vérifie l’hôte, l’UID, le Docker rootless, la configuration active et l’absence de dérive. Il n’est pas destiné à un autre Docker ou serveur.
 
