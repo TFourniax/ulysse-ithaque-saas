@@ -1,6 +1,6 @@
 # Recherche publique — activation et recette UL-020
 
-État : correctif **`4c962081358772fe5b7f950fbbd3d8aa3e9d0512`**, fournissant automatiquement au modèle le contexte et les textes des sources obligatoires avant génération. Il traite la dépendance aux choix de lecture du modèle révélée par la capture `required_source_unread` du 21 octobre à 20 h 40. Les 11 jobs CI sont verts, dont 45 tests worker, 15 navigateur et la vraie boucle Hermes avec fournisseur scripté. [Preuves et limites](journal/2026-10-21-UL-020-required-evidence.md). La capture ne confirme ni le SHA ni le profil actif sur le VPS; le prochain diagnostic Paitite reste à tester et relire. Ce code conserve les précédents correctifs de [réservation](journal/2026-10-21-UL-020-workflow-budget-reservations.md), de [pause et format](journal/2026-10-21-UL-020-buyer-format-and-pause.md). La [limite de sortie Mistral](journal/2026-10-21-UL-020-mistral-output-limit.md) reste celle du profil actuellement actif. [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
+État : correctif **`5d70f9feb3d9a4a8d97298bd9366c110516698f3`**, qui transmet le schéma JSON natif buyer/content au fournisseur compatible, après la capture `result_schema_invalid` du 21 octobre à 21 h 19. Les références sont limitées aux preuves fournies/lues et les octets du schéma sont comptés. Code **`5d70f9feb3d9a4a8d97298bd9366c110516698f3`** publié : [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39663581025) et [Hermes/mises à niveau 6/6](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39663581019), deux workflows terminés avec succès. `npm run verify` réussi (120 tests unitaires), PostgreSQL 50/50, API 18/18, worker 45/45, navigateur 15/15, neuf tests VPS et quatre tests Python ciblés. La vraie boucle Hermes confirme la réception du schéma pour buyer et contenu sur stack neuve et après mise à niveau depuis UL-016, avec historique/session conservés et redémarrage vérifié; modèle scripté. [Preuves et limites](journal/2026-10-21-UL-020-native-result-schema.md). La capture ne confirme ni le SHA ni le profil actif sur le VPS; le prochain diagnostic Paitite reste à tester et relire. Ce code conserve les correctifs de [preuves obligatoires](journal/2026-10-21-UL-020-required-evidence.md), de [réservation](journal/2026-10-21-UL-020-workflow-budget-reservations.md), de [pause et format](journal/2026-10-21-UL-020-buyer-format-and-pause.md). La [limite de sortie Mistral](journal/2026-10-21-UL-020-mistral-output-limit.md) reste celle du profil actif. [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
 
 Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. La tentative a été arrêtée avant migration et arrêt des services; pas de rollback à effectuer pour ce refus. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
 
@@ -17,7 +17,7 @@ umask 077
 cd /
 [[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
 ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-ULYSSE_REVISION=4c962081358772fe5b7f950fbbd3d8aa3e9d0512
+ULYSSE_REVISION=5d70f9feb3d9a4a8d97298bd9366c110516698f3
 ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
@@ -116,7 +116,7 @@ Consigner les résultats dans un journal de recette, en distinguant qualité mé
 
 ## Diagnostiquer une collecte sans appel payant
 
-Depuis `2026-10-21.research2-diagnostic`, le script propose `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. La version déployée ci-dessus, `2026-10-21.research5-budget`, conserve les résultats techniques par tentative et ajoute le relevé budgétaire. Pour diagnostiquer sans déployer, extraire le script publié dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n` : il fonctionne avec les images UL-020 déjà en service, sans rebuild, redémarrage, migration ou changement de configuration.
+Depuis `2026-10-21.research2-diagnostic`, le script propose `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. La version publiée ci-dessus, `2026-10-21.research7-schema`, conserve les résultats techniques par tentative, le relevé budgétaire et indique si le schéma natif a été envoyé. Pour diagnostiquer sans déployer, extraire le script publié dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n` : il fonctionne avec les images UL-020 déjà en service, sans rebuild, redémarrage, migration ou changement de configuration.
 
 ```bash
 sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose-research
@@ -136,7 +136,7 @@ Pour un échec du **diagnostic acheteur**, utiliser `diagnose` (et non `diagnose
 sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose
 ```
 
-La sortie ajoute `format_repair_attempted`, `format_code`, `finish_reason` et `format_issues` pour les nouveaux appels. Ces champs techniques décrivent le refus sans exposer la réponse. Les anciens échecs `result_invalid` ne sont pas reconstitués. Une correction n’est tentée qu’une fois, si les plafonds et le temps restant le permettent.
+La sortie ajoute `native_response_schema` (pour les nouveaux appels), `format_repair_attempted`, `format_code`, `finish_reason` et `format_issues` pour les nouveaux appels. Ces champs techniques décrivent le refus sans exposer la réponse. Les anciens échecs `result_invalid` ne sont pas reconstitués. Une correction n’est tentée qu’une fois, si les plafonds et le temps restant le permettent.
 
 ## Diagnostiquer le budget
 

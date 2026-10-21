@@ -1,6 +1,6 @@
 # UL-020 — résultat structuré natif et benchmark sur recherche en pause
 
-Date : 21 octobre 2026. Responsable : Codex. Statut : correctif en validation; recette fournisseur ouverte.
+Date : 21 octobre 2026. Responsable : Codex. Statut : correctif `5d70f9feb3d9a4a8d97298bd9366c110516698f3` publié; les 11 jobs CI sont verts; recette fournisseur ouverte.
 
 ## Constat et objectif
 
@@ -18,7 +18,7 @@ Objectif : fournir le contrat au décodeur du fournisseur et vérifier le chemin
 
 ## Vérification
 
-Validation locale et CI en cours; aucune réussite live annoncée. Les schémas buyer/content ont également été compilés en JSON Schema Draft 7 avec le validateur déjà installé : brouillons structurés acceptés, champs inconnus, longueur excessive, mauvais type de parcours, limite vide et référence non lue refusés. Aucun paquet ajouté.
+Code **`5d70f9feb3d9a4a8d97298bd9366c110516698f3`** publié : [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39663581025) et [Hermes/mises à niveau 6/6](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39663581019), deux workflows terminés avec succès. `npm run verify` réussi (120 tests unitaires), PostgreSQL 50/50, API 18/18, worker 45/45, navigateur 15/15, neuf tests VPS et quatre tests Python ciblés. La vraie boucle Hermes confirme la réception du schéma pour buyer et contenu sur stack neuve et après mise à niveau depuis UL-016, avec historique/session conservés et redémarrage vérifié; modèle scripté. Aucune réussite live annoncée. Les schémas buyer/content ont également été compilés en JSON Schema Draft 7 avec le validateur déjà installé : brouillons structurés acceptés, champs inconnus, longueur excessive, mauvais type de parcours, limite vide et référence non lue refusés. Aucun paquet ajouté.
 
 Références officielles consultées le 21 octobre : [OpenRouter structured outputs](https://openrouter.ai/docs/guides/features/structured-outputs), [Mistral structured outputs](https://docs.mistral.ai/studio/conversations/structured-output/custom), [métadonnées du modèle Mistral](https://openrouter.ai/api/v1/models/mistralai/mistral-small-2603/endpoints). L’endpoint `mistral/eu` annonce `response_format`, `structured_outputs`, `tools` et `tool_choice`. Cela valide la compatibilité déclarée, pas l’exécution d’un appel réel depuis cet environnement.
 
