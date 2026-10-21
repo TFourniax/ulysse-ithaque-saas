@@ -34,6 +34,22 @@ const REVIEW: Record<string, string> = {
   excluded: 'Écarté',
 };
 const REASONS: Record<string, string> = {
+  provider_retry_scheduled:
+    'Le fournisseur du modèle limite temporairement les appels. La collecte attend avant de réessayer automatiquement, au maximum deux fois pour cette étape.',
+  provider_http_429:
+    'Le fournisseur du modèle limite les appels. La collecte est en pause; les résultats et le budget restant sont conservés.',
+  provider_http_503:
+    'Le fournisseur du modèle est temporairement indisponible. Les résultats déjà collectés sont conservés.',
+  research_response_truncated:
+    'La réponse du modèle est incomplète. Aucun fait de cette réponse n’a été ajouté.',
+  research_json_invalid: 'La réponse du modèle n’a pas pu être décodée.',
+  research_schema_invalid: 'La réponse du modèle ne respecte pas le format attendu.',
+  research_tool_response_invalid: 'Le modèle n’a pas fourni le résultat structuré attendu.',
+  research_evidence_unusable:
+    'Les références proposées par le modèle ne correspondent à aucun passage fourni.',
+  research_quote_unmatched: 'Une citation ne correspond pas au texte collecté.',
+  research_link_unobserved: 'Un lien proposé ne figure pas dans la page collectée.',
+  research_publication_failed: 'Les informations extraites n’ont pas pu être enregistrées.',
   research_provider_unavailable:
     'Le fournisseur de recherche ou le modèle n’est pas encore configuré sur le serveur.',
   budget_reached:
@@ -458,7 +474,8 @@ function CampaignView({ id, focused }: { id: string; focused?: string }) {
         body: {
           action,
           revision: c.revision,
-          ...(action === 'resume'
+          ...(action === 'resume' &&
+          ['budget_reached', 'collection_limit'].includes(c.stopReason ?? '')
             ? {
                 limits: {
                   budgetUsd: Math.min(2, c.profile.budgetUsd + 0.25),
@@ -527,6 +544,7 @@ function CampaignView({ id, focused }: { id: string; focused?: string }) {
                 </button>
               )}
               {(c.status === 'paused' ||
+                c.status === 'failed' ||
                 (c.status === 'completed' && c.stopReason === 'steps_failed')) && (
                 <button
                   type="button"
@@ -534,7 +552,9 @@ function CampaignView({ id, focused }: { id: string; focused?: string }) {
                   disabled={action.isPending}
                   onClick={() => action.mutate('resume')}
                 >
-                  Poursuivre · plafond {Math.min(2, c.profile.budgetUsd + 0.25).toFixed(2)} USD
+                  {['budget_reached', 'collection_limit'].includes(c.stopReason ?? '')
+                    ? `Poursuivre · plafond ${Math.min(2, c.profile.budgetUsd + 0.25).toFixed(2)} USD`
+                    : 'Reprendre la collecte'}
                 </button>
               )}
             </>
@@ -786,7 +806,7 @@ function CampaignView({ id, focused }: { id: string; focused?: string }) {
                 {typeof t.summary.newDomains === 'number'
                   ? ` · ${t.summary.newDomains} nouveaux domaines`
                   : ''}
-                {t.error_code ? ` · ${t.error_code}` : ''}
+                {t.error_code ? ` · ${REASONS[t.error_code] ?? t.error_code}` : ''}
               </li>
             ))}
         </ul>

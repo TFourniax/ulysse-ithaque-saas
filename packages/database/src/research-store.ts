@@ -150,14 +150,14 @@ export class PgResearchStore extends PgAgentStore {
     await this.audit(tx, ctx, 'research.requested', id);
     return id;
   }
-  async enqueue(tx: TenantTx, ctx: Context, id: string): Promise<void> {
+  async enqueue(tx: TenantTx, ctx: Context, id: string, notBefore?: string): Promise<void> {
     await tx.enqueueOutbox({
       tenantId: ctx.tenantId,
       id: randomUUID(),
       eventType: 'research.requested',
       subjectType: 'research',
       subjectId: id,
-      payload: {},
+      payload: notBefore ? { notBefore } : {},
       createdAt: new Date().toISOString(),
     });
   }
@@ -310,6 +310,18 @@ export class PgResearchStore extends PgAgentStore {
         await this.wakeWorkflows(tx, sql, ctx, id);
         return null;
       }
+      // A provider cooldown gates the whole campaign, including duplicate/maintenance jobs.
+      // Its deadline is persisted before releasing the lease; restarting a worker cannot bypass it.
+      const cooldown = (
+        await sql.query<{ retry_at: string | null }>(
+          "SELECT max((summary->>'retryAt')::timestamptz)::text AS retry_at FROM research_tasks WHERE tenant_id=$1 AND campaign_id=$2 AND status='pending' AND (summary->>'retryAt')::timestamptz>clock_timestamp()",
+          [ctx.tenantId, id],
+        )
+      ).rows[0]?.retry_at;
+      if (cooldown) {
+        await this.enqueue(tx, ctx, id, new Date(cooldown).toISOString());
+        return null;
+      }
       const running = await sql.query(
         "SELECT id FROM research_tasks WHERE tenant_id=$1 AND campaign_id=$2 AND status='running' AND expires_at>clock_timestamp()",
         [ctx.tenantId, id],
@@ -355,7 +367,7 @@ export class PgResearchStore extends PgAgentStore {
       const body = json<ResearchTaskBody>(row, 'body');
       const lease = randomUUID();
       await sql.query(
-        "UPDATE research_tasks SET status='running',attempt=attempt+1,lease=$3,expires_at=clock_timestamp()+interval '110 seconds' WHERE tenant_id=$1 AND id=$2",
+        "UPDATE research_tasks SET status='running',attempt=attempt+1,lease=$3,expires_at=clock_timestamp()+interval '110 seconds',summary=summary-'retryAt' WHERE tenant_id=$1 AND id=$2",
         [ctx.tenantId, str(row, 'id'), lease],
       );
       await sql.query(
@@ -432,6 +444,49 @@ export class PgResearchStore extends PgAgentStore {
       await this.wakeWorkflows(tx, sql, ctx, task.campaignId);
     });
   }
+  async deferProvider(
+    ctx: Context,
+    task: ResearchTask,
+    reason: string,
+    retryAfter: number | null,
+  ): Promise<boolean> {
+    if (
+      !['provider_http_429', 'provider_http_503'].includes(reason) ||
+      (retryAfter !== null && (!Number.isFinite(retryAfter) || retryAfter < 0 || retryAfter > 900))
+    )
+      return false;
+    return this.transaction(ctx, async (tx, sql) => {
+      await tx.lock('analysis');
+      const c = await this.campaign(sql, ctx.tenantId, task.campaignId);
+      if (c.status !== 'running' || !(await this.isCurrent(tx, sql, c))) return false;
+      const row = (
+        await sql.query<Row>(
+          "SELECT coalesce((summary->>'providerRetries')::integer,0) AS retries FROM research_tasks WHERE tenant_id=$1 AND id=$2 AND lease=$3 AND status='running' AND expires_at>clock_timestamp()",
+          [ctx.tenantId, task.id, task.lease],
+        )
+      ).rows[0];
+      if (!row) return false;
+      const retries = int(row, 'retries');
+      if (retries >= 2) return false;
+      const seconds = Math.max(retryAfter ?? 0, 60 * 2 ** retries);
+      const deferred = (
+        await sql.query<{ retry_at: string }>(
+          "UPDATE research_tasks SET status='pending',lease=NULL,expires_at=NULL,error_code=$4,summary=summary || jsonb_build_object('providerRetries',$5::integer,'retryAt',clock_timestamp()+$6*interval '1 second') WHERE tenant_id=$1 AND id=$2 AND lease=$3 RETURNING summary->>'retryAt' AS retry_at",
+          [ctx.tenantId, task.id, task.lease, reason, retries + 1, seconds],
+        )
+      ).rows[0];
+      if (!deferred) return false;
+      await this.setStatus(
+        sql,
+        ctx.tenantId,
+        task.campaignId,
+        'running',
+        'provider_retry_scheduled',
+      );
+      await this.enqueue(tx, ctx, task.campaignId, new Date(deferred.retry_at).toISOString());
+      return true;
+    });
+  }
   async wakeWorkflows(tx: TenantTx, sql: PoolClient, ctx: Context, id: string): Promise<void> {
     const rows = await sql.query<{ id: string }>(
       "SELECT id FROM workflow_requests WHERE tenant_id=$1 AND research_id=$2 AND status='queued'",
@@ -486,6 +541,10 @@ export class PgResearchStore extends PgAgentStore {
         }
         await sql.query(
           "UPDATE research_tasks SET status='pending',attempt=0 WHERE tenant_id=$1 AND campaign_id=$2 AND status='failed'",
+          [ctx.tenantId, id],
+        );
+        await sql.query(
+          "UPDATE research_tasks SET summary=summary-'retryAt'-'providerRetries' WHERE tenant_id=$1 AND campaign_id=$2 AND status='pending'",
           [ctx.tenantId, id],
         );
         await this.setStatus(sql, ctx.tenantId, id, 'queued', null);

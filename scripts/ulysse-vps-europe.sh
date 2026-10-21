@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-21.research2-diagnostic
+ULYSSE_SCRIPT_VERSION=2026-10-21.research3-extraction
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -178,7 +178,9 @@ WITH latest AS (
   WHERE t.slug=:'tenant_slug' ORDER BY c.created_at DESC,c.id DESC LIMIT 1
 )
 SELECT x.id,x.created_at,x.metadata->>'identity' AS identity,r.body->>'kind' AS stage,
-       r.status AS current_task_status,r.error_code AS current_task_error,x.cost_state,
+       r.status AS current_task_status,r.error_code AS current_task_error,
+       x.metadata->>'outcome' AS call_outcome,x.metadata->>'finishReason' AS finish_reason,
+       x.metadata->>'rejectedFacts' AS rejected_facts,x.metadata->>'rejectedLinks' AS rejected_links,x.cost_state,
        x.input_tokens,x.output_tokens,x.cost_usd
 FROM research_calls x JOIN latest c ON c.tenant_id=x.tenant_id AND c.id=x.campaign_id
 JOIN research_tasks r ON r.tenant_id=x.tenant_id AND r.id=x.task_id

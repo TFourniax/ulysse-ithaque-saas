@@ -25,7 +25,7 @@ import {
 import type { Logger, Metrics } from '@ulysse/observability';
 import type { Job, SendOptions } from 'pg-boss';
 import { PgBoss } from 'pg-boss';
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { WorkerConfig } from './config.ts';
 import { ConnectionJob, RecommendationJob, SyncJob, TenantJob, WorkflowJob } from './jobs.ts';
 
@@ -328,12 +328,18 @@ export class WorkerRuntime {
     const tenantId = event.tenant_id;
     const group = { id: tenantId };
     switch (event.event_type) {
-      case 'research.requested':
+      case 'research.requested': {
+        const notBefore = z.iso.datetime().optional().parse(event.payload.notBefore);
         return {
           name: QUEUES.researchRun,
           data: { tenantId, campaignId: event.subject_id },
-          options: { singletonKey: event.subject_id, group },
+          options: {
+            singletonKey: event.subject_id,
+            group,
+            ...(notBefore ? { startAfter: notBefore } : {}),
+          },
         };
+      }
       case 'workflow.requested':
         return {
           name: QUEUES.workflowRun,

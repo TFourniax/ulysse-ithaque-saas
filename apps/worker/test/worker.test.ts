@@ -2,7 +2,12 @@ import type { ResearchProfile } from '@ulysse/domain';
 import { PgResearchStore } from '@ulysse/database';
 import { extractPublicPage, ResearchWebError } from '@ulysse/connectors';
 import { ResearchRuntime } from '../src/research-runtime.ts';
-import type { ResearchModel } from '../src/research-model.ts';
+import {
+  createResearchModel,
+  ResearchModelError,
+  type ResearchModel,
+} from '../src/research-model.ts';
+import { ProviderCallError } from '../src/agent-errors.ts';
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { createHash } from 'node:crypto';
@@ -1820,6 +1825,187 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
         ).rows,
     );
     assert.equal(history.length, 1);
+  });
+  test('real extraction adapter keeps grounded facts and known cost after invalid output; resume reuses saved pages and successful searches', async (t) => {
+    const w = await setup('research-extraction-recovery');
+    const adapter = createResearchModel({
+      ...liveTestConfig(),
+      AGENT_MODEL_ID: 'mistralai/mistral-small-2603',
+      AGENT_PROVIDER_ROUTE: 'openrouter-eu-zdr',
+    });
+    assert.ok(adapter);
+    let corrupt = true;
+    t.mock.method(globalThis, 'fetch', async (_url: unknown, raw: unknown) => {
+      const init = z.object({ body: z.string() }).parse(raw);
+      const body = z
+        .object({ messages: z.array(z.object({ content: z.string() })) })
+        .parse(JSON.parse(init.body));
+      const input = z
+        .object({
+          page: z.object({
+            url: z.string(),
+            passages: z.array(z.object({ id: z.string(), text: z.string() })),
+          }),
+        })
+        .parse(JSON.parse(body.messages[1]!.content));
+      const bad = input.page.url === 'https://rival-0.example/' && corrupt;
+      if (bad) corrupt = false;
+      return Response.json({
+        usage: { prompt_tokens: 100, completion_tokens: 200, cost: 0.0002 },
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              tool_calls: [
+                {
+                  function: {
+                    name: 'submit_research',
+                    arguments: bad
+                      ? '{invalid private response'
+                      : JSON.stringify({
+                          name: 'Prestataire fictif',
+                          relevance: 'direct',
+                          reason: 'Même besoin dans la fixture.',
+                          facts: [
+                            {
+                              offer: 'Intégration',
+                              dimension: 'offer',
+                              value: 'Audit et connexion des outils.',
+                              passageId: input.page.passages[0]!.id,
+                            },
+                            {
+                              offer: 'Invention',
+                              dimension: 'price',
+                              value: 'Un prix inventé.',
+                              passageId: 'p999',
+                            },
+                          ],
+                          competitorLinkIds: ['l99'],
+                        }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      });
+    });
+    w.engine.settings.model = {
+      ...adapter,
+      estimate: (input) =>
+        input.kind === 'plan' ? model.estimate(input) : adapter.estimate(input),
+      generate: (input, signal) =>
+        input.kind === 'plan' ? model.generate(input, signal) : adapter.generate(input, signal),
+    };
+    await w.drain();
+    const before = await w.current();
+    assert.equal(before.stopReason, 'steps_failed');
+    assert.equal(before.uncertainCalls, 0);
+    assert.equal(before.qualifiedCount, 10);
+    const candidates = (await w.items()).items;
+    assert.ok(
+      candidates.every((c) =>
+        c.facts.every((f) => f.offer === 'Intégration' && f.quote.includes(quote)),
+      ),
+    );
+    const calls = await w.repository.transaction(
+      w.owner,
+      async (_tx, sql) =>
+        (
+          await sql.query<{ cost_state: string; outcome: string }>(
+            "SELECT cost_state,metadata->>'outcome' AS outcome FROM research_calls WHERE tenant_id=$1 AND campaign_id=$2 AND metadata->>'outcome'='research_json_invalid'",
+            [w.tenantId, w.id],
+          )
+        ).rows,
+    );
+    assert.deepEqual(calls, [{ cost_state: 'declared', outcome: 'research_json_invalid' }]);
+    await w.repository.action(w.owner, w.id, before.revision, 'resume');
+    await w.drain();
+    const after = await w.current();
+    assert.equal(after.stopReason, 'coverage_reached');
+    assert.equal(after.searches, before.searches);
+    assert.equal(after.pages, before.pages);
+    assert.equal(after.profile.budgetUsd, before.profile.budgetUsd);
+    assert.equal(after.modelCalls, before.modelCalls + 1);
+    assert.equal(after.uncertainCalls, 0);
+    assert.ok((await w.items()).items.every((c) => c.errors.length === 0));
+  });
+  test('429 cooldown survives duplicate jobs and worker restart, honors Retry-After and stops after two retries', async () => {
+    const w = await setup('research-rate-limit');
+    let calls = 0;
+    w.engine.settings.model = {
+      ...model,
+      generate: async () => {
+        calls++;
+        throw new ProviderCallError('provider_http_429', 429, 90);
+      },
+    };
+    await w.engine.run(w.ctx, w.id); // Save the company's first page.
+    await w.engine.run(w.ctx, w.id); // First extraction is rate limited.
+    let c = await w.current();
+    assert.equal(c.stopReason, 'provider_retry_scheduled');
+    assert.equal(c.status, 'running');
+    const retry = await w.repository.transaction(
+      w.owner,
+      async (_tx, sql) =>
+        (
+          await sql.query<{ seconds: number; payload: { notBefore: string } }>(
+            "SELECT extract(epoch FROM (payload->>'notBefore')::timestamptz-clock_timestamp())::float8 AS seconds,payload FROM outbox WHERE tenant_id=$1 AND event_type='research.requested' AND payload ? 'notBefore' ORDER BY created_at DESC LIMIT 1",
+            [w.tenantId],
+          )
+        ).rows[0],
+    );
+    assert.ok(retry && retry.seconds > 85 && retry.seconds <= 90);
+    const restarted = new ResearchRuntime(workerPool, w.engine.settings);
+    await restarted.run(w.ctx, w.id);
+    assert.equal(calls, 1);
+    assert.equal((await w.current()).modelCalls, 1);
+    for (let i = 0; i < 2; i++) {
+      // Advance only the persisted test deadline; never sleep or transmit live calls.
+      await w.engine.store.transaction(w.ctx, async (_tx, sql) => {
+        await sql.query(
+          "UPDATE research_tasks SET summary=summary || jsonb_build_object('retryAt',clock_timestamp()-interval '1 second') WHERE tenant_id=$1 AND campaign_id=$2 AND summary ? 'retryAt'",
+          [w.tenantId, w.id],
+        );
+      });
+      await restarted.run(w.ctx, w.id);
+    }
+    c = await w.current();
+    assert.equal(calls, 3);
+    assert.equal(c.status, 'paused');
+    assert.equal(c.stopReason, 'provider_http_429');
+    assert.equal(c.uncertainCalls, 3);
+    assert.equal(c.committedUsd, 0.03);
+    assert.equal(c.profile.budgetUsd, publicProfile.budgetUsd);
+    await restarted.run(w.ctx, w.id);
+    assert.equal(calls, 3);
+    await w.repository.action(w.owner, w.id, c.revision, 'resume');
+    w.engine.settings.model = model;
+    await w.engine.run(w.ctx, w.id);
+    assert.equal((await w.current()).uncertainCalls, 3);
+    assert.equal((await w.current()).committedUsd, 0.032);
+    assert.equal((await w.items()).items[0]?.facts.length, 1);
+  });
+  test('failed decoding retains billed usage even if it exceeds the reservation and never publishes facts', async () => {
+    const w = await setup('research-invalid-cost');
+    w.engine.settings.model = {
+      ...model,
+      generate: async () => {
+        throw new ResearchModelError(
+          'research_response_truncated',
+          { cost: 0.02, state: 'declared', inputTokens: 100, outputTokens: 3000 },
+          { finishReason: 'length', rejectedFacts: 0, rejectedLinks: 0 },
+        );
+      },
+    };
+    await w.engine.run(w.ctx, w.id);
+    await w.engine.run(w.ctx, w.id);
+    const c = await w.current();
+    assert.equal(c.status, 'paused');
+    assert.equal(c.stopReason, 'provider_cost_exceeded');
+    assert.equal(c.uncertainCalls, 0);
+    assert.equal(c.committedUsd, 0.02);
+    assert.equal((await w.items()).items[0]?.facts.length, 0);
   });
   test('uncertain cost survives pause and resume and disabling the policy refuses new reservations', async () => {
     const w = await setup('research-budget', { ...publicProfile, budgetUsd: 0.05 });

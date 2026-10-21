@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Context, ResearchTask, ResearchPage } from '@ulysse/domain';
-import { canonicalResearchUrl, researchDomain, validateResearchExtraction } from '@ulysse/domain';
+import {
+  canonicalResearchUrl,
+  isDomainError,
+  researchDomain,
+  validateResearchExtraction,
+} from '@ulysse/domain';
 import type { Pool } from '@ulysse/database';
 import { PgResearchStore } from '@ulysse/database';
 import type { PublicPageReader, SearchProvider } from '@ulysse/connectors';
@@ -10,6 +15,8 @@ import type { AgentConfig } from './agent-runtime.ts';
 import { ProviderCallError } from './agent-errors.ts';
 import {
   createResearchModel,
+  ResearchModelError,
+  type ResearchDiagnostics,
   type ResearchModel,
   type ResearchModelInput,
   type ResearchUsage,
@@ -104,6 +111,23 @@ export class ResearchRuntime {
       );
     });
   }
+  async recordModelCall(
+    ctx: Context,
+    id: string,
+    code: string | null,
+    diagnostics?: ResearchDiagnostics,
+  ): Promise<void> {
+    await this.store.transaction(ctx, async (_tx, sql) => {
+      await sql.query(
+        'UPDATE research_calls SET metadata=metadata || $3::jsonb WHERE tenant_id=$1 AND id=$2',
+        [
+          ctx.tenantId,
+          id,
+          JSON.stringify({ outcome: code ?? 'validated', ...(diagnostics ?? {}) }),
+        ],
+      );
+    });
+  }
   async run(
     ctx: Context,
     id: string,
@@ -113,6 +137,10 @@ export class ResearchRuntime {
     if (!claimed) return;
     const { task, campaign } = claimed;
     const { body } = task;
+    let modelCall: string | null = null;
+    let modelBound = 0;
+    let diagnostics: ResearchDiagnostics | undefined;
+    let phase: 'execution' | 'publication' = 'execution';
     try {
       if (!this.settings.search || !this.settings.model) {
         await this.store.pause(ctx, task, 'research_provider_unavailable');
@@ -235,15 +263,20 @@ export class ResearchRuntime {
         await this.store.pause(ctx, task, 'budget_reached');
         return;
       }
+      modelCall = call;
+      modelBound = bound;
       const response = await this.settings.model.generate(input, signal);
+      diagnostics = response.diagnostics;
       if (response.usage) {
         await this.settle(ctx, call, response.usage);
         if (response.usage.cost > bound) {
+          await this.recordModelCall(ctx, call, 'provider_cost_exceeded', diagnostics);
           await this.store.pause(ctx, task, 'provider_cost_exceeded');
           return;
         }
       }
       const result = response.result;
+      phase = 'publication';
       if ('queries' in result) {
         await this.store.complete(ctx, task, async (_tx, sql) => {
           for (const search of result.queries)
@@ -282,6 +315,7 @@ export class ResearchRuntime {
             }
           candidate.review = 'pending';
           candidate.corrections = [];
+          candidate.errors = candidate.errors.filter((e) => e.url !== evidence.url);
           await this.store.saveCandidate(sql, ctx.tenantId, candidate);
           if (['direct', 'indirect', 'substitute'].includes(candidate.relevance))
             await this.store.addTask(
@@ -330,13 +364,43 @@ export class ResearchRuntime {
           };
         });
       } else throw new Error('research_result_invalid');
+      await this.recordModelCall(ctx, call, null, diagnostics);
     } catch (error) {
+      if (error instanceof ResearchModelError && modelCall) {
+        diagnostics = error.diagnostics;
+        if (error.usage) {
+          await this.settle(ctx, modelCall, error.usage);
+          if (error.usage.cost > modelBound) {
+            await this.recordModelCall(ctx, modelCall, 'provider_cost_exceeded', diagnostics);
+            await this.store.pause(ctx, task, 'provider_cost_exceeded');
+            return;
+          }
+        }
+      }
+      const evidenceErrors: Record<string, string> = {
+        'ungrounded research fact': 'research_quote_unmatched',
+        'unread discovery link': 'research_link_unobserved',
+        'unqualified extraction': 'research_classification_invalid',
+      };
       const code =
-        error instanceof ResearchWebError || error instanceof ProviderCallError
+        error instanceof ResearchWebError ||
+        error instanceof ProviderCallError ||
+        error instanceof ResearchModelError
           ? error.code
-          : error instanceof z.ZodError
-            ? 'research_schema_invalid'
-            : 'research_step_failed';
+          : isDomainError(error) && Object.hasOwn(evidenceErrors, error.detail ?? '')
+            ? (evidenceErrors[error.detail ?? ''] ?? 'research_evidence_invalid')
+            : error instanceof z.ZodError
+              ? 'research_schema_invalid'
+              : phase === 'publication'
+                ? 'research_publication_failed'
+                : 'research_step_failed';
+      if (modelCall) await this.recordModelCall(ctx, modelCall, code, diagnostics);
+      if (
+        error instanceof ProviderCallError &&
+        ['provider_http_429', 'provider_http_503'].includes(code)
+      ) {
+        if (await this.store.deferProvider(ctx, task, code, error.retryAfterSeconds)) return;
+      }
       if (
         body.kind === 'search' ||
         ((body.kind === 'extract' || body.kind === 'plan') &&
@@ -358,6 +422,13 @@ export class ResearchRuntime {
               researchDomain(body.url),
             );
             candidate.errors.push({ url: body.url, code });
+            await this.store.saveCandidate(sql, ctx.tenantId, candidate);
+          }
+          if (body.kind === 'extract') {
+            const candidate = await this.store.candidate(sql, ctx.tenantId, body.candidateId);
+            const evidence = await this.store.page(sql, ctx.tenantId, body.pageId);
+            candidate.errors = candidate.errors.filter((e) => e.url !== evidence.url);
+            candidate.errors.push({ url: evidence.url, code });
             await this.store.saveCandidate(sql, ctx.tenantId, candidate);
           }
           return { code };

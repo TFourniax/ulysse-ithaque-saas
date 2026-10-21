@@ -5,11 +5,13 @@ import type { ReadableStreamReadResult } from 'node:stream/web';
 export class ProviderCallError extends Error {
   readonly code: string;
   readonly httpStatus: number | null;
-  constructor(code: string, httpStatus: number | null) {
+  readonly retryAfterSeconds: number | null;
+  constructor(code: string, httpStatus: number | null, retryAfterSeconds: number | null = null) {
     super(code);
     this.name = 'ProviderCallError';
     this.code = code;
     this.httpStatus = httpStatus;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 function object(value: unknown): Record<string, unknown> | null {
@@ -17,7 +19,11 @@ function object(value: unknown): Record<string, unknown> | null {
     ? Object.fromEntries(Object.entries(value))
     : null;
 }
-function providerError(status: number, payload: unknown): ProviderCallError {
+function providerError(
+  status: number,
+  payload: unknown,
+  retryAfter: string | null,
+): ProviderCallError {
   const error = object(object(payload)?.error);
   const code =
     status === 200 &&
@@ -37,7 +43,13 @@ function providerError(status: number, payload: unknown): ProviderCallError {
   return new ProviderCallError(
     code >= 400 ? `provider_http_${code}` : 'provider_response_error',
     status,
+    [429, 503].includes(code) ? retryAfterSeconds(retryAfter) : null,
   );
+}
+function retryAfterSeconds(raw: string | null): number | null {
+  if (!raw || raw.length > 100) return null;
+  const value = /^\d+$/u.test(raw) ? Number(raw) : (Date.parse(raw) - Date.now()) / 1000;
+  return Number.isFinite(value) && value >= 0 ? Math.ceil(value) : null;
 }
 async function smallErrorBody(response: Response): Promise<unknown> {
   const reader = response.body?.getReader();
@@ -84,7 +96,12 @@ export async function fetchAgentCompletion(
       null,
     );
   }
-  if (!response.ok) throw providerError(response.status, await smallErrorBody(response));
+  if (!response.ok)
+    throw providerError(
+      response.status,
+      await smallErrorBody(response),
+      response.headers.get('retry-after'),
+    );
   let value: unknown;
   try {
     value = await response.json();
@@ -94,7 +111,7 @@ export async function fetchAgentCompletion(
   const payload = object(value);
   if (!payload) throw new ProviderCallError('provider_invalid_response', response.status);
   if (payload.error !== undefined && payload.error !== null)
-    throw providerError(response.status, payload);
+    throw providerError(response.status, payload, response.headers.get('retry-after'));
   return payload;
 }
 

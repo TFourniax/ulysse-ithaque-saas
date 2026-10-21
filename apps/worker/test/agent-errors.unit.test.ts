@@ -45,6 +45,46 @@ test('the regional plan refusal is recognized without returning the upstream tex
     /provider_region_plan_required/,
   );
 });
+test('rate limits preserve a numeric Retry-After without exposing provider data', async () => {
+  for (const [header, expected] of [
+    ['120', 120],
+    ['-1', null],
+    ['private-header', null],
+    ['999999', 999999],
+  ] as const) {
+    await assert.rejects(
+      fetchAgentCompletion('https://example.invalid', {}, async () =>
+        Response.json(
+          { error: { message: 'private' } },
+          { status: 429, headers: { 'retry-after': header } },
+        ),
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.retryAfterSeconds, expected);
+        assert.ok(!JSON.stringify(error).includes('private'));
+        return true;
+      },
+    );
+  }
+  const future = new Date(Date.now() + 120000).toUTCString();
+  await assert.rejects(
+    fetchAgentCompletion(
+      'https://example.invalid',
+      {},
+      async () => new Response('', { status: 503, headers: { 'retry-after': future } }),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ProviderCallError);
+      assert.ok(
+        error.retryAfterSeconds !== null &&
+          error.retryAfterSeconds >= 119 &&
+          error.retryAfterSeconds <= 120,
+      );
+      return true;
+    },
+  );
+});
 test('HTML and oversized error bodies retain HTTP status; error reads are bounded', async () => {
   let cancelled = false;
   const stream = new ReadableStream<Uint8Array>({

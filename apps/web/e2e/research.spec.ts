@@ -27,6 +27,10 @@ test('public research authorization starts a durable campaign and exposes missin
   await expect(page.getByRole('heading', { name: 'Offres et preuves comparables' })).toBeVisible();
   await page.reload();
   await expect(page.locator('.badge').filter({ hasText: 'Collecte partielle' })).toBeVisible();
+  const resumed = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith('/action'));
+  await page.getByRole('button', { name: 'Reprendre la collecte', exact: true }).click();
+  expect((await resumed).postDataJSON()).not.toHaveProperty('limits');
+  await expect(page.locator('.badge').filter({ hasText: 'Collecte partielle' })).toBeVisible();
   await page.getByText('Profil public et autorisation de recherche', { exact: false }).click();
   await page.getByRole('button', { name: 'Arrêter les recherches automatiques' }).click();
   await expect(page.locator('.badge').filter({ hasText: 'Interrompue' })).toBeVisible();
