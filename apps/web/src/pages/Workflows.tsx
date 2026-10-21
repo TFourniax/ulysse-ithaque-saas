@@ -1,3 +1,4 @@
+import { useResearchPolicy } from './Research.tsx';
 import type { WorkflowBriefDto, WorkflowRunDto, WorkspaceSourceDto } from '@ulysse/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -84,7 +85,15 @@ export function useWorkflows() {
     refetchInterval: 2000,
   });
 }
-function References({ refs, sources }: { refs: readonly string[]; sources: WorkspaceSourceDto[] }) {
+function References({
+  refs,
+  sources,
+  researchId,
+}: {
+  refs: readonly string[];
+  sources: WorkspaceSourceDto[];
+  researchId?: string | null;
+}) {
   return (
     <ul className="workflow-refs">
       {refs.map((ref) => {
@@ -94,6 +103,10 @@ function References({ refs, sources }: { refs: readonly string[]; sources: Works
             {source ? (
               <Link to={`/workspace#source-${source.id}`}>
                 {source.title} · v{source.revision}
+              </Link>
+            ) : researchId && /^source:[a-f0-9-]+:r[0-9]+$/u.test(ref) ? (
+              <Link to={`/research?campaign=${researchId}&candidate=${ref.split(':')[1] ?? ''}`}>
+                Preuve issue du benchmark
               </Link>
             ) : (
               <code>{ref}</code>
@@ -140,6 +153,14 @@ function ResultCard({
         <strong>{run.brief.target || 'Cible à préciser'}</strong> · {PHASES[run.brief.phase]} ·{' '}
         {run.brief.objective || 'Objectif à préciser'}
       </p>
+      {run.researchId && (
+        <Banner kind="info">
+          {run.status === 'queued'
+            ? 'Ulysse prépare les informations du marché avant ce diagnostic.'
+            : 'Le diagnostic utilise une recherche de marché. Validez les preuves citées avant d’approuver le brouillon; une modification du benchmark demandera une nouvelle analyse.'}{' '}
+          <Link to={`/research?campaign=${run.researchId}`}>Voir la collecte et le benchmark</Link>
+        </Banner>
+      )}
       {run.stale && (
         <Banner kind="warning">
           Des sources, le contexte ou la doctrine ont changé ou sont trop anciens. Relancez
@@ -168,7 +189,7 @@ function ResultCard({
             <section key={`${f.topic}-${i}`}>
               <h3>{f.topic}</h3>
               <p>{f.analysis}</p>
-              <References refs={f.references} sources={sources} />
+              <References refs={f.references} sources={sources} researchId={run.researchId} />
             </section>
           ))}
           {r.benchmark.length > 0 && (
@@ -188,7 +209,11 @@ function ResultCard({
                         <td>{f.topic}</td>
                         <td>
                           {f.analysis}
-                          <References refs={f.references} sources={sources} />
+                          <References
+                            refs={f.references}
+                            sources={sources}
+                            researchId={run.researchId}
+                          />
                         </td>
                       </tr>
                     ))}
@@ -210,7 +235,11 @@ function ResultCard({
                 }
               </strong>
               <p>{r.uniqueness.reason}</p>
-              <References refs={r.uniqueness.references} sources={sources} />
+              <References
+                refs={r.uniqueness.references}
+                sources={sources}
+                researchId={run.researchId}
+              />
             </section>
           )}
           {r.buyerQuestions.length > 0 && (
@@ -234,7 +263,11 @@ function ResultCard({
               </p>
               <h3>Pourquoi ce contenu</h3>
               <p>{r.content.rationale}</p>
-              <References refs={r.content.references} sources={sources} />
+              <References
+                refs={r.content.references}
+                sources={sources}
+                researchId={run.researchId}
+              />
             </>
           )}
           {r.limits.length > 0 && (
@@ -301,6 +334,7 @@ function WorkflowForm({
 }) {
   const session = useSession();
   const client = useQueryClient();
+  const researchPolicy = useResearchPolicy();
   const [brief, setBrief] = useState<WorkflowBriefDto>(
     buyer
       ? { ...buyer.brief, buyerRunId: buyer.id, objective: '', channel: '', phase: 'unknown' }
@@ -343,6 +377,14 @@ function WorkflowForm({
           }}
         >
           <h2>{kind === 'buyer' ? 'Cadrer le regard de l’acheteur' : 'Cadrer le contenu'}</h2>
+          {kind === 'buyer' && (
+            <Banner kind="info">
+              {researchPolicy.data?.profile.enabled
+                ? 'La recherche publique est activée : Ulysse collecte les informations de marché nécessaires avant le diagnostic.'
+                : 'Activez la recherche publique pour qu’Ulysse trouve et documente les concurrents.'}{' '}
+              <Link to="/research">Recherche et benchmark</Link>
+            </Banner>
+          )}
           <p>
             Les champs inconnus peuvent rester vides : Ulis précisera ce dont il a besoin pour
             avancer.

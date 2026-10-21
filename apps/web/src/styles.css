@@ -1957,6 +1957,7 @@ label {
 }
 
 input[type='text'],
+input[type='search'],
 input[type='url'],
 input[type='datetime-local'],
 input[type='number'],
@@ -2488,4 +2489,68 @@ details[open]::details-content {
     flex-direction: column;
     gap: 0.3rem;
   }
+}
+
+.research-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  margin-block: 1.5rem;
+}
+.research-table {
+  width: 100%;
+  min-width: 1800px;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+.research-table caption {
+  text-align: left;
+  padding: 0.75rem;
+}
+.research-table th,
+.research-table td {
+  vertical-align: top;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 1rem;
+  border: 1px solid var(--line, #d9e1e4);
+}
+.research-table thead th {
+  background: var(--surface, #f3f5f5);
+}
+.research-table tbody th {
+  text-align: left;
+  font-weight: normal;
+}
+.research-table p {
+  margin-block: 0.6rem;
+}
+.research-table blockquote {
+  margin: 0.75rem 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid #b4c5c4;
+}
+.research-fact + .research-fact {
+  border-top: 1px solid #d9e1e4;
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+}
+.research-page-text {
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+}
+
+.research-table tbody tr > th,
+.research-table tbody tr > td {
+  vertical-align: top;
+}
+.research-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+.research-table-scroll {
+  scrollbar-gutter: stable;
 }

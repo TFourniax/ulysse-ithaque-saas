@@ -24,3 +24,4 @@ export * from './services/review.ts';
 export * from './services/shared.ts';
 export * from './services/formulation.ts';
 export * from './workflows.ts';
+export * from './research.ts';

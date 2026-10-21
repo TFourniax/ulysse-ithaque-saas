@@ -10,3 +10,4 @@ export * from './uow.ts';
 export * from './config.ts';
 export * from './identity.ts';
 export * from './workspace-store.ts';
+export * from './research-store.ts';

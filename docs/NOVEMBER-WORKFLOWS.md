@@ -8,7 +8,15 @@ Périmètre confirmé par Thomas le 20 octobre 2026 : ces trois capacités sont 
 | Contenu contextualisé | Cible, phase de décision, progression attendue, canal, contraintes, contenus existants, demandes observées, diagnostic acheteur lié | Questions de cadrage si nécessaire, puis texte et appel à l'action expliqués et sourcés |
 | Prochaine interaction | Affaire, échanges, rôle des interlocuteurs, contexte et doctrine | Interaction qui fait progresser le client : question utile, résultat observable, preuve attendue, échéance proposée ou convenue |
 
-## Parcours dans l'application
+## Comportement cible confirmé le 21 octobre
+
+Ulysse doit compléter lui-même les informations accessibles : découverte web concurrentielle par plusieurs axes, collecte, qualification, enrichissement, benchmark sourcé puis revue humaine. Le lot [UL-020](WEB-RESEARCH-BENCHMARK.md) est implémenté localement; sa recette d’intégration et live reste ouverte. Le parcours d’import manuel ci-dessous reste celui de la version VPS rapportée par Thomas.
+
+Dans la version UL-020, ouvrir **Recherche et benchmark**, vérifier le profil public prérempli et ajouter le domaine officiel. Une autorisation déclenche la première campagne et permet les recherches suivantes avant un diagnostic lorsque le contexte ou la fraîcheur l’exigent. Aucun concurrent n’est à importer. Les offres sont présentées dans une matrice paginée avec citations, dates, inconnues et erreurs de lecture. Valider, corriger ou écarter les fiches, éventuellement par sélection groupée, puis préparer le diagnostic. Un brouillon utilisant des preuves provisoires doit être régénéré après leur revue, car celle-ci change leur version. Le contenu issu du diagnostic conserve les mêmes dépendances.
+
+La collecte continue dans une enveloppe explicite, avec progression et reprise. Une configuration fournisseur absente apparaît comme une collecte partielle. L’activation serveur, les limites et les contrôles live sont décrits dans [RESEARCH-OPERATIONS](RESEARCH-OPERATIONS.md).
+
+## Parcours dans la version actuellement livrée
 
 1. Renseigner le contexte de l'entreprise et valider une doctrine dans Administration. Les principes métier sont éditables dans une nouvelle version et visibles avant validation. La doctrine de démonstration existante reste fictive ; le corpus privé devra être importé et validé séparément.
 2. Dans Sources métier, ajouter des extraits datés : offre/site, concurrents, contenus déjà produits, demandes observées. Une URL est une provenance, pas une collecte automatique. Les questions imaginées ont leur catégorie distincte.
@@ -40,7 +48,7 @@ Vérifier : bénéfice distinct de fonctionnalité ; différence de marché born
 
 ## Limites à traiter avant ouverture de la bêta
 
-- Collecte web, recherche de concurrents et veille automatique non raccordées. Le benchmark utilise le corpus explicitement fourni, sans promesse d'exhaustivité.
+- UL-020 raccorde la recherche web et le benchmark dans le code; CI d’intégration, déploiement et recette fournisseur restent à faire. La veille planifiée hors demande de diagnostic, les alias entre domaines et la corroboration indépendante ne sont pas livrés.
 - Sources CRM et corpus client réel non raccordés. La doctrine privée reste à importer et à valider dans le tenant.
 - Pertinence, qualité rédactionnelle et coût live à mesurer sur la recette fictive ; les tests structurels ne prouvent pas la qualité du raisonnement.
 - Déploiement et état du VPS déclaré par Thomas non inspectés dans cette session ; aucun changement sur le serveur.

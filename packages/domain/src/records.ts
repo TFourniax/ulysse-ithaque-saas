@@ -118,6 +118,7 @@ export const OUTBOX_EVENTS = [
   'doctrine.changed',
   'context.changed',
   'workflow.requested',
+  'research.requested',
 ] as const;
 export type OutboxEventType = (typeof OUTBOX_EVENTS)[number];
 

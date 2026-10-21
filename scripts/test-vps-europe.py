@@ -1,5 +1,7 @@
 """Exercise the actual deployment config transformation, without Docker or credentials."""
 import copy
+import contextlib
+import io
 import json
 from pathlib import Path
 import re
@@ -11,6 +13,7 @@ from unittest.mock import patch
 SCRIPT = Path(__file__).with_name("ulysse-vps-europe.sh").read_text()
 TRANSFORM = re.search(r'python3 - "\$release" "\$tag" <<\'PY\'\n(.*?)\nPY', SCRIPT, re.S).group(1)
 MODEL_TRANSFORM = re.search(r'<<\'PYMODEL\'\n(.*?)\nPYMODEL', SCRIPT, re.S).group(1)
+RESEARCH_TRANSFORM = re.search(r'<<\'PYRESEARCH\'\n(.*?)\nPYRESEARCH', SCRIPT, re.S).group(1)
 
 
 class DeploymentConfig(unittest.TestCase):
@@ -56,7 +59,9 @@ class DeploymentConfig(unittest.TestCase):
         self.assertEqual(rollback["services"]["worker"]["environment"]["AGENT_SESSION_ID"], "existing-session")
 
     def test_existing_european_profile_can_be_restored_without_going_global(self):
-        _, _, rollback = self.transform("openrouter-eu-zdr")
+        original, candidate, rollback = self.transform("openrouter-eu-zdr")
+        self.assertEqual(candidate['services']['worker']['environment'], {
+            **original['services']['worker']['environment'], 'AGENT_STUB_PROVIDER_URL': ''})
         self.assertEqual(rollback["services"]["worker"]["environment"]["ULYSSE_ANALYSIS_MODE"], "hermes-live")
         self.assertEqual(rollback["services"]["worker"]["environment"]["AGENT_PROVIDER_ROUTE"], "openrouter-eu-zdr")
 
@@ -97,6 +102,47 @@ class DeploymentConfig(unittest.TestCase):
             with patch.object(sys, 'argv', ['-', str(d), str(path)]), self.assertRaisesRegex(SystemExit, 'profil JSON invalide'):
                 exec(compile(MODEL_TRANSFORM, 'model-config', 'exec'), {})
             self.assertFalse((d/'deploy.json').exists())
+
+    def research_transform(self, mode='brave', permissions=0o600, symlink=False):
+        _, original, _ = self.transform('openrouter-eu-zdr')
+        with tempfile.TemporaryDirectory() as temp:
+            d = Path(temp)
+            (d/'rollback.json').write_text(json.dumps(original))
+            key = d/'search.key'
+            key.write_text('fake-research-key-with-$-literal')
+            key.chmod(permissions)
+            if symlink:
+                link = d/'search-link.key'
+                link.symlink_to(key)
+                key = link
+            captured = io.StringIO()
+            with patch.object(sys, 'argv', ['-', str(d), mode, str(key)]), contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+                exec(compile(RESEARCH_TRANSFORM, 'research-config', 'exec'), {})
+            self.assertEqual(captured.getvalue(), '')
+            self.assertEqual(json.loads((d/'rollback.json').read_text()), original)
+            return original, json.loads((d/'deploy.json').read_text())
+
+    def test_research_only_adds_worker_connector_preserving_model_session_and_budgets(self):
+        original, candidate = self.research_transform()
+        expected = copy.deepcopy(original)
+        expected['services']['worker']['environment'].update({
+            'RESEARCH_SEARCH_PROVIDER': 'brave', 'RESEARCH_SEARCH_PRICE_USD': '0.005',
+            'BRAVE_SEARCH_API_KEY': 'fake-research-key-with-$$-literal'})
+        self.assertEqual(candidate, expected)
+
+    def test_research_off_does_not_read_a_private_key(self):
+        original, candidate = self.research_transform(mode='off', permissions=0o644)
+        expected = copy.deepcopy(original)
+        expected['services']['worker']['environment']['RESEARCH_SEARCH_PROVIDER'] = 'none'
+        self.assertEqual(candidate, expected)
+
+    def test_research_rejects_public_key_file(self):
+        with self.assertRaisesRegex(SystemExit, 'permissions 600 requis'):
+            self.research_transform(permissions=0o644)
+
+    def test_research_rejects_key_symlink(self):
+        with self.assertRaisesRegex(SystemExit, 'fichier prive regulier'):
+            self.research_transform(symlink=True)
 
 
 if __name__ == "__main__":

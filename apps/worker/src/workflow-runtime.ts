@@ -19,7 +19,7 @@ import {
   workflowQuestions,
 } from '@ulysse/domain';
 import type { Pool, PoolClient, WorkflowRequest } from '@ulysse/database';
-import { PgWorkspaceStore } from '@ulysse/database';
+import { PgWorkspaceStore, PgResearchStore } from '@ulysse/database';
 import { z } from 'zod';
 import { workflowFailure, type WorkflowStage } from './agent-errors.ts';
 
@@ -89,6 +89,11 @@ export class WorkflowRuntime {
         return false;
       }
       if (request.status !== 'queued') return false;
+      if (request.researchId) {
+        const research = new PgResearchStore(this.store.pool);
+        const campaign = await research.campaign(sql, ctx.tenantId, request.researchId);
+        if (['queued', 'running'].includes(campaign.status)) return false;
+      }
       let input: WorkflowInput;
       try {
         input = await this.store.input(tx, sql, request);
@@ -236,7 +241,7 @@ export class WorkflowRuntime {
           `workflow:${id}`,
           `context:v${input.context?.version ?? 0}`,
           `doctrine:${input.doctrine?.id ?? ''}:v${input.doctrine?.version ?? 0}`,
-          ...input.sources.map(sourceReference),
+          ...input.sources.filter((s) => request.sourceIds.includes(s.id)).map(sourceReference),
         ];
         if (input.buyer) required.push(`buyer:${input.buyer.id}`);
         ensure(
@@ -295,7 +300,14 @@ export class WorkflowRuntime {
   }
   async tool(capability: string, name: string, args: unknown): Promise<unknown> {
     ensure((WORKFLOW_TOOLS as readonly string[]).includes(name), 'FORBIDDEN');
-    const params = z.object({ sourceId: z.uuid().optional() }).strict().parse(args);
+    const params = z
+      .object({
+        sourceId: z.uuid().optional(),
+        sourceIds: z.array(z.uuid()).min(1).max(4).optional(),
+        offset: z.number().int().min(0).optional(),
+      })
+      .strict()
+      .parse(args);
     const ctx = await this.store.resolve(hash(capability));
     ensure(ctx, 'FORBIDDEN');
     return this.store.transaction(ctx, async (tx, sql) => {
@@ -334,25 +346,48 @@ export class WorkflowRuntime {
           context: input.context?.content,
           doctrine: input.doctrine?.content,
           buyer: input.buyer,
+          research: input.research
+            ? {
+                id: input.research.id,
+                status: input.research.status,
+                candidateCount: input.research.candidateCount,
+                qualifiedCount: input.research.qualifiedCount,
+                provisionalCount: input.research.pendingReferences.length,
+              }
+            : null,
           untrusted: true,
         };
       } else if (name === 'list_company_sources') {
         value = {
-          items: input.sources.map((s) => ({
+          items: input.sources.slice(params.offset ?? 0, (params.offset ?? 0) + 20).map((s) => ({
             id: s.id,
             kind: s.kind,
             title: s.title,
             origin: s.origin,
             url: s.url,
             observedAt: s.observedAt,
+            required: request.sourceIds.includes(s.id),
+            reviewStatus: input.research?.pendingReferences.includes(sourceReference(s))
+              ? 'pending'
+              : 'approved_or_company',
           })),
-          coverage: 'Corpus fourni par l’entreprise, non exhaustif.',
+          total: input.sources.length,
+          nextOffset:
+            (params.offset ?? 0) + 20 < input.sources.length ? (params.offset ?? 0) + 20 : null,
+          coverage: input.research
+            ? 'Sources choisies et corpus de recherche publique. Lire toutes les sources required=true, puis les concurrents pertinents pour une synthèse; la matrice complète reste dans Recherche. Corpus non exhaustif, collecte et revue peuvent être incomplètes.'
+            : 'Corpus fourni par l’entreprise, non exhaustif.',
         };
       } else {
-        const source = input.sources.find((s) => s.id === params.sourceId);
-        ensure(source, 'NOT_FOUND');
-        refs = [sourceReference(source)];
-        value = { ...source, reference: refs[0], untrusted: true };
+        ensure(Boolean(params.sourceId) !== Boolean(params.sourceIds), 'INVALID_INPUT');
+        const ids = params.sourceIds ?? [params.sourceId];
+        const items = ids.map((id) => {
+          const source = input.sources.find((s) => s.id === id);
+          ensure(source, 'NOT_FOUND');
+          return { ...source, reference: sourceReference(source), untrusted: true };
+        });
+        refs = items.map((item) => item.reference);
+        value = params.sourceIds ? { items } : items[0];
       }
       await sql.query(
         'UPDATE agent_runs SET tool_calls=tool_calls+1,retrieved=ARRAY(SELECT DISTINCT unnest(retrieved || $3::text[])) WHERE tenant_id=$1 AND id=$2',

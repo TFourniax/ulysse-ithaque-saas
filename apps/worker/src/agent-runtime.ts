@@ -40,7 +40,7 @@ export const EXECUTION_CONTRACT = 'ulysse-execution-v2';
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
 export const WORKFLOW_INSTRUCTIONS_SHA256 =
-  '22f1a1ef4c4fdd91aa8915af0b5dd12702d8c3e104d19ad44f0c5848cd18b410';
+  '269391c540944db9265b9e615050b4c20c3b51f40e6a485610fb56913cf9b02c';
 export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
 /** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
 export const MAX_ATTEMPTS = 2;

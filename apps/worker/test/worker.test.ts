@@ -1,3 +1,8 @@
+import type { ResearchProfile } from '@ulysse/domain';
+import { PgResearchStore } from '@ulysse/database';
+import { extractPublicPage, ResearchWebError } from '@ulysse/connectors';
+import { ResearchRuntime } from '../src/research-runtime.ts';
+import type { ResearchModel } from '../src/research-model.ts';
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { createHash } from 'node:crypto';
@@ -1610,5 +1615,327 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       ),
       /FORBIDDEN/,
     );
+  });
+});
+
+describe('UL-020 autonomous research with PostgreSQL roles', () => {
+  const publicProfile: ResearchProfile = {
+    enabled: true,
+    companyName: 'Atelier fictif',
+    website: 'https://own.example/',
+    offers: ['Intégration de systèmes'],
+    target: 'PME',
+    market: 'Automatisation métier',
+    geography: 'France',
+    keywords: [],
+    budgetUsd: 0.75,
+    maxSearches: 40,
+    maxPages: 120,
+    maxAgeDays: 30,
+  };
+  const quote =
+    'Notre offre comprend un audit des processus et une intégration des outils existants.';
+  const reader = {
+    read: async (url: string) =>
+      extractPublicPage(
+        url,
+        `<title>${new URL(url).hostname}</title><h1>Offre fictive</h1><p>${quote}</p><p>Prix : 90 EUR par utilisateur et par mois, hors intégration initiale.</p><a href="/pricing">Tarifs et intégrations</a>`,
+      ),
+  };
+  const model: ResearchModel = {
+    identity: 'scripted-public-research-test',
+    estimate: () => 0.01,
+    generate: async (input) => ({
+      result:
+        input.kind === 'plan'
+          ? { queries: [] }
+          : {
+              name: new URL(input.page.url).hostname,
+              relevance: 'direct',
+              reason: 'Même besoin métier dans cette fixture.',
+              facts: [
+                {
+                  offer: 'Intégration',
+                  dimension: 'offer',
+                  value: 'Audit et connexion des outils existants.',
+                  quote,
+                },
+              ],
+              competitorLinks: [],
+            },
+      usage: { cost: 0.002, state: 'declared', inputTokens: 80, outputTokens: 20 },
+    }),
+  };
+  async function setup(name: string, profile = publicProfile) {
+    const w = await tenantWorld(name, name);
+    const repository = new PgResearchStore(appPool);
+    const ctx = serviceContext(w.tenantId, ['analysis:run']);
+    await repository.savePolicy(w.owner, profile, null);
+    const id = await repository.transaction(w.owner, async (tx, sql) => {
+      await tx.lock('analysis');
+      return repository.ensureCampaign(w.owner, tx, sql, crypto.randomUUID());
+    });
+    assert.ok(id);
+    const engine = new ResearchRuntime(workerPool, {
+      reader,
+      model,
+      search: {
+        name: 'scripted',
+        costPerCallUsd: 0.005,
+        search: async () => ({
+          results: Array.from({ length: 10 }, (_, i) => ({
+            url: `https://rival-${i}.example/`,
+            title: `Fournisseur fictif ${i}`,
+          })),
+          more: false,
+        }),
+      },
+      session: `research-${crypto.randomUUID()}`,
+      sessionBudget: 2,
+      monthBudget: 10,
+    });
+    const current = () =>
+      repository.transaction(w.owner, (_tx, sql) => repository.campaign(sql, w.tenantId, id));
+    const items = () =>
+      repository.transaction(w.owner, (_tx, sql) => repository.candidates(sql, w.tenantId, id));
+    const drain = async () => {
+      for (let i = 0; i < 150; i++) {
+        await engine.run(ctx, id);
+        if (!['queued', 'running'].includes((await current()).status)) return;
+      }
+      throw new Error('research did not terminate');
+    };
+    return { ...w, repository, ctx, id, engine, current, items, drain };
+  }
+  test('zero imported competitors yields more than eight real page records, a deduplicated matrix and replay-safe completion', async () => {
+    const w = await setup('research-corpus');
+    w.engine.settings.reader = {
+      read: async (url) => {
+        if (url === 'https://rival-0.example/pricing') throw new ResearchWebError('read_timeout');
+        return reader.read(url);
+      },
+    };
+    await w.drain();
+    const c = await w.current();
+    assert.equal(c.status, 'completed');
+    assert.equal(c.stopReason, 'steps_failed');
+    assert.equal(c.candidateCount, 10);
+    assert.equal(c.qualifiedCount, 10);
+    assert.ok(c.pages > 8);
+    assert.ok(c.committedUsd > 0);
+    assert.equal(c.uncertainCalls, 0);
+    const candidates = (await w.items()).items;
+    assert.equal(candidates.length, 11);
+    assert.equal(new Set(candidates.map((c) => c.domain)).size, 11);
+    assert.ok(
+      candidates.every(
+        (c) => c.pages.length >= 1 && c.facts.length === 1 && c.review === 'pending',
+      ),
+    );
+    assert.equal(
+      candidates.find((c) => c.domain === 'rival-0.example')?.errors[0]?.code,
+      'read_timeout',
+    );
+    const before = JSON.stringify(candidates);
+    await w.engine.run(w.ctx, w.id);
+    assert.equal(JSON.stringify((await w.items()).items), before);
+    assert.equal((await w.current()).committedUsd, c.committedUsd);
+    const leaked = await w.repository.transaction(
+      w.owner,
+      async (_tx, sql) =>
+        (
+          await sql.query<{ n: string }>(
+            "SELECT count(*) AS n FROM workspace_sources WHERE tenant_id=$1 AND body->>'kind'='competitor'",
+            [w.tenantId],
+          )
+        ).rows[0]?.n,
+    );
+    assert.equal(leaked, '0');
+  });
+  test('cancel in flight prevents publication; foreign tenant and viewer cannot review a collected candidate', async () => {
+    const a = await setup('research-cancel');
+    const b = await setup('research-foreign');
+    let release: () => void = () => {};
+    let entered: () => void = () => {};
+    const started = new Promise<void>((r) => {
+      entered = r;
+    });
+    const barrier = new Promise<void>((r) => {
+      release = r;
+    });
+    const slow = new ResearchRuntime(workerPool, {
+      ...a.engine.settings,
+      reader: {
+        read: async (url) => {
+          entered();
+          await barrier;
+          return reader.read(url);
+        },
+      },
+    });
+    const running = slow.run(a.ctx, a.id);
+    await started;
+    await a.repository.action(a.owner, a.id, (await a.current()).revision, 'cancel');
+    release();
+    await running;
+    assert.equal((await a.current()).status, 'cancelled');
+    assert.equal((await a.items()).total, 0);
+    await b.drain();
+    const candidate = (await b.items()).items[0]!;
+    await assert.rejects(
+      a.repository.transaction(a.owner, (_tx, sql) =>
+        a.repository.candidate(sql, a.tenantId, candidate.id),
+      ),
+    );
+    assert.ok(b.owner.actor.kind === 'user');
+    const review = {
+      revision: candidate.revision,
+      decision: 'approved' as const,
+      note: '',
+      corrections: [],
+    };
+    await assert.rejects(
+      b.repository.review(
+        userContext(b.tenantId, b.owner.actor.userId, 'viewer'),
+        candidate.id,
+        review,
+      ),
+    );
+    await b.repository.review(b.owner, candidate.id, review);
+    await assert.rejects(b.repository.review(b.owner, candidate.id, review));
+    const approved = await b.repository.transaction(b.owner, (_tx, sql) =>
+      b.repository.candidate(sql, b.tenantId, candidate.id),
+    );
+    assert.equal(approved.review, 'approved');
+    assert.equal(approved.facts[0]?.quality, 'vendor_claim');
+    const history = await b.repository.transaction(
+      b.owner,
+      async (_tx, sql) =>
+        (
+          await sql.query<{ snapshot: unknown }>(
+            'SELECT snapshot FROM research_reviews WHERE tenant_id=$1 AND candidate_id=$2',
+            [b.tenantId, candidate.id],
+          )
+        ).rows,
+    );
+    assert.equal(history.length, 1);
+  });
+  test('uncertain cost survives pause and resume and disabling the policy refuses new reservations', async () => {
+    const w = await setup('research-budget', { ...publicProfile, budgetUsd: 0.05 });
+    const claimed = await w.engine.store.claim(w.ctx, w.id);
+    assert.ok(claimed);
+    const call = await w.engine.reserve(w.ctx, claimed.task, 'model', 0.04);
+    assert.ok(call);
+    assert.equal(await w.engine.reserve(w.ctx, claimed.task, 'model', 0.04), null);
+    await w.engine.store.pause(w.ctx, claimed.task, 'budget_reached');
+    const paused = await w.current();
+    assert.equal(paused.uncertainCalls, 1);
+    assert.equal(paused.committedUsd, 0.04);
+    await w.repository.action(w.owner, w.id, paused.revision, 'resume', {
+      budgetUsd: 0.1,
+      maxSearches: 40,
+      maxPages: 120,
+    });
+    const retry = await w.engine.store.claim(w.ctx, w.id);
+    assert.ok(retry);
+    assert.equal(retry.task.attempt, 2);
+    assert.ok(await w.engine.reserve(w.ctx, retry.task, 'model', 0.04));
+    const after = await w.current();
+    assert.equal(after.committedUsd, 0.08);
+    assert.equal(after.uncertainCalls, 2);
+    await w.repository.savePolicy(w.owner, { ...publicProfile, enabled: false }, 1);
+    assert.equal(await w.engine.reserve(w.ctx, retry.task, 'model', 0.001), null);
+    assert.equal(await w.engine.store.claim(w.ctx, w.id), null);
+  });
+  test('buyer automatically reuses the campaign, waits for collection and refuses approval of provisional evidence', async () => {
+    const w = await setup('research-buyer');
+    const workspace = new PgWorkspaceStore(appPool);
+    const source = await workspace.saveSource(w.owner, {
+      kind: 'offer',
+      title: 'Offre fictive',
+      text: quote,
+      url: 'https://own.example/',
+      origin: 'company',
+      observedAt: new Date().toISOString(),
+    });
+    const body = {
+      kind: 'buyer' as const,
+      brief: {
+        offer: 'Intégration',
+        target: 'PME',
+        phase: 'comparison' as const,
+        objective: 'Comparer',
+        channel: '',
+        constraints: '',
+        buyerRunId: null,
+      },
+      sourceIds: [source.id],
+      requestKey: crypto.randomUUID(),
+    };
+    const buyer = await workspace.create(w.owner, body, 'hermes-live');
+    assert.equal((await workspace.listWorkflows(w.owner))[0]?.researchId, w.id);
+    let executions = 0;
+    const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        executions++;
+        await engine.tool(request.capability, 'get_workflow_context', {});
+        const list = z
+          .object({ items: z.array(z.object({ id: z.string(), kind: z.string() })) })
+          .parse(await engine.tool(request.capability, 'list_company_sources', {}));
+        const rival = list.items.find((s) => s.kind === 'competitor');
+        assert.ok(rival);
+        const read = z
+          .object({ items: z.array(z.object({ id: z.string(), reference: z.string() })) })
+          .parse(
+            await engine.tool(request.capability, 'read_company_source', {
+              sourceIds: [source.id, rival.id],
+            }),
+          );
+        const ownRef = read.items[0]!.reference;
+        const rivalRef = read.items[1]!.reference;
+        return {
+          ...pendingWorkflow('buyer', [], 'Comparaison fictive sourcée'),
+          outcome: 'draft',
+          findings: [{ topic: 'Offre', analysis: quote, references: [ownRef] }],
+          benchmark: [
+            {
+              topic: 'Alternative',
+              analysis: 'Un service concurrent déclare aussi proposer une intégration.',
+              references: [rivalRef, ownRef],
+            },
+          ],
+          uniqueness: {
+            verdict: 'insufficient_evidence',
+            reason: 'Déclarations à vérifier.',
+            references: [ownRef, rivalRef],
+          },
+        } satisfies WorkflowResult;
+      },
+    });
+    await engine.workflows.run(w.ctx, buyer);
+    assert.equal(executions, 0);
+    assert.equal((await workspace.listWorkflows(w.owner))[0]?.status, 'queued');
+    await w.drain();
+    await engine.workflows.run(w.ctx, buyer);
+    const draft = (await workspace.listWorkflows(w.owner))[0]!;
+    assert.equal(draft.status, 'draft', draft.errorCode ?? '');
+    await assert.rejects(workspace.review(w.owner, buyer, draft.revision, 'approve'));
+    for (const c of (await w.items()).items)
+      await w.repository.review(w.owner, c.id, {
+        revision: c.revision,
+        decision: 'approved',
+        note: 'Relu sur fixture.',
+        corrections: [],
+      });
+    assert.equal((await workspace.listWorkflows(w.owner))[0]?.stale, true);
+    const second = await workspace.create(
+      w.owner,
+      { ...body, requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    await engine.workflows.run(w.ctx, second);
+    const updated = (await workspace.listWorkflows(w.owner)).find((r) => r.id === second)!;
+    assert.equal(updated.status, 'draft', updated.errorCode ?? '');
+    await workspace.review(w.owner, second, updated.revision, 'approve');
   });
 });

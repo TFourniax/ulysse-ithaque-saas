@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-20.models2
+ULYSSE_SCRIPT_VERSION=2026-10-21.research1
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -132,13 +132,13 @@ case "$action" in
   audit) audit; exit 0 ;;
   status) audit; check_health; exit 0 ;;
   diagnose) diagnose "${2:-acme-demo}"; exit 0 ;;
-  deploy|model|rollback) ;;
+  deploy|model|research|rollback) ;;
   models)
     worker=$(container_id worker)
     [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
     ud exec "$worker" node --input-type=module -e 'import {modelProfiles} from "./apps/worker/dist/src/agent-provider.js"; console.log(JSON.stringify(modelProfiles(),null,2))'
     exit 0 ;;
-  *) die 'actions : audit | diagnose [tenant] | deploy COMMIT | status | model MODEL_ID|/chemin/profil.json | rollback' ;;
+  *) die 'actions : audit | diagnose [tenant] | deploy COMMIT | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
 esac
 mkdir -p "$ULYSSE_RELEASES"
 exec 9>"$ULYSSE_PRIVATE/november-deploy.lock"
@@ -171,6 +171,65 @@ preflight() {
     } catch(e) { console.error(e.message); process.exit(1); }
   '
 }
+if [[ "$action" == research ]]; then
+  selector=${2:-}
+  [[ "$selector" == brave || "$selector" == off ]] || die 'fournir research brave ou research off'
+  [[ -f "$ULYSSE_ACTIVE" ]] || die 'installer UL-020 avant la recherche'
+  cfg=$(cat "$ULYSSE_ACTIVE")
+  [[ "$cfg" == "$ULYSSE_RELEASES/"* && -f "$cfg" ]] || die 'configuration active invalide'
+  release=$(mktemp -d "$ULYSSE_RELEASES/research-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
+  current_config > "$release/rollback.json"
+  worker=$(container_id worker)
+  [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
+  ud inspect "$worker" > "$release/worker.inspect.json"
+  python3 - "$release" <<'PYRESEARCHDRIFT'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1]); expected=json.loads((p/'rollback.json').read_text())['services']['worker'].get('environment',{})
+actual=dict(x.split('=',1) for x in json.loads((p/'worker.inspect.json').read_text())[0]['Config']['Env'])
+for k,v in expected.items():
+    if str(v).replace('$$','$') != actual.get(k): raise SystemExit(f'ARRET : ecart de configuration worker, variable {k}.')
+PYRESEARCHDRIFT
+  cp "$ULYSSE_ACTIVE" "$release/previous-active.txt"
+  printf '%s\n' worker > "$release/services.txt"
+  python3 - "$release" "$selector" "${3:-$ULYSSE_PRIVATE/brave-search.key}" <<'PYRESEARCH'
+import json,sys,pathlib,os,stat
+p=pathlib.Path(sys.argv[1]); c=json.loads((p/'rollback.json').read_text())
+e=c['services']['worker']['environment']
+if sys.argv[2]=='brave':
+    if e.get('ULYSSE_ANALYSIS_MODE')!='hermes-live' or e.get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr': raise SystemExit('ARRET : modele live Europe requis.')
+    f=pathlib.Path(sys.argv[3])
+    if not f.is_absolute() or not f.exists(): raise SystemExit('ARRET : fichier de cle prive absent.')
+    info=f.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode & 0o077 or not 16<=info.st_size<=512: raise SystemExit('ARRET : fichier prive regulier, proprietaire courant et permissions 600 requis.')
+    key=f.read_text().strip()
+    if not 16<=len(key)<=500 or any(ord(ch)<33 or ord(ch)>126 for ch in key): raise SystemExit('ARRET : format de cle invalide.')
+    e['BRAVE_SEARCH_API_KEY']=key.replace('$','$$')
+    e['RESEARCH_SEARCH_PROVIDER']='brave'
+    e.setdefault('RESEARCH_SEARCH_PRICE_USD','0.005')
+else:
+    e['RESEARCH_SEARCH_PROVIDER']='none'
+    e.pop('BRAVE_SEARCH_API_KEY',None)
+(p/'deploy.json').write_text(json.dumps(c,indent=2))
+PYRESEARCH
+  uc_file "$release/deploy.json" config --quiet
+  uc_file "$release/deploy.json" run --rm --no-deps -T worker node --input-type=module -e '
+    import {ResearchConfig} from "./apps/worker/dist/src/research-runtime.js";
+    const c=ResearchConfig.parse(process.env);
+    if(c.RESEARCH_SEARCH_PROVIDER==="brave"&&!c.BRAVE_SEARCH_API_KEY)throw new Error("Cle de recherche absente");
+    console.log("Configuration recherche valide; aucun appel fournisseur.");
+  '
+  ULYSSE_RESTORE_CONFIG="$release/rollback.json"
+  ULYSSE_SERVICES=(worker)
+  ULYSSE_STOPPED=1
+  uc_file "$cfg" stop -t 110 worker
+  uc_file "$release/deploy.json" up -d --no-deps --no-build --pull never --wait --wait-timeout 300 worker
+  check_health
+  printf '%s\n' "$release/deploy.json" > "$ULYSSE_ACTIVE"
+  ULYSSE_STOPPED=0
+  say "Recherche configuree : $selector. Autoriser le profil public dans Recherche et benchmark. Budgets et session conserves."
+  exit 0
+fi
+
 if [[ "$action" == model ]]; then
   target_model=${2:-}
   case "$target_model" in
@@ -238,9 +297,9 @@ revision=${2:-}
 git -C "$ULYSSE_REPO" diff --quiet && git -C "$ULYSSE_REPO" diff --cached --quiet || die 'correctifs locaux suivis par Git : les conserver et les examiner avant la mise a jour'
 # Mettre aussi a jour la reference distante dans les clones mono-branche.
 git -C "$ULYSSE_REPO" fetch origin \
-  refs/heads/codex/ul-019-model-profiles:refs/remotes/origin/codex/ul-019-model-profiles
+  refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
 git -C "$ULYSSE_REPO" cat-file -e "$revision^{commit}"
-git -C "$ULYSSE_REPO" merge-base --is-ancestor "$revision" origin/codex/ul-019-model-profiles || die 'commit hors de la branche profils UL-019'
+git -C "$ULYSSE_REPO" merge-base --is-ancestor "$revision" origin/codex/ul-020-web-research || die 'commit hors de la branche recherche UL-020'
 git -C "$ULYSSE_REPO" merge-base --is-ancestor HEAD "$revision" || die 'le depot VPS contient une lignee qui manque dans la version demandee'
 release=$(mktemp -d "$ULYSSE_RELEASES/${revision:0:7}-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
 current_config > "$release/before.json"
@@ -287,9 +346,10 @@ for service in ('hermes','model-stub'):
 e=c['services']['worker']['environment']
 if api_mode!='hermes-live' or worker_mode!='hermes-live' or len(e.get('OPENROUTER_API_KEY','') or '')<16:
     raise SystemExit('ARRET : cette mise a niveau exige le mode live et la cle deja actifs.')
-e['AGENT_MODEL_ID']='z-ai/glm-5.3-flash'
-e['AGENT_MODEL_PROFILE_JSON']=''
-e['AGENT_PROVIDER_ROUTE']='openrouter-eu-zdr'
+if e.get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr':
+    e['AGENT_MODEL_ID']='z-ai/glm-5.3-flash'
+    e['AGENT_MODEL_PROFILE_JSON']=''
+    e['AGENT_PROVIDER_ROUTE']='openrouter-eu-zdr'
 e['AGENT_STUB_PROVIDER_URL']=''
 # On a failed cutover, restore availability without resuming global inference.
 if old['services']['worker']['environment'].get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr':

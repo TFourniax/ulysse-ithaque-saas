@@ -69,6 +69,14 @@ export type WorkflowInput = Readonly<{
   doctrine: Doctrine | null;
   sources: readonly WorkspaceSource[];
   buyer: null | Readonly<{ id: string; result: WorkflowResult }>;
+  research?: {
+    id: string;
+    revision: number;
+    status: string;
+    candidateCount: number;
+    qualifiedCount: number;
+    pendingReferences: string[];
+  };
 }>;
 
 export const sourceReference = (s: WorkspaceSource): string => `source:${s.id}:r${s.revision}`;
@@ -81,6 +89,7 @@ export const workflowInputHash = (i: WorkflowInput): string =>
     doctrine: i.doctrine ? [i.doctrine.id, i.doctrine.version, i.doctrine.contentHash] : null,
     sources: i.sources.map((s) => [s.id, s.revision, s.observedAt]),
     buyer: i.buyer,
+    research: i.research,
   });
 
 /** Questions precede drafting; a model cannot turn missing context into invented facts. */
@@ -234,6 +243,11 @@ export function validateWorkflowPublication(
     'unretrieved citation',
   );
   if (result.outcome !== 'draft') return;
+  ensure(
+    input.kind !== 'buyer' || !input.research?.qualifiedCount || result.benchmark.length > 0,
+    'INVALID_INPUT',
+    'available research benchmark ignored',
+  );
   ensure(workflowQuestions(input).length === 0, 'INVALID_INPUT', 'incomplete brief');
   const offerRefs = new Set(
     input.sources.filter((s) => s.kind === 'offer' || s.kind === 'website').map(sourceReference),

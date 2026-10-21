@@ -1,5 +1,13 @@
 # Produit : exigences de référence
 
+## Clarification du 21 octobre — acquisition autonome des informations
+
+Thomas précise que l'enrichissement du corpus est une responsabilité d'Ulysse. Lorsqu'une information utile manque, le produit doit rechercher ce qui est accessible sur le web ou dans les sources déjà autorisées, qualifier les informations trouvées et proposer leur validation à l'utilisateur. Il ne doit pas demander à celui-ci de constituer manuellement un benchmark concurrentiel. Une question humaine reste nécessaire pour une information privée, inaccessible, ambiguë ou relevant d'un choix métier.
+
+La découverte concurrentielle doit croiser noms, mots-clés, besoins clients, offres, marchés, secteurs et géographies, puis explorer les nouvelles pistes utiles. Elle recherche une couverture large, dédoublonne les acteurs, distingue concurrents directs, indirects et solutions de substitution, enrichit les offres et conserve une provenance vérifiable. La validation humaine porte sur des découvertes et comparaisons préparées, pas sur la saisie de chaque page.
+
+Cette collecte ciblée est dans le périmètre produit. L'absence actuelle de connecteur web est un manque d'implémentation, pas une décision de reporter ce travail sur l'utilisateur. Les limites de contexte d'un appel modèle ne limitent pas le nombre total de sources étudiées. Voir [UL-020 — recherche et benchmark autonomes](WEB-RESEARCH-BENCHMARK.md).
+
 ## Périmètre novembre confirmé le 20 octobre 2026
 
 Les trois priorités vendues aux entreprises sont : (1) client synthétique qui comprend l'offre, confronte ses bénéfices et ses preuves au marché et aboutit au crash test de l'unicité ; (2) contenu contextualisé fondé sur l'existant, les demandes observées et les hypothèses issues du diagnostic acheteur, avec cible, phase et progression attendue explicites ; (3) prochaine interaction utile par affaire. Les questions intelligentes précèdent toute conclusion insuffisamment étayée. Le cadrage de la V1 historique ci-dessous est complété par cette instruction ; marketing et client synthétique ne sont plus différés. Voir [parcours de novembre](NOVEMBER-WORKFLOWS.md).
@@ -28,6 +36,11 @@ Le premier périmètre est commercial/Biz Dev. Le produit doit être utile avec 
 | REQ-010 | Fonctionnement sans dépendance à toutes les briques partenaires | Parcours fictif autonome puis pilote avec une source suffisante |
 | REQ-011 | Exploitation observable et maîtrisée | Jobs, erreurs, coûts, alertes, sauvegarde/restauration vérifiées |
 | REQ-012 | Mesure de valeur du pilote | Panel de recommandations annotées et mesures observées, pas ROI inventé |
+| REQ-013 | Recherche autonome des informations manquantes accessibles | Une lacune déclenche une recherche tracée avant une question à l'utilisateur ; échec d'accès et information introuvable sont distingués |
+| REQ-014 | Découverte et enrichissement concurrentiels par plusieurs axes | Recherche depuis l'offre et le contexte seuls, requêtes diversifiées, acteurs dédoublonnés et pertinence expliquée |
+| REQ-015 | Qualification des faits et comparaison des offres | Chaque cellule comparative possède une preuve datée ou un état inconnu/contradictoire ; déclaration d'un vendeur distincte d'un résultat démontré |
+| REQ-016 | Validation humaine de découvertes préparées | Fiches et matrice provisoires relisibles ; validation, correction et exclusion historisées ; aucun clic obligatoire par page collectée |
+| REQ-017 | Corpus étendu, recherche progressive et actualisable | Lots reprenables au-delà de huit sources, couverture et motifs d'arrêt visibles, coûts suivis, mises à jour versionnées |
 
 ## Parcours V1
 
@@ -51,7 +64,7 @@ La règle « sept jours sans interaction » du code est une fixture technique co
 
 ## Hors périmètre initial
 
-Autonomie d'envoi, publications sociales, décisions financières/RH, agents salariés, web scraping général, enregistrement live de réunion, place de marché d'agents, modèles entraînés par client, déploiements on-prem spécifiques et facturation automatique. Ces pistes restent possibles après arbitrage explicite et preuve de valeur de la V1.
+Autonomie d'envoi, publications sociales, décisions financières/RH, agents salariés, collecte web sans finalité métier définie, enregistrement live de réunion, place de marché d'agents, modèles entraînés par client, déploiements on-prem spécifiques et facturation automatique. La recherche et la collecte ciblées pour compléter le contexte, découvrir les concurrents et comparer les offres sont explicitement incluses depuis la clarification du 21 octobre. Les autres pistes restent possibles après arbitrage explicite et preuve de valeur de la V1.
 
 ## Limites et responsabilité
 
