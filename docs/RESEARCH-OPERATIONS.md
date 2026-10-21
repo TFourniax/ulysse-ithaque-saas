@@ -1,33 +1,34 @@
 # Recherche publique — activation et recette UL-020
 
-État : correctif **`5d70f9feb3d9a4a8d97298bd9366c110516698f3`**, qui transmet le schéma JSON natif buyer/content au fournisseur compatible, après la capture `result_schema_invalid` du 21 octobre à 21 h 19. Les références sont limitées aux preuves fournies/lues et les octets du schéma sont comptés. Code **`5d70f9feb3d9a4a8d97298bd9366c110516698f3`** publié : [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39663581025) et [Hermes/mises à niveau 6/6](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39663581019), deux workflows terminés avec succès. `npm run verify` réussi (120 tests unitaires), PostgreSQL 50/50, API 18/18, worker 45/45, navigateur 15/15, neuf tests VPS et quatre tests Python ciblés. La vraie boucle Hermes confirme la réception du schéma pour buyer et contenu sur stack neuve et après mise à niveau depuis UL-016, avec historique/session conservés et redémarrage vérifié; modèle scripté. [Preuves et limites](journal/2026-10-21-UL-020-native-result-schema.md). La capture ne confirme ni le SHA ni le profil actif sur le VPS; le prochain diagnostic Paitite reste à tester et relire. Ce code conserve les correctifs de [preuves obligatoires](journal/2026-10-21-UL-020-required-evidence.md), de [réservation](journal/2026-10-21-UL-020-workflow-budget-reservations.md), de [pause et format](journal/2026-10-21-UL-020-buyer-format-and-pause.md). La [limite de sortie Mistral](journal/2026-10-21-UL-020-mistral-output-limit.md) reste celle du profil actif. [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
+État : code **`d4e97ec70e6bc86615ecb4f58abe6247ae94bc5b`** publié, [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39682332894) et [Hermes/mises à niveau 6/6](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39682333003) terminées avec succès. Après la capture `provider_http_429`, buyer/content reprend le même appel jusqu’à deux fois avec attente visible. Thomas confirme la priorité au fonctionnement et autorise des enveloppes de recette plus confortables : **2 USD/analyse, 20 USD/session et 100 USD/entreprise/mois**, appliquées par le bloc ci-dessous. Les nouvelles recherches proposent 3 USD, configurables jusqu’à 10 USD. Il s’agit de plafonds, pas de coûts attendus. La migration additive 0016 relève aussi les anciennes limites SQL. [Preuves et limites](journal/2026-10-21-UL-020-provider-retry.md). Le modèle, son profil et le corpus restent conservés; le résultat réel Paitite doit encore être testé et relu. Les correctifs de [schéma natif](journal/2026-10-21-UL-020-native-result-schema.md), de [preuves obligatoires](journal/2026-10-21-UL-020-required-evidence.md), de [réservation](journal/2026-10-21-UL-020-workflow-budget-reservations.md) et de [pause](journal/2026-10-21-UL-020-buyer-format-and-pause.md) sont inclus.
 
 Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. La tentative a été arrêtée avant migration et arrêt des services; pas de rollback à effectuer pour ce refus. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
 
 ## Préparer et déployer
 
-La branche est `codex/ul-020-web-research`, issue d’UL-019, [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). La commande ci-dessous épingle le code vérifié par les tests cités dans le journal; les commits documentaires suivants ne changent pas ce code. Les migrations additives 0014 et 0015 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : la préparation des preuves et l’empreinte du prompt évoluent. Le script conserve le modèle européen, les clés, la session et les plafonds actifs. Il vérifie une sauvegarde chiffrée avant migration. Prévoir une brève interruption pendant le remplacement des services.
+La branche est `codex/ul-020-web-research`, issue d’UL-019, [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). La commande ci-dessous épingle le code vérifié par les tests cités dans le journal; les commits documentaires suivants ne changent pas ce code. Les migrations additives 0014 à 0016 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : le contrat v3 accepte un diagnostic de trois minutes avec reprise du même appel. Le script conserve le modèle européen, les clés, la session et le corpus. L’option `--budgets` applique explicitement les nouvelles enveloppes; sans cette option, les plafonds actifs sont conservés. Il vérifie une sauvegarde chiffrée avant migration. Prévoir une brève interruption pendant le remplacement des services.
 
 Sur le VPS, depuis le terminal `hermesadmin`, exécuter ce bloc qui utilise le compte `ulysse`, selon la procédure [modèles Europe](MODEL-EU.md). Le script vérifie l’hôte, l’UID, le Docker rootless, la configuration active et l’absence de dérive. Il n’est pas destiné à un autre Docker ou serveur. En cas d’arrêt sur erreur, conserver le message et ne pas passer à l’activation.
 
 ```bash
 sudo -Hu ulysse bash <<'UPDATE'
 set -Eeuo pipefail
+set +x
 umask 077
 cd /
 [[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
 ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-ULYSSE_REVISION=5d70f9feb3d9a4a8d97298bd9366c110516698f3
+ULYSSE_REVISION=d4e97ec70e6bc86615ecb4f58abe6247ae94bc5b
 ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
 git -C "$ULYSSE_REPO" show "$ULYSSE_REVISION:scripts/ulysse-vps-europe.sh" > "$ULYSSE_SCRIPT"
 bash -n "$ULYSSE_SCRIPT"
-bash "$ULYSSE_SCRIPT" deploy "$ULYSSE_REVISION"
+bash "$ULYSSE_SCRIPT" deploy "$ULYSSE_REVISION" --budgets 2 20 100
 UPDATE
 ```
 
-Pour la démo déjà configurée, ce déploiement conserve la clé Brave, Mistral, son profil personnalisé éventuel et les plafonds actifs. La première nouvelle analyse libère les anciennes enveloppes inutilisées de son tenant avant de demander sa réservation; elle conserve les coûts connus et incertains. Le diagnostic en lecture seule décrit plus bas permet de comparer les montants avant et après cet essai. Après réussite : recharger la page, ouvrir la campagne existante et cliquer **Interrompre** si elle collecte encore, puis **Préparer le diagnostic acheteur**. Les pages, faits, décisions et dépenses restent conservés; ce bouton sélectionne explicitement cette campagne. Pour le diagnostic en échec déjà visible, **Reprendre ce brief** conserve les champs, sources manuelles et campagne associée. Il suffit de relancer le diagnostic; aucune nouvelle recherche n’est nécessaire pour réutiliser ce corpus. Les résultats provisoires restent à relire avant approbation.
+Pour la démo déjà configurée, ce déploiement conserve la clé Brave, le modèle actif et son profil personnalisé éventuel, et applique les plafonds autorisés 2/20/100 USD. Il conserve les dépenses déjà enregistrées. La première nouvelle analyse libère les anciennes enveloppes inutilisées de son tenant avant de demander sa réservation; elle conserve les coûts connus et incertains. Le diagnostic en lecture seule décrit plus bas permet de comparer les montants avant et après cet essai. Après réussite : recharger la page, ouvrir la campagne existante et cliquer **Interrompre** si elle collecte encore, puis **Préparer le diagnostic acheteur**. Les pages, faits, décisions et dépenses restent conservés; ce bouton sélectionne explicitement cette campagne. Pour le diagnostic en échec déjà visible, **Reprendre ce brief** conserve les champs, sources manuelles et campagne associée. Il suffit de relancer le diagnostic; aucune nouvelle recherche n’est nécessaire pour réutiliser ce corpus. Les résultats provisoires restent à relire avant approbation.
 
 **Reprendre la collecte** reste une action distincte, sans hausse du plafond après une erreur. Un appel déjà transmis lors de l’interruption peut encore être facturé, sans publication tardive de ses données. Les anciennes interruptions manuelles sont également réutilisables si l’autorisation et les versions restent valides. L’étape de branchement ci-dessous concerne une première configuration ou un remplacement de clé.
 
@@ -109,7 +110,7 @@ Le connecteur est désactivé par défaut. `RESEARCH_SEARCH_PROVIDER=brave`, `BR
 ## Parcours de recette Paitite
 
 1. Ouvrir **Recherche et benchmark** avec le rôle owner. Vérifier le nom, le site officiel, les offres, acheteurs, marché, zone et mots-clés publics. Les suggestions issues du contexte doivent être relues avant autorisation.
-2. Autoriser une première collecte, sans importer de concurrents. L’enveloppe initiale proposée est de 0,75 USD, 24 requêtes et 120 lectures; ces plafonds ne garantissent aucun nombre de concurrents. Les limites session/mois existantes peuvent arrêter la campagne plus tôt.
+2. Autoriser une première collecte, sans importer de concurrents. L’enveloppe initiale proposée est de 3 USD, 24 requêtes et 120 lectures; ces plafonds ne garantissent aucun nombre de concurrents. Les limites session/mois existantes peuvent arrêter la campagne plus tôt.
 3. Observer les différentes familles de requêtes, nouveaux domaines, fiches exclues, erreurs et raison d’arrêt. Vérifier plus de huit sources réellement lues et la consultation des pages suivantes de la matrice. Une reprise conserve les coûts connus et incertains; elle ne réinitialise pas les plafonds de session/mois.
 4. Sur un échantillon d’au moins cinq acteurs, dont des exclusions et un substitut, relire la pertinence pour l’offre et la cible. Contrôler les citations exactes, leurs URLs et dates, l’association à l’offre, les prix et leurs conditions. Vérifier un cas d’information inaccessible, une promesse non prouvée et des valeurs divergentes. Les déclarations commerciales ne sont pas des résultats corroborés.
 5. Corriger ou écarter des fiches, valider une sélection, recharger la page et consulter l’historique. Les citations d’origine doivent subsister. Les décisions ne sont pas encore reportées automatiquement vers une nouvelle campagne.
@@ -120,7 +121,7 @@ Consigner les résultats dans un journal de recette, en distinguant qualité mé
 
 ## Diagnostiquer une collecte sans appel payant
 
-Depuis `2026-10-21.research2-diagnostic`, le script propose `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. La version publiée ci-dessus, `2026-10-21.research7-schema`, conserve les résultats techniques par tentative, le relevé budgétaire et indique si le schéma natif a été envoyé. Pour diagnostiquer sans déployer, extraire le script publié dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n` : il fonctionne avec les images UL-020 déjà en service, sans rebuild, redémarrage, migration ou changement de configuration.
+Depuis `2026-10-21.research2-diagnostic`, le script propose `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. La version publiée ci-dessus, `2026-10-21.research9-capacity`, conserve les résultats techniques par tentative, le relevé budgétaire et indique si le schéma natif a été envoyé. Pour diagnostiquer sans déployer, extraire le script publié dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n` : il fonctionne avec les images UL-020 déjà en service, sans rebuild, redémarrage, migration ou changement de configuration.
 
 ```bash
 sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose-research
@@ -140,7 +141,7 @@ Pour un échec du **diagnostic acheteur**, utiliser `diagnose` (et non `diagnose
 sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose
 ```
 
-La sortie ajoute `native_response_schema` (pour les nouveaux appels), `format_repair_attempted`, `format_code`, `finish_reason` et `format_issues` pour les nouveaux appels. Ces champs techniques décrivent le refus sans exposer la réponse. Les anciens échecs `result_invalid` ne sont pas reconstitués. Une correction n’est tentée qu’une fois, si les plafonds et le temps restant le permettent.
+La sortie ajoute `provider_retries` (reprises programmées), `provider_retry` (dernier code, délai et phase techniques), `native_response_schema` (pour les nouveaux appels), `format_repair_attempted`, `format_code`, `finish_reason` et `format_issues` pour les nouveaux appels. Ces champs techniques décrivent le refus sans exposer la réponse. Les anciens échecs `result_invalid` ne sont pas reconstitués. Une correction n’est tentée qu’une fois, si les plafonds et le temps restant le permettent.
 
 ## Diagnostiquer le budget
 

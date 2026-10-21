@@ -1,6 +1,6 @@
 # UL-020 — reprise des refus temporaires pendant un diagnostic
 
-Date : 21 octobre 2026. Responsable : Codex. Statut : implémentation, vérifications en cours. Dette : DEBT-023; DEBT-032 reste ouverte pour la recette réelle.
+Date : 21 octobre 2026. Responsable : Codex. Statut : correctif `d4e97ec70e6bc86615ecb4f58abe6247ae94bc5b` publié; 11 jobs CI verts; recette réelle ouverte. Dette : DEBT-023; DEBT-032 reste ouverte pour la recette réelle.
 
 ## Constat et objectif
 
@@ -18,7 +18,9 @@ Le code confirme que la passerelle lisait déjà `Retry-After`, mais arrêtait b
 
 ## Vérification
 
-Premier code `44f8b934d4f9deaae87cdfaea3f1660951aa4efa` : `npm run verify` réussi, 122 tests unitaires, neuf tests VPS et six tests Python ciblés. Le scénario Hermes sur stack neuve réussit la reprise après 429, schéma natif et continuité du raisonnement compris. La CI PostgreSQL a exposé un cas réel : un retrait de source pendant l’attente clôt déjà le run, donc le catch ne libérait pas son reliquat. Le complément libère ce reliquat même après clôture, sans toucher au coût engagé. Le test a été conservé; ce code et les nouveaux plafonds sont en vérification.
+Code **`d4e97ec70e6bc86615ecb4f58abe6247ae94bc5b`** publié : [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39682332894) et [Hermes/mises à niveau 6/6](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39682333003), deux workflows terminés avec succès. `npm run verify` réussi : 123 tests unitaires. PostgreSQL 50/50, API 18/18, worker 48/48, navigateur 15/15, 11 tests du script VPS et huit tests Python dans l’image Hermes (six ciblés localement). La migration additive 0016 et les enveloppes relevées passent sous les rôles réels. Le modèle scripté refuse une requête après des outils; buyer/content reprend le même tour dans Hermes sur stack neuve et après mise à niveau UL-016. Historique, session, signatures de raisonnement et redémarrage sont vérifiés. Aucun appel fournisseur réel ni déploiement VPS depuis cet environnement.
+
+Premier code `44f8b934d4f9deaae87cdfaea3f1660951aa4efa` : `npm run verify` réussi, 122 tests unitaires, neuf tests VPS et six tests Python ciblés. Le scénario Hermes sur stack neuve réussit la reprise après 429, schéma natif et continuité du raisonnement compris. La CI PostgreSQL a exposé un cas réel : un retrait de source pendant l’attente clôt déjà le run, donc le catch ne libérait pas son reliquat. Le complément libère ce reliquat même après clôture, sans toucher au coût engagé. Le test a été conservé; ce code et les nouveaux plafonds passent dans la CI finale citée ci-dessus.
 
 Références officielles consultées : [OpenRouter limites](https://openrouter.ai/docs/api_reference/limits), [erreurs et Retry-After](https://openrouter.ai/docs/api_reference/errors-and-debugging). Un 429 peut provenir de la plateforme ou du fournisseur amont; les appels acceptés n’établissent pas la disponibilité de tous les appels suivants.
 
