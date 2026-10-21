@@ -2273,7 +2273,19 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     const draft = (await workspace.listWorkflows(w.owner))[0]!;
     assert.equal(draft.status, 'draft', draft.errorCode ?? '');
     await assert.rejects(workspace.review(w.owner, buyer, draft.revision, 'approve'));
-    for (const c of (await w.items()).items)
+    const partialCandidates = (await w.items()).items;
+    const unqualified = partialCandidates.find((c) => c.facts.length === 0);
+    assert.ok(unqualified);
+    await assert.rejects(
+      w.repository.review(w.owner, unqualified.id, {
+        revision: unqualified.revision,
+        decision: 'approved',
+        note: '',
+        corrections: [],
+      }),
+      /INVALID_TRANSITION/,
+    );
+    for (const c of partialCandidates.filter((c) => c.facts.length > 0))
       await w.repository.review(w.owner, c.id, {
         revision: c.revision,
         decision: 'approved',
