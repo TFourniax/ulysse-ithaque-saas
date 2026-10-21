@@ -1,6 +1,6 @@
 # Recherche publique — activation et recette UL-020
 
-État : correctif du tarif GLM publié au `51f0f7f515d2fbca83a64cf9e95e60daaf480381`, **11 contrôles CI verts**; activation VPS et qualité du benchmark live à vérifier. [Correctif et vérifications](journal/2026-10-21-UL-020-glm-price-drift.md), [preuves CI initiales](journal/2026-10-21-UL-020-publication-ci.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
+État : code `51f0f7f515d2fbca83a64cf9e95e60daaf480381` déployé et Brave activé selon les sorties VPS de Thomas, **11 contrôles CI verts**. Découverte réelle observée, mais qualification bloquée et nouvel arrêt 429; [diagnostic live](journal/2026-10-21-UL-020-live-research-diagnostic.md). [Correctif tarifaire](journal/2026-10-21-UL-020-glm-price-drift.md), [preuves CI initiales](journal/2026-10-21-UL-020-publication-ci.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
 
 Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. La tentative a été arrêtée avant migration et arrêt des services; pas de rollback à effectuer pour ce refus. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
 
@@ -67,6 +67,18 @@ Le connecteur est désactivé par défaut. `RESEARCH_SEARCH_PROVIDER=brave`, `BR
 7. Tester l’arrêt pendant une étape, une reprise bornée et le changement du profil public. Relever le coût, les appels incertains, le délai, les acteurs pertinents et les erreurs. Ne pas publier de captures contenant les données privées du tenant.
 
 Consigner les résultats dans un journal de recette, en distinguant qualité métier, fonctionnement technique et couverture. Aucun benchmark n’est annoncé exhaustif. Les pages JavaScript seules, PDF, authentifiées ou interdites par robots restent non exploitées dans cette version. Une absence dans les pages lues ne prouve pas une absence de fonctionnalité.
+
+## Diagnostiquer une collecte sans appel payant
+
+Le script `2026-10-21.research2-diagnostic` ajoute `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. Extraire cette version publiée du script dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n`. Il fonctionne avec les images UL-020 déjà en service : aucun rebuild, redémarrage, migration ou changement de configuration requis.
+
+```bash
+sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research-diagnostic.sh diagnose-research
+```
+
+La commande affiche la configuration technique du modèle actif puis, en transaction PostgreSQL `READ ONLY`, les trois dernières campagnes du tenant, les étapes/erreurs de la dernière, le nombre de pages et de faits conservés, les coûts regroupés par modèle/étape et les douze derniers appels modèle. Ni clé, contenu de page, nom d’acteur, URL, requête de recherche ou réponse fournisseur ne sont affichés. Les erreurs associées aux appels sont l’état **actuel** de leur tâche, pas un historique reconstitué de chaque tentative. L’identité enregistrée dans chaque appel permet de distinguer un ancien modèle du modèle actif.
+
+`provider_http_429` vient du modèle; `search_http_429` viendrait du moteur Brave. Le code seul ne distingue pas une limite de compte d’une limite de l’endpoint modèle. Une pause sous le plafond n’est pas résolue par une hausse de budget. Des acteurs découverts sans faits qualifiés ne constituent pas un benchmark; examiner les étapes `read` et `extract` avant de multiplier les reprises. Dans l’interface actuelle, « Poursuivre » relève aussi les limites de collecte et le plafond de campagne, même après une erreur fournisseur.
 
 ## Retour arrière
 

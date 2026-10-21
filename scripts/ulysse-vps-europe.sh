@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ulysse demo only. Run as Linux user ulysse (UID 10002), never as root.
-# audit | diagnose [tenant-slug] | deploy <commit> | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback
+# audit | diagnose [tenant-slug] | diagnose-research [tenant-slug] | deploy <commit> | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback
 # This script never runs a global docker command, down, prune, seed or reset.
 set -Eeuo pipefail
 umask 077
@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-21.research1
+ULYSSE_SCRIPT_VERSION=2026-10-21.research2-diagnostic
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -107,6 +107,85 @@ ORDER BY r.started_at DESC LIMIT 3;
 ROLLBACK;
 SQL
 }
+diagnose_research() {
+  local slug=${1:-acme-demo} worker postgres database
+  [[ "$slug" =~ ^[a-z0-9][a-z0-9-]{1,62}$ ]] || die 'identifiant entreprise invalide'
+  worker=$(container_id worker); postgres=$(container_id postgres)
+  for cid in "$worker" "$postgres"; do
+    [[ -n "$cid" && "$cid" != *$'\n'* ]] || die 'conteneur Ulysse absent ou ambigu'
+  done
+  database=$(ud exec "$worker" node -e 'process.stdout.write(process.env.ULYSSE_DB_NAME||"")')
+  [[ -n "$database" ]] || die 'base Ulysse non determinee'
+  say "Diagnostic recherche en lecture seule pour $slug : aucun appel fournisseur, redemarrage ou modification des donnees."
+  ud exec "$worker" node --input-type=module -e '
+    import {agentProvider} from "./apps/worker/dist/src/agent-provider.js";
+    const p=agentProvider(process.env.AGENT_MODEL_ID,process.env.AGENT_PROVIDER_ROUTE||"openrouter",process.env.AGENT_MODEL_PROFILE_JSON||undefined);
+    console.log(JSON.stringify({mode:process.env.ULYSSE_ANALYSIS_MODE,model:p.profile.model,profile:p.profile.id,profileHash:p.profileHash,route:p.profile.route,maxOutputTokens:p.profile.generation.maxOutputTokens,reasoning:p.profile.generation.reasoning,searchProvider:process.env.RESEARCH_SEARCH_PROVIDER,searchKeyPresent:Boolean(process.env.BRAVE_SEARCH_API_KEY)}));
+  '
+  # Only fixed technical fields and aggregates. Never select page text, URLs, queries,
+  # candidate names/reasons, prompts, provider bodies, credentials or raw metadata.
+  ud exec -i "$postgres" sh -c 'exec psql -X -U "$POSTGRES_USER" -d "$1" -v ON_ERROR_STOP=1 -P pager=off -P null=- -v tenant_slug="$2"' sh "$database" "$slug" <<'SQL'
+BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY;
+SET LOCAL statement_timeout = '10s';
+\echo CAMPAGNES_RECENTES
+SELECT c.id,c.created_at,c.updated_at,c.status,c.stop_reason,c.searches,c.pages,
+       c.profile->>'budgetUsd' AS budget_usd,
+       (SELECT count(*) FROM research_pages p WHERE p.tenant_id=c.tenant_id AND p.campaign_id=c.id) AS pages_saved,
+       (SELECT count(*) FROM research_calls x WHERE x.tenant_id=c.tenant_id AND x.campaign_id=c.id AND x.cost_state='unknown') AS uncertain_calls,
+       (SELECT coalesce(sum(x.cost_usd),0) FROM research_calls x WHERE x.tenant_id=c.tenant_id AND x.campaign_id=c.id) AS committed_usd
+FROM research_campaigns c JOIN tenants t ON t.id=c.tenant_id
+WHERE t.slug=:'tenant_slug' ORDER BY c.created_at DESC,c.id DESC LIMIT 3;
+
+\echo ETAPES_DERNIERE_CAMPAGNE
+WITH latest AS (
+  SELECT c.tenant_id,c.id FROM research_campaigns c JOIN tenants t ON t.id=c.tenant_id
+  WHERE t.slug=:'tenant_slug' ORDER BY c.created_at DESC,c.id DESC LIMIT 1
+)
+SELECT r.body->>'kind' AS stage,r.status,r.error_code,count(*) AS tasks,
+       sum(r.attempt) AS attempts
+FROM research_tasks r JOIN latest c ON c.tenant_id=r.tenant_id AND c.id=r.campaign_id
+GROUP BY 1,2,3 ORDER BY 1,2,3 LIMIT 40;
+
+\echo QUALIFICATION_DERNIERE_CAMPAGNE
+WITH latest AS (
+  SELECT c.tenant_id,c.id FROM research_campaigns c JOIN tenants t ON t.id=c.tenant_id
+  WHERE t.slug=:'tenant_slug' ORDER BY c.created_at DESC,c.id DESC LIMIT 1
+)
+SELECT r.body->>'own' AS own_company,r.body->>'relevance' AS relevance,
+       r.body->>'review' AS review,count(*) AS candidates,
+       sum(jsonb_array_length(r.body->'pages')) AS pages_saved,
+       sum(jsonb_array_length(r.body->'facts')) AS facts,
+       count(*) FILTER (WHERE jsonb_array_length(r.body->'facts')>0) AS candidates_with_facts
+FROM research_candidates r JOIN latest c ON c.tenant_id=r.tenant_id AND c.id=r.campaign_id
+GROUP BY 1,2,3 ORDER BY 1,2,3;
+
+\echo APPELS_PAR_MODELE_ET_ETAPE
+WITH latest AS (
+  SELECT c.tenant_id,c.id FROM research_campaigns c JOIN tenants t ON t.id=c.tenant_id
+  WHERE t.slug=:'tenant_slug' ORDER BY c.created_at DESC,c.id DESC LIMIT 1
+)
+SELECT x.kind,x.metadata->>'identity' AS identity,r.body->>'kind' AS stage,x.cost_state,
+       count(*) AS calls,sum(x.input_tokens) AS input_tokens,sum(x.output_tokens) AS output_tokens,
+       sum(x.cost_usd) AS committed_usd
+FROM research_calls x JOIN latest c ON c.tenant_id=x.tenant_id AND c.id=x.campaign_id
+JOIN research_tasks r ON r.tenant_id=x.tenant_id AND r.id=x.task_id
+GROUP BY 1,2,3,4 ORDER BY 1,2,3,4;
+
+\echo DERNIERS_APPELS_MODELE_ET_ETAT_ACTUEL_DE_LEUR_TACHE
+\echo Les erreurs ci-dessous sont celles des taches actuelles, pas un historique de chaque tentative.
+WITH latest AS (
+  SELECT c.tenant_id,c.id FROM research_campaigns c JOIN tenants t ON t.id=c.tenant_id
+  WHERE t.slug=:'tenant_slug' ORDER BY c.created_at DESC,c.id DESC LIMIT 1
+)
+SELECT x.id,x.created_at,x.metadata->>'identity' AS identity,r.body->>'kind' AS stage,
+       r.status AS current_task_status,r.error_code AS current_task_error,x.cost_state,
+       x.input_tokens,x.output_tokens,x.cost_usd
+FROM research_calls x JOIN latest c ON c.tenant_id=x.tenant_id AND c.id=x.campaign_id
+JOIN research_tasks r ON r.tenant_id=x.tenant_id AND r.id=x.task_id
+WHERE x.kind='model' ORDER BY x.created_at DESC,x.id DESC LIMIT 12;
+ROLLBACK;
+SQL
+}
 ULYSSE_RESTORE_CONFIG=''
 ULYSSE_STOPPED=0
 declare -a ULYSSE_SERVICES=()
@@ -132,13 +211,14 @@ case "$action" in
   audit) audit; exit 0 ;;
   status) audit; check_health; exit 0 ;;
   diagnose) diagnose "${2:-acme-demo}"; exit 0 ;;
+  diagnose-research) diagnose_research "${2:-acme-demo}"; exit 0 ;;
   deploy|model|research|rollback) ;;
   models)
     worker=$(container_id worker)
     [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
     ud exec "$worker" node --input-type=module -e 'import {modelProfiles} from "./apps/worker/dist/src/agent-provider.js"; console.log(JSON.stringify(modelProfiles(),null,2))'
     exit 0 ;;
-  *) die 'actions : audit | diagnose [tenant] | deploy COMMIT | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
+  *) die 'actions : audit | diagnose [tenant] | diagnose-research [tenant] | deploy COMMIT | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
 esac
 mkdir -p "$ULYSSE_RELEASES"
 exec 9>"$ULYSSE_PRIVATE/november-deploy.lock"
