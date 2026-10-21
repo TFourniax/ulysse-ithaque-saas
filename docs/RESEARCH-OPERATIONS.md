@@ -1,8 +1,8 @@
 # Recherche publique — activation et recette UL-020
 
-État : code publié, 11 contrôles CI verts au `375bfe5d28e849f7392d05210a263a1603081383`; activation VPS et qualité du benchmark live à vérifier. [Preuves CI](journal/2026-10-21-UL-020-publication-ci.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
+État : correctif du tarif GLM publié, attente de la recette CI complète; activation VPS et qualité du benchmark live à vérifier. [Correctif et vérifications](journal/2026-10-21-UL-020-glm-price-drift.md), [preuves CI initiales](journal/2026-10-21-UL-020-publication-ci.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
 
-Le tarif d’entrée du profil GLM de cette révision a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. Attendre sa révision vérifiée avant une nouvelle tentative. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
+Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. La tentative a été arrêtée avant migration et arrêt des services; pas de rollback à effectuer pour ce refus. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
 
 ## Préparer et déployer
 

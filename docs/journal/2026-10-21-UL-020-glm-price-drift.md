@@ -19,4 +19,8 @@ Le 21 octobre vers 11 h 47 (Europe/Paris), lecture sans clé ni prompt du [regis
 
 ## Vérification et suite
 
-Tests ciblés, `npm run verify` et CI à consigner avant de publier la révision à déployer. Aucun accès SSH, appel d’inférence ni changement de configuration VPS effectué depuis cet environnement. La recette de recherche Brave/GLM reste ouverte en DEBT-024. Les tests scriptés ne remplacent pas le nouveau précontrôle réel sur le VPS, ni la revue de qualité métier après activation.
+Première révision du correctif publiée dans la PR #8 : `fab1ba591b8272a589c94dd13066ce86f0934269`. Tests worker ciblés 21/21 et `npm run verify` verts (111 tests unitaires, format/lint/types/cycles/OpenAPI/liens documentaires). Le code applicatif change seulement le profil JSON et le message du précontrôle; aucune modification des migrations ou du script de déploiement.
+
+La [première CI applicative du correctif](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39580154866) passe quatre jobs sur cinq. PostgreSQL 50/50 et API 18/18 passent, mais un test worker conserve l’ancien coût attendu pour 1 000 tokens d’entrée et 2 000 de sortie : 0,00148 au lieu de 0,001555 USD. Les quatre scénarios UL-020 passent. Le test est corrigé avec le calcul explicite; les assertions de coût et de profil sont placées après exécution pour rendre directement visible une erreur comptable, plutôt que de la convertir en statut d’échec dans l’exécuteur simulé. Aucun contrôle de sécurité n’est retiré. La nouvelle recette CI complète reste à consigner.
+
+Aucun accès SSH, appel d’inférence ni changement de configuration VPS effectué depuis cet environnement. La recette de recherche Brave/GLM reste ouverte en DEBT-024. Les tests scriptés ne remplacent pas le nouveau précontrôle réel sur le VPS, ni la revue de qualité métier après activation.
