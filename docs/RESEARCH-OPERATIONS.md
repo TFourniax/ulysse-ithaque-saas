@@ -1,12 +1,12 @@
 # Recherche publique — activation et recette UL-020
 
-État : correctif d’extraction **`2aa3d7e03a210ceff6ef4a8b6c8b91d53a949b32` prêt à déployer, 11 contrôles CI verts**. [Code, résultats et limites](journal/2026-10-21-UL-020-extraction-recovery.md). Le code `51f0f7f` est celui déployé selon les dernières sorties VPS de Thomas, avec Brave et Mistral Small 4 actifs : découverte réelle observée, mais 34 extractions en échec sur 40 pages sauvegardées et arrêt 429. [Diagnostic live](journal/2026-10-21-UL-020-live-research-diagnostic.md), [correctif tarifaire](journal/2026-10-21-UL-020-glm-price-drift.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
+État : correctif **`d9ed2dfacfbe3f3490343b9c770d48b57e46bf99`**, tests applicatifs réussis; étapes Hermes terminées, statut global de ce workflow encore en cours au dernier relevé. Il ajoute l’interruption conservant le corpus et sa sélection pour le diagnostic, ainsi qu’une correction bornée des réponses au format invalide. Dernière capture : 36 concurrents qualifiés, puis diagnostic refusé `result_invalid`. [Correctif, résultats et limites](journal/2026-10-21-UL-020-buyer-format-and-pause.md). La qualité du benchmark réel reste à relire. [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
 
 Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. La tentative a été arrêtée avant migration et arrêt des services; pas de rollback à effectuer pour ce refus. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
 
 ## Préparer et déployer
 
-La branche est `codex/ul-020-web-research`, issue d’UL-019, [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). La commande ci-dessous épingle le code dont les 11 contrôles sont verts; les commits documentaires suivants ne changent pas ce code. Les migrations additives 0014 et 0015 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : les outils de lecture par lots et l’empreinte du prompt évoluent. Le script conserve le modèle européen, les clés, la session et les plafonds actifs. Il vérifie une sauvegarde chiffrée avant migration. Prévoir une brève interruption pendant le remplacement des services.
+La branche est `codex/ul-020-web-research`, issue d’UL-019, [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). La commande ci-dessous épingle le code vérifié par les tests cités dans le journal; les commits documentaires suivants ne changent pas ce code. Les migrations additives 0014 et 0015 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : les outils de lecture par lots et l’empreinte du prompt évoluent. Le script conserve le modèle européen, les clés, la session et les plafonds actifs. Il vérifie une sauvegarde chiffrée avant migration. Prévoir une brève interruption pendant le remplacement des services.
 
 Sur le VPS, depuis le terminal `hermesadmin`, exécuter ce bloc qui utilise le compte `ulysse`, selon la procédure [modèles Europe](MODEL-EU.md). Le script vérifie l’hôte, l’UID, le Docker rootless, la configuration active et l’absence de dérive. Il n’est pas destiné à un autre Docker ou serveur. En cas d’arrêt sur erreur, conserver le message et ne pas passer à l’activation.
 
@@ -17,7 +17,7 @@ umask 077
 cd /
 [[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
 ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-ULYSSE_REVISION=2aa3d7e03a210ceff6ef4a8b6c8b91d53a949b32
+ULYSSE_REVISION=d9ed2dfacfbe3f3490343b9c770d48b57e46bf99
 ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
@@ -27,7 +27,9 @@ bash "$ULYSSE_SCRIPT" deploy "$ULYSSE_REVISION"
 UPDATE
 ```
 
-Pour la démo déjà configurée, ce déploiement conserve la clé Brave, Mistral et les plafonds actifs. Après réussite, recharger **Recherche et benchmark**, ouvrir la campagne existante créée à 13 h 24 (Europe/Paris) et cliquer **Reprendre la collecte** : plafond inchangé à 1 USD, recherches réussies et pages sauvegardées réutilisées. Les 13 coûts historiquement incertains restent provisionnés. Vérifier l’apparition de concurrents qualifiés puis relire leurs faits; cette recette réelle reste à effectuer. L’étape de branchement ci-dessous concerne une première configuration ou un remplacement de clé.
+Pour la démo déjà configurée, ce déploiement conserve la clé Brave, Mistral et les plafonds actifs. Après réussite : recharger la page, ouvrir la campagne existante et cliquer **Interrompre** si elle collecte encore, puis **Préparer le diagnostic acheteur**. Les pages, faits, décisions et dépenses restent conservés; ce bouton sélectionne explicitement cette campagne. Pour le diagnostic en échec déjà visible, **Reprendre ce brief** conserve les champs, sources manuelles et campagne associée. Il suffit de relancer le diagnostic; aucune nouvelle recherche n’est nécessaire pour réutiliser ce corpus. Les résultats provisoires restent à relire avant approbation.
+
+**Reprendre la collecte** reste une action distincte, sans hausse du plafond après une erreur. Un appel déjà transmis lors de l’interruption peut encore être facturé, sans publication tardive de ses données. Les anciennes interruptions manuelles sont également réutilisables si l’autorisation et les versions restent valides. L’étape de branchement ci-dessous concerne une première configuration ou un remplacement de clé.
 
 ## Brancher la recherche
 
@@ -72,7 +74,7 @@ Consigner les résultats dans un journal de recette, en distinguant qualité mé
 
 ## Diagnostiquer une collecte sans appel payant
 
-Depuis `2026-10-21.research2-diagnostic`, le script propose `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. La version déployée ci-dessus, `2026-10-21.research3-extraction`, ajoute les résultats techniques par tentative. Pour diagnostiquer sans déployer, extraire le script publié dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n` : il fonctionne avec les images UL-020 déjà en service, sans rebuild, redémarrage, migration ou changement de configuration.
+Depuis `2026-10-21.research2-diagnostic`, le script propose `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. La version déployée ci-dessus, `2026-10-21.research4-buyer-pause`, conserve les résultats techniques par tentative. Pour diagnostiquer sans déployer, extraire le script publié dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n` : il fonctionne avec les images UL-020 déjà en service, sans rebuild, redémarrage, migration ou changement de configuration.
 
 ```bash
 sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose-research
@@ -85,6 +87,14 @@ La commande affiche la configuration technique du modèle actif puis, en transac
 Le correctif d’extraction `research-v2` ajoute un résultat technique **par appel** au diagnostic, distinct du dernier état de sa tâche : `call_outcome`, `finish_reason` et nombres d’éléments rejetés. Les anciens appels n’ont pas ces données. Une réponse invalide dont l’usage est reçu conserve ce coût connu; les provisions historiques inconnues ne sont pas effacées.
 
 Avec ce correctif, **Reprendre la collecte** après une erreur conserve le plafond et réessaie les étapes en échec. Les recherches réussies et les pages sauvegardées ne sont pas refaites pour réextraire des faits. **Poursuivre · plafond…** étend l’enveloppe seulement après une limite de budget/collecte. Les 429/503 modèle attendent 60 puis 120 secondes avant au maximum deux reprises automatiques; `Retry-After` peut allonger ces délais, jusqu’à 15 minutes, au-delà la campagne reste en pause. Les réservations s’additionnent et les limites session/mois restent bloquantes. L’interruption ou la révocation restent possibles pendant l’attente.
+
+Pour un échec du **diagnostic acheteur**, utiliser `diagnose` (et non `diagnose-research`) :
+
+```bash
+sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose
+```
+
+La sortie ajoute `format_repair_attempted`, `format_code`, `finish_reason` et `format_issues` pour les nouveaux appels. Ces champs techniques décrivent le refus sans exposer la réponse. Les anciens échecs `result_invalid` ne sont pas reconstitués. Une correction n’est tentée qu’une fois, si les plafonds et le temps restant le permettent.
 
 ## Retour arrière
 
