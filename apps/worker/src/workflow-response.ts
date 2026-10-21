@@ -2,6 +2,37 @@ import { WorkflowResult } from '@ulysse/contracts';
 import { validateWorkflowResult } from '@ulysse/domain';
 import { z } from 'zod';
 
+/** The provider and the publication boundary share one closed result contract. */
+export function workflowResponseFormat(kind: 'buyer' | 'content', references: string[]) {
+  const allowedReferences = [...new Set(references)];
+  if (!allowedReferences.length) throw new Error('workflow_evidence_missing');
+  const contract = WorkflowResult.extend({
+    kind: z.literal(kind),
+    ...(kind === 'buyer'
+      ? { content: z.null() }
+      : {
+          uniqueness: z.null(),
+          benchmark: WorkflowResult.shape.benchmark.max(0),
+          buyerQuestions: WorkflowResult.shape.buyerQuestions.max(0),
+        }),
+  });
+  const schema = z.toJSONSchema(contract, {
+    target: 'draft-07',
+    override: ({ jsonSchema }) => {
+      const citations = jsonSchema.properties?.references;
+      if (citations && typeof citations === 'object') {
+        // Listing a source does not authorize citing its unread contents. Rebuilt
+        // on every call, including after a tool read and during the bounded repair.
+        citations.items = { type: 'string', enum: allowedReferences };
+      }
+    },
+  });
+  return {
+    type: 'json_schema',
+    json_schema: { name: `ulysse_${kind}_result`, strict: true, schema },
+  };
+}
+
 const PATH_FIELDS = new Set([
   'version',
   'kind',

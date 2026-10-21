@@ -33,7 +33,11 @@ import { z } from 'zod';
 import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
 import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts';
 import { fetchAgentCompletion, ProviderCallError } from './agent-errors.ts';
-import { inspectWorkflowCompletion, workflowRepairPrompt } from './workflow-response.ts';
+import {
+  inspectWorkflowCompletion,
+  workflowRepairPrompt,
+  workflowResponseFormat,
+} from './workflow-response.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
 export const EXECUTION_CONTRACT = 'ulysse-execution-v2';
@@ -880,7 +884,7 @@ export class AgentRuntime {
     const provider = this.provider;
     ensure(provider && this.config.AGENT_MODEL_ID, 'INVALID_INPUT', 'model absent');
     ensure(bytes <= provider.profile.maxContextBytes, 'INVALID_INPUT', 'context limit');
-    const { runId, mode, workflowKind, evidence, preparedMessages, upperCost } =
+    const { runId, mode, workflowKind, evidence, preparedMessages, responseFormat, upperCost } =
       await this.store.transaction(ctx, async (tx, sql) => {
         const query = await sql.query(
           'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
@@ -939,15 +943,19 @@ export class AgentRuntime {
         const preparedMessages = evidence
           ? [messages[0], evidence.message, ...messages.slice(1)]
           : messages;
+        const responseFormat =
+          run.workflow_kind !== 'deal' && evidence && provider.profile.capabilities.structuredOutput
+            ? workflowResponseFormat(run.workflow_kind, [...run.retrieved, ...evidence.references])
+            : undefined;
         const preparedBytes = Buffer.byteLength(
-          JSON.stringify({ ...body, messages: preparedMessages }),
+          JSON.stringify({ ...body, messages: preparedMessages, response_format: responseFormat }),
         );
         ensure(
           preparedMessages.length <= 32 && preparedBytes <= provider.profile.maxContextBytes,
           'INVALID_INPUT',
           'context limit',
         );
-        // Include the delivered source text in the conservative per-call reservation.
+        // Include delivered source text and the native schema in the per-call reservation.
         const upperCost = provider.estimate(
           preparedBytes + 2048,
           provider.profile.generation.maxOutputTokens,
@@ -967,6 +975,7 @@ export class AgentRuntime {
               JSON.stringify({
                 sourceCount: evidence.sourceCount,
                 referenceCount: evidence.references.length,
+                structuredOutput: responseFormat !== undefined,
               }),
             ],
           );
@@ -986,6 +995,7 @@ export class AgentRuntime {
           workflowKind: run.workflow_kind,
           evidence,
           preparedMessages,
+          responseFormat,
           upperCost,
         };
       });
@@ -1004,6 +1014,7 @@ export class AgentRuntime {
         body: JSON.stringify({
           model: this.config.AGENT_MODEL_ID,
           messages: preparedMessages,
+          response_format: responseFormat,
           tools: body.tools,
           tool_choice: body.tools === undefined ? undefined : 'auto',
           stream: false,
@@ -1079,7 +1090,11 @@ export class AgentRuntime {
             ? [repairBody.messages[0], evidence.message, ...repairBody.messages.slice(1)]
             : repairBody.messages;
           const repairBytes = Buffer.byteLength(
-            JSON.stringify({ ...repairBody, messages: repairMessages }),
+            JSON.stringify({
+              ...repairBody,
+              messages: repairMessages,
+              response_format: responseFormat,
+            }),
           );
           const repairCost = provider.estimate(
             repairBytes + 2048,

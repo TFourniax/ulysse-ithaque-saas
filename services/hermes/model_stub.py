@@ -144,6 +144,16 @@ def respond(body):
                          if m.get("role") == "user" and isinstance(m.get("content"), str)
                          and m["content"].startswith(prefix)), None)
         pending, workflow_result = _workflow_step(calls, evidence)
+        response_format = body.get("response_format")
+        if response_format:
+            contract = response_format.get("json_schema", {})
+            schema = contract.get("schema", {})
+            if response_format.get("type") != "json_schema" or contract.get("strict") is not True or schema.get("additionalProperties") is not False:
+                raise ValueError("invalid simulated native result schema")
+            if workflow_result is not None:
+                if schema.get("properties", {}).get("kind", {}).get("const") != workflow_result["kind"]:
+                    raise ValueError("wrong simulated native workflow kind")
+                workflow_result["limits"].append("Schéma natif reçu par le fournisseur simulé.")
     elif not set(FIRST) <= called:
         pending = [(n, {"subjectId": subject.group(0)} if n == "get_opportunity" and subject else {})
                    for n in FIRST if n not in called]

@@ -63,6 +63,10 @@ test('GLM keeps reasoning enabled, reserves its full output allowance and has a 
     route.profileHash,
   );
   assert.ok(modelProfiles().every((p) => p.route === 'openrouter-eu-zdr'));
+  profile.capabilities.structuredOutput = false;
+  const unstructured = agentProvider(profile.model, profile.route, JSON.stringify(profile));
+  assert.ok(!unstructured.requiredParameters.includes('response_format'));
+  assert.ok(!unstructured.requiredParameters.includes('structured_outputs'));
 });
 
 test('administrator profiles cannot smuggle secrets, URLs, plugins, fallbacks or unbounded settings', () => {
@@ -166,8 +170,10 @@ test('GLM preflight checks reasoning support, ZDR, parameters and pinned prices 
     endpoint.pricing[field] = previous;
   }
   assert.deepEqual(p.provider.max_price, { prompt: 0.175, completion: 0.69 });
-  endpoint.supported_parameters = endpoint.supported_parameters.filter((x) => x !== 'tools');
-  await assert.rejects(checkEuropeanProvider(p.profile.model, 'fake-key', request), /parametres/);
+  for (const missing of ['tools', 'response_format', 'structured_outputs']) {
+    endpoint.supported_parameters = p.requiredParameters.filter((x) => x !== missing);
+    await assert.rejects(checkEuropeanProvider(p.profile.model, 'fake-key', request), /parametres/);
+  }
   endpoint.supported_parameters = [...p.requiredParameters];
   const disabled = JSON.stringify({
     ...p.profile,
@@ -221,7 +227,14 @@ test('European preflight sends no inference, fails closed, and keeps credentials
     tag: 'amazon-bedrock/eu-west-1',
     status: 0,
     pricing: { prompt: '0.00000011', completion: '0.00000055' },
-    supported_parameters: ['tools', 'tool_choice', 'max_tokens', 'reasoning'],
+    supported_parameters: [
+      'tools',
+      'tool_choice',
+      'max_tokens',
+      'reasoning',
+      'response_format',
+      'structured_outputs',
+    ],
   };
   let calls = 0;
   let status = 200;

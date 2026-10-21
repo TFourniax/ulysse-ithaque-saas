@@ -1,11 +1,59 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { pendingWorkflow } from '@ulysse/domain';
-import { inspectWorkflowCompletion, workflowRepairPrompt } from '../src/workflow-response.ts';
+import { z } from 'zod';
+import {
+  inspectWorkflowCompletion,
+  workflowRepairPrompt,
+  workflowResponseFormat,
+} from '../src/workflow-response.ts';
 
 const base = pendingWorkflow('buyer', [], 'Fixture structurée');
 const completion = (content: unknown, finish_reason = 'stop') => ({
   choices: [{ finish_reason, message: { content } }],
+});
+
+test('native response schema is closed, kind-specific, bounded and restricts citations to supplied evidence', () => {
+  const ref = 'source:fixture:r1';
+  const properties = z.object({
+    kind: z.object({ const: z.string() }),
+    summary: z.object({ minLength: z.number(), maxLength: z.number() }),
+    findings: z.object({
+      items: z.object({
+        additionalProperties: z.literal(false),
+        properties: z.object({
+          references: z.object({
+            minItems: z.literal(1),
+            maxItems: z.literal(12),
+            items: z.object({ enum: z.array(z.string()) }),
+          }),
+        }),
+      }),
+    }),
+    content: z.object({ type: z.literal('null') }),
+  });
+  const buyer = workflowResponseFormat('buyer', [ref, ref]);
+  assert.equal(buyer.type, 'json_schema');
+  assert.equal(buyer.json_schema.strict, true);
+  assert.equal(buyer.json_schema.schema.additionalProperties, false);
+  assert.deepEqual(buyer.json_schema.schema.required?.toSorted(), Object.keys(base).toSorted());
+  const p = properties.parse(buyer.json_schema.schema.properties);
+  assert.equal(p.kind.const, 'buyer');
+  assert.equal(p.summary.minLength, 1);
+  assert.equal(p.summary.maxLength, 2000);
+  assert.deepEqual(p.findings.items.properties.references.items.enum, [ref]);
+  const content = workflowResponseFormat('content', ['source:another:r2']);
+  assert.ok(!JSON.stringify(content).includes(ref));
+  const c = z
+    .object({
+      kind: z.object({ const: z.literal('content') }),
+      uniqueness: z.object({ type: z.literal('null') }),
+      benchmark: z.object({ maxItems: z.literal(0) }),
+      buyerQuestions: z.object({ maxItems: z.literal(0) }),
+    })
+    .safeParse(content.json_schema.schema.properties);
+  assert.ok(c.success);
+  assert.throws(() => workflowResponseFormat('buyer', []), /workflow_evidence_missing/);
 });
 
 test('workflow format accepts valid JSON and fences but leaves tool continuations alone', () => {

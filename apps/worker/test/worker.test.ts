@@ -50,7 +50,7 @@ import {
 import { createLogger, createMetrics } from '@ulysse/observability';
 import { loadWorkerConfig } from '../src/config.ts';
 import { AgentRuntime, agentConfig, MAX_ATTEMPTS, TOOL_NAMES } from '../src/agent-runtime.ts';
-import { WORKFLOW_EVIDENCE_PREFIX } from '../src/workflow-runtime.ts';
+import { WORKFLOW_EVIDENCE_PREFIX, WORKFLOW_TOOLS } from '../src/workflow-runtime.ts';
 import { agentProvider } from '../src/agent-provider.ts';
 import type { FaultHooks } from '../src/runtime.ts';
 import { noCredentialStore, WorkerRuntime } from '../src/runtime.ts';
@@ -1521,7 +1521,13 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
     t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
       calls++;
       const sent = z
-        .object({ messages: z.array(z.object({ role: z.string(), content: z.string() })) })
+        .object({
+          messages: z.array(z.object({ role: z.string(), content: z.string() })),
+          response_format: z.object({
+            type: z.literal('json_schema'),
+            json_schema: z.object({ strict: z.literal(true), schema: z.unknown() }),
+          }),
+        })
         .parse(JSON.parse(z.string().parse(init.body)));
       assert.deepEqual(
         sent.messages.filter((m) => m.role === 'system'),
@@ -1554,6 +1560,9 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       );
       assert.ok(!z.string().parse(init.body).includes(excluded.text));
       assert.ok(!z.string().parse(init.body).includes(foreign.source.id));
+      const schema = JSON.stringify(sent.response_format);
+      assert.ok(!schema.includes(excluded.id));
+      assert.ok(selected.every((s) => schema.includes(`source:${s.id}:r${s.revision}`)));
       if (evidence.context.kind === 'content') assert.equal(evidence.context.buyer?.id, buyerId);
       const reference = wrongCitation ? `source:${excluded.id}:r1` : evidence.sources[0]!.reference;
       const result: WorkflowResult = {
@@ -1630,6 +1639,11 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       const saved = trace.rows[0]!;
       assert.equal(saved.model_calls, 1);
       assert.equal(saved.tool_calls, 0, 'no invented tool execution');
+      assert.equal(
+        z.object({ structuredOutput: z.literal(true) }).safeParse(saved.snapshot.workflowEvidence)
+          .success,
+        true,
+      );
       assert.ok(selected.every((s) => saved.retrieved.includes(`source:${s.id}:r${s.revision}`)));
       assert.ok(!saved.retrieved.includes(`source:${excluded.id}:r1`));
       assert.equal(
@@ -1720,6 +1734,10 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
             .object({
               messages: z.array(z.object({ role: z.string(), content: z.string() })),
               tools: z.unknown().optional(),
+              response_format: z.object({
+                type: z.literal('json_schema'),
+                json_schema: z.object({ strict: z.literal(true) }),
+              }),
             })
             .parse(JSON.parse(z.string().parse(init.body)));
           assert.equal(sent.tools, undefined);
@@ -2612,7 +2630,7 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     assert.equal(await w.engine.reserve(w.ctx, retry.task, 'model', 0.001), null);
     assert.equal(await w.engine.store.claim(w.ctx, w.id), null);
   });
-  test('buyer reuses paused and legacy interrupted data, supports explicit selection and keeps evidence review mandatory', async () => {
+  test('buyer generates a structured benchmark from paused research and keeps explicit selection and evidence review mandatory', async (t) => {
     const w = await setup('research-buyer');
     const workspace = new PgWorkspaceStore(appPool);
     const source = await workspace.saveSource(w.owner, {
@@ -2640,17 +2658,79 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     const buyer = await workspace.create(w.owner, body, 'hermes-live');
     assert.equal((await workspace.listWorkflows(w.owner))[0]?.researchId, w.id);
     let executions = 0;
+    let nextResult: WorkflowResult | undefined;
+    let rivalId = '';
+    let modelCalls = 0;
+    const workflowInstructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    const tools = WORKFLOW_TOOLS.map((name) => ({ type: 'function', function: { name } }));
+    t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
+      modelCalls++;
+      const sent = z
+        .object({
+          response_format: z.object({
+            type: z.literal('json_schema'),
+            json_schema: z.object({ strict: z.literal(true), schema: z.unknown() }),
+          }),
+        })
+        .parse(JSON.parse(z.string().parse(init.body)));
+      const format = JSON.stringify(sent.response_format);
+      assert.ok(format.includes(`source:${source.id}:r1`));
+      assert.equal(
+        format.includes(rivalId),
+        nextResult !== undefined,
+        'listing alone must not authorize a citation',
+      );
+      return Promise.resolve(
+        Response.json({
+          choices: [
+            {
+              finish_reason: nextResult ? 'stop' : 'tool_calls',
+              message: nextResult
+                ? { content: JSON.stringify(nextResult) }
+                : {
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: 'read-fixture',
+                        type: 'function',
+                        function: {
+                          name: 'read_company_source',
+                          arguments: JSON.stringify({ sourceIds: [source.id, rivalId] }),
+                        },
+                      },
+                    ],
+                  },
+            },
+          ],
+          usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.0001 },
+        }),
+      );
+    });
     const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
       execute: async (request) => {
         executions++;
+        nextResult = undefined;
         await engine.tool(request.capability, 'get_workflow_context', {});
         const list = z
           .object({ items: z.array(z.object({ id: z.string(), kind: z.string() })) })
           .parse(await engine.tool(request.capability, 'list_company_sources', {}));
         const rival = list.items.find((s) => s.kind === 'competitor');
         assert.ok(rival);
+        rivalId = rival.id;
+        const messages = [
+          { role: 'system', content: workflowInstructions },
+          { role: 'user', content: JSON.stringify(list) },
+        ];
+        const continuation = z
+          .object({ choices: z.array(z.object({ message: z.record(z.string(), z.unknown()) })) })
+          .parse(await engine.inference(request.capability, { messages, tools }));
         const read = z
-          .object({ items: z.array(z.object({ id: z.string(), reference: z.string() })) })
+          .object({
+            items: z.array(z.object({ id: z.string(), reference: z.string(), text: z.string() })),
+          })
           .parse(
             await engine.tool(request.capability, 'read_company_source', {
               sourceIds: [source.id, rival.id],
@@ -2658,7 +2738,7 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
           );
         const ownRef = read.items[0]!.reference;
         const rivalRef = read.items[1]!.reference;
-        return {
+        nextResult = {
           ...pendingWorkflow('buyer', [], 'Comparaison fictive sourcée'),
           outcome: 'draft',
           findings: [{ topic: 'Offre', analysis: quote, references: [ownRef] }],
@@ -2675,6 +2755,19 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
             references: [ownRef, rivalRef],
           },
         } satisfies WorkflowResult;
+        const payload = z
+          .object({ choices: z.array(z.object({ message: z.object({ content: z.string() }) })) })
+          .parse(
+            await engine.inference(request.capability, {
+              messages: [
+                ...messages,
+                { ...continuation.choices[0]!.message, role: 'assistant' },
+                { role: 'tool', tool_call_id: 'read-fixture', content: JSON.stringify(read) },
+              ],
+              tools,
+            }),
+          );
+        return JSON.parse(payload.choices[0]!.message.content) as unknown;
       },
     });
     await engine.workflows.run(w.ctx, buyer);
@@ -2724,6 +2817,8 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     const updated = (await workspace.listWorkflows(w.owner)).find((r) => r.id === second)!;
     assert.equal(updated.researchId, w.id);
     assert.equal(updated.status, 'draft', updated.errorCode ?? '');
+    assert.equal(modelCalls, 4);
+    assert.ok(updated.result?.benchmark.length);
     await workspace.review(w.owner, second, updated.revision, 'approve');
     await w.repository.action(w.owner, w.id, (await w.current()).revision, 'cancel');
     const legacy = await workspace.create(
