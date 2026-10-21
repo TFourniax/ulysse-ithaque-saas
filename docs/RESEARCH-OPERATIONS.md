@@ -1,6 +1,6 @@
 # Recherche publique — activation et recette UL-020
 
-État : code `51f0f7f515d2fbca83a64cf9e95e60daaf480381` déployé et Brave activé selon les sorties VPS de Thomas, **11 contrôles CI verts**. Découverte réelle observée, mais qualification bloquée et nouvel arrêt 429; [diagnostic live](journal/2026-10-21-UL-020-live-research-diagnostic.md). [Correctif tarifaire](journal/2026-10-21-UL-020-glm-price-drift.md), [preuves CI initiales](journal/2026-10-21-UL-020-publication-ci.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
+État : correctif d’extraction **`2aa3d7e03a210ceff6ef4a8b6c8b91d53a949b32` prêt à déployer, 11 contrôles CI verts**. [Code, résultats et limites](journal/2026-10-21-UL-020-extraction-recovery.md). Le code `51f0f7f` est celui déployé selon les dernières sorties VPS de Thomas, avec Brave et Mistral Small 4 actifs : découverte réelle observée, mais 34 extractions en échec sur 40 pages sauvegardées et arrêt 429. [Diagnostic live](journal/2026-10-21-UL-020-live-research-diagnostic.md), [correctif tarifaire](journal/2026-10-21-UL-020-glm-price-drift.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
 
 Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. La tentative a été arrêtée avant migration et arrêt des services; pas de rollback à effectuer pour ce refus. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
 
@@ -17,7 +17,7 @@ umask 077
 cd /
 [[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
 ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-ULYSSE_REVISION=51f0f7f515d2fbca83a64cf9e95e60daaf480381
+ULYSSE_REVISION=2aa3d7e03a210ceff6ef4a8b6c8b91d53a949b32
 ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
@@ -26,6 +26,8 @@ bash -n "$ULYSSE_SCRIPT"
 bash "$ULYSSE_SCRIPT" deploy "$ULYSSE_REVISION"
 UPDATE
 ```
+
+Pour la démo déjà configurée, ce déploiement conserve la clé Brave, Mistral et les plafonds actifs. Après réussite, recharger **Recherche et benchmark**, ouvrir la campagne existante créée à 13 h 24 (Europe/Paris) et cliquer **Reprendre la collecte** : plafond inchangé à 1 USD, recherches réussies et pages sauvegardées réutilisées. Les 13 coûts historiquement incertains restent provisionnés. Vérifier l’apparition de concurrents qualifiés puis relire leurs faits; cette recette réelle reste à effectuer. L’étape de branchement ci-dessous concerne une première configuration ou un remplacement de clé.
 
 ## Brancher la recherche
 
@@ -70,10 +72,10 @@ Consigner les résultats dans un journal de recette, en distinguant qualité mé
 
 ## Diagnostiquer une collecte sans appel payant
 
-Le script `2026-10-21.research2-diagnostic` ajoute `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. Extraire cette version publiée du script dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n`. Il fonctionne avec les images UL-020 déjà en service : aucun rebuild, redémarrage, migration ou changement de configuration requis.
+Depuis `2026-10-21.research2-diagnostic`, le script propose `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. La version déployée ci-dessus, `2026-10-21.research3-extraction`, ajoute les résultats techniques par tentative. Pour diagnostiquer sans déployer, extraire le script publié dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n` : il fonctionne avec les images UL-020 déjà en service, sans rebuild, redémarrage, migration ou changement de configuration.
 
 ```bash
-sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research-diagnostic.sh diagnose-research
+sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose-research
 ```
 
 La commande affiche la configuration technique du modèle actif puis, en transaction PostgreSQL `READ ONLY`, les trois dernières campagnes du tenant, les étapes/erreurs de la dernière, le nombre de pages et de faits conservés, les coûts regroupés par modèle/étape et les douze derniers appels modèle. Ni clé, contenu de page, nom d’acteur, URL, requête de recherche ou réponse fournisseur ne sont affichés. Les erreurs associées aux appels sont l’état **actuel** de leur tâche, pas un historique reconstitué de chaque tentative. L’identité enregistrée dans chaque appel permet de distinguer un ancien modèle du modèle actif.
