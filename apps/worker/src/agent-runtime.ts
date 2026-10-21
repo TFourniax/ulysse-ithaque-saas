@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DomainError } from '@ulysse/domain';
 import type {
@@ -33,6 +34,7 @@ import { z } from 'zod';
 import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
 import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts';
 import { fetchAgentCompletion, ProviderCallError } from './agent-errors.ts';
+import { workflowRetryDelay } from './workflow-retry.ts';
 import {
   inspectWorkflowCompletion,
   workflowRepairPrompt,
@@ -40,7 +42,7 @@ import {
 } from './workflow-response.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
-export const EXECUTION_CONTRACT = 'ulysse-execution-v2';
+export const EXECUTION_CONTRACT = 'ulysse-execution-v3';
 /** sha256 of services/hermes/instructions.txt (LF); a unit test keeps both identical. */
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
@@ -124,7 +126,11 @@ const Run = z.object({
   subject_id: z.uuid(),
   input_hash: z.string(),
   model: z.string(),
-  snapshot: z.object({ modelProfileHash: z.string().nullable().optional() }),
+  snapshot: z.object({
+    modelProfileHash: z.string().nullable().optional(),
+    providerRetryCount: z.number().int().min(0).max(2).optional(),
+    providerRetry: z.object({ notBefore: z.iso.datetime().nullable() }).optional(),
+  }),
   mode: z.enum(['simulated', 'hermes-live', 'hermes-stub']),
   status: z.string(),
   expires_at: z.string(),
@@ -204,7 +210,9 @@ export class HermesExecutor implements AgentExecutor {
         'content-type': 'application/json',
       },
       body: JSON.stringify(request),
-      signal: signal ?? AbortSignal.timeout(request.timeoutMs + 5000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(request.timeoutMs + 5000)])
+        : AbortSignal.timeout(request.timeoutMs + 5000),
     });
     if (!response.ok) throw new Error(`hermes_http_${String(response.status)}`);
     return response.json();
@@ -868,7 +876,54 @@ export class AgentRuntime {
     });
   }
 
-  async inference(capability: string, input: unknown): Promise<unknown> {
+  private async deferWorkflowProvider(
+    ctx: Context,
+    runId: string,
+    error: ProviderCallError,
+    nextCost: number,
+  ): Promise<number | null> {
+    return this.store.transaction(ctx, async (_tx, sql) => {
+      const row = await sql.query(
+        'SELECT * FROM agent_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE',
+        [ctx.tenantId, runId],
+      );
+      const run = Run.parse(row.rows[0]);
+      if (run.status !== 'running') return null;
+      const retries = run.snapshot.providerRetryCount ?? 0;
+      const delay = workflowRetryDelay(error, retries, Date.parse(run.expires_at) - Date.now());
+      const allowed =
+        delay !== null && run.model_calls < 8 && run.committed_usd + nextCost <= run.reserved_usd;
+      const metadata = {
+        code: error.code,
+        httpStatus: error.httpStatus,
+        retryAfterSeconds: error.retryAfterSeconds,
+        attempts: retries + (allowed ? 1 : 0),
+        phase: allowed ? 'waiting' : 'stopped',
+        delaySeconds: allowed ? delay / 1000 : null,
+        notBefore: allowed ? new Date(Date.now() + delay).toISOString() : null,
+      };
+      await sql.query(
+        "UPDATE agent_runs SET snapshot=snapshot || jsonb_build_object('providerRetryCount',$3::integer,'providerRetry',$4::jsonb) WHERE tenant_id=$1 AND id=$2",
+        [ctx.tenantId, runId, metadata.attempts, JSON.stringify(metadata)],
+      );
+      if (!allowed) return null;
+      await sql.query(
+        "UPDATE workflow_requests SET error_code='provider_retry_wait',revision=revision+1 WHERE tenant_id=$1 AND agent_run_id=$2 AND status='running'",
+        [ctx.tenantId, runId],
+      );
+      await this.store.event(
+        sql,
+        ctx.tenantId,
+        runId,
+        'error',
+        `Reprise fournisseur ${metadata.attempts}/2 dans ${Math.ceil(delay / 1000)} s (${error.code})`,
+      );
+      return delay;
+    });
+  }
+
+  async inference(capability: string, input: unknown, signal?: AbortSignal): Promise<unknown> {
+    signal?.throwIfAborted();
     const ctx = await this.store.resolve(hash(capability));
     ensure(ctx, 'FORBIDDEN', 'inactive capability');
     const body = record(input);
@@ -891,6 +946,12 @@ export class AgentRuntime {
           [ctx.tenantId, hash(capability)],
         );
         const run = Run.parse(query.rows[0]);
+        const retry = run.snapshot.providerRetry;
+        ensure(
+          !retry?.notBefore || Date.parse(retry.notBefore) <= Date.now(),
+          'FORBIDDEN',
+          'provider cooldown',
+        );
         ensure(
           run.mode !== 'simulated' &&
             run.mode === this.config.ULYSSE_ANALYSIS_MODE &&
@@ -979,6 +1040,16 @@ export class AgentRuntime {
               }),
             ],
           );
+          if (retry) {
+            await sql.query(
+              "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{providerRetry,phase}','\"retrying\"'::jsonb) WHERE tenant_id=$1 AND id=$2",
+              [ctx.tenantId, run.id],
+            );
+            await sql.query(
+              "UPDATE workflow_requests SET error_code=NULL,revision=revision+1 WHERE tenant_id=$1 AND agent_run_id=$2 AND status='running' AND error_code='provider_retry_wait'",
+              [ctx.tenantId, run.id],
+            );
+          }
         }
         await this.store.event(
           sql,
@@ -1001,30 +1072,47 @@ export class AgentRuntime {
       });
     const live = mode === 'hermes-live';
     // The provider key only ever leaves for OpenRouter; the stub endpoint receives none.
-    const payload = await fetchAgentCompletion(
-      live ? provider.url : (this.config.AGENT_STUB_PROVIDER_URL ?? 'invalid:'),
-      {
-        method: 'POST',
-        // A regional request must never follow a redirect to another region or host.
-        redirect: 'error',
-        headers: {
-          authorization: live ? `Bearer ${this.config.OPENROUTER_API_KEY ?? ''}` : 'Bearer none',
-          'content-type': 'application/json',
+    let payload: Record<string, unknown>;
+    try {
+      payload = await fetchAgentCompletion(
+        live ? provider.url : (this.config.AGENT_STUB_PROVIDER_URL ?? 'invalid:'),
+        {
+          method: 'POST',
+          // A regional request must never follow a redirect to another region or host.
+          redirect: 'error',
+          headers: {
+            authorization: live ? `Bearer ${this.config.OPENROUTER_API_KEY ?? ''}` : 'Bearer none',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: this.config.AGENT_MODEL_ID,
+            messages: preparedMessages,
+            response_format: responseFormat,
+            tools: body.tools,
+            tool_choice: body.tools === undefined ? undefined : 'auto',
+            stream: false,
+            ...provider.parameters,
+            provider: provider.provider,
+          }),
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(45000)])
+            : AbortSignal.timeout(45000),
         },
-        body: JSON.stringify({
-          model: this.config.AGENT_MODEL_ID,
-          messages: preparedMessages,
-          response_format: responseFormat,
-          tools: body.tools,
-          tool_choice: body.tools === undefined ? undefined : 'auto',
-          stream: false,
-          ...provider.parameters,
-          provider: provider.provider,
-        }),
-        signal: AbortSignal.timeout(45000),
-      },
-    ).catch(async (error: unknown) => {
+      );
+    } catch (error) {
       if (error instanceof ProviderCallError) {
+        if (
+          workflowKind !== 'deal' &&
+          ['provider_http_429', 'provider_http_503'].includes(error.code)
+        ) {
+          const delay = await this.deferWorkflowProvider(ctx, runId, error, upperCost);
+          if (delay !== null) {
+            await wait(delay, undefined, { signal });
+            // Resume this same turn. Authorization, freshness, deadline, call cap and
+            // cost are rechecked; the refused transmission keeps its unknown provision.
+            return this.inference(capability, input, signal);
+          }
+        }
         await this.store.transaction(ctx, async (_tx, sql) => {
           await sql.query(
             "UPDATE agent_runs SET error_code=coalesce(error_code,$3) WHERE tenant_id=$1 AND id=$2 AND status='running'",
@@ -1038,7 +1126,7 @@ export class AgentRuntime {
         );
       }
       throw error;
-    });
+    }
     const usage = z
       .object({
         prompt_tokens: z.number().int().nonnegative(),
@@ -1115,7 +1203,7 @@ export class AgentRuntime {
             }));
           // The normal gateway rechecks authorization, versions, lease, route and reservation.
           // The persistent marker prevents another repair even across concurrent/replayed requests.
-          if (retry) return this.inference(capability, repairBody);
+          if (retry) return this.inference(capability, repairBody, signal);
           await this.store.transaction(ctx, async (_tx, sql) => {
             await sql.query(
               "UPDATE agent_runs SET error_code=coalesce(error_code,$3) WHERE tenant_id=$1 AND id=$2 AND status='running'",
@@ -1131,6 +1219,9 @@ export class AgentRuntime {
     return payload;
   }
   async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const controller = new AbortController();
+    const disconnected = () => controller.abort();
+    res.once('close', disconnected);
     try {
       ensure(
         req.method === 'POST' && typeof req.headers.authorization === 'string',
@@ -1151,13 +1242,14 @@ export class AgentRuntime {
       const output = tool
         ? await this.tool(token, tool, body)
         : req.url === '/agent/v1/chat/completions'
-          ? await this.inference(token, body)
+          ? await this.inference(token, body, controller.signal)
           : (() => {
               throw new Error('not_found');
             })();
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(output));
     } catch (error) {
+      if (res.destroyed) return;
       // Hermes probes local-provider metadata with GET (/api/tags, /v1/props…): refused
       // like any non-inference call, but not logged, so real refusals stay visible.
       if (req.method !== 'GET')
@@ -1173,6 +1265,8 @@ export class AgentRuntime {
       res.end(
         '{"error":{"message":"execution unavailable, invalid or limited","type":"permission_error"}}',
       );
+    } finally {
+      res.off('close', disconnected);
     }
   }
 }

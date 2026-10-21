@@ -22,6 +22,7 @@ import type { Pool, PoolClient, WorkflowRequest } from '@ulysse/database';
 import { PgWorkspaceStore, PgResearchStore } from '@ulysse/database';
 import { z } from 'zod';
 import { workflowFailure, type WorkflowStage } from './agent-errors.ts';
+import { WORKFLOW_TIMEOUT_MS } from './workflow-retry.ts';
 
 export const WORKFLOW_TOOLS = [
   'get_workflow_context',
@@ -200,7 +201,7 @@ export class WorkflowRuntime {
       if (!slots.rows[0]?.available) throw new Error('agent_concurrency_limit');
       const inputHash = workflowInputHash(input);
       await sql.query(
-        "INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id,workflow_kind) VALUES($1,$2,$3,$4,$5,'running','manual',$6,$7,clock_timestamp()+interval '90 seconds',$8,$9,$10,$11,$12,$13)",
+        "INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id,workflow_kind) VALUES($1,$2,$3,$4,$5,'running','manual',$6,$7,clock_timestamp()+($14::integer * interval '1 millisecond'),$8,$9,$10,$11,$12,$13)",
         [
           ctx.tenantId,
           agentId,
@@ -223,6 +224,7 @@ export class WorkflowRuntime {
           WORKFLOW_VERSION,
           ctx.correlationId,
           kind,
+          WORKFLOW_TIMEOUT_MS,
         ],
       );
       await sql.query(
@@ -267,7 +269,7 @@ export class WorkflowRuntime {
                 mode: this.settings.mode === 'hermes-stub' ? 'hermes-stub' : 'hermes-live',
                 model: this.settings.model,
                 modelSettings: this.settings.modelSettings,
-                timeoutMs: 90000,
+                timeoutMs: WORKFLOW_TIMEOUT_MS,
                 workflow: kind,
               },
               signal,

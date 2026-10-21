@@ -1,0 +1,27 @@
+# UL-020 — reprise des refus temporaires pendant un diagnostic
+
+Date : 21 octobre 2026. Responsable : Codex. Statut : implémentation, vérifications en cours. Dette : DEBT-023; DEBT-032 reste ouverte pour la recette réelle.
+
+## Constat et objectif
+
+La capture du diagnostic de 23 h 11 (Europe/Paris) affiche `provider_http_429`. La capture OpenRouter affiche des appels Mistral Small 4 / Mistral EU acceptés à 23 h 08 et 23 h 12. Elle n’affiche ni identifiant permettant de corréler les lignes au run, ni réponse du refus, ni délai conseillé. Le SHA actif n’est pas visible. On ne peut donc pas attribuer le quota à un composant précis ni conclure que l’ancien problème de schéma est résolu.
+
+Le code confirme que la passerelle lisait déjà `Retry-After`, mais arrêtait buyer/content au premier 429/503. Objectif : poursuivre un appel temporairement refusé sans recommencer le travail déjà accompli et sans modifier le modèle, la route Europe/ZDR, les données ou les plafonds financiers.
+
+## Changements
+
+- `workflow-retry.ts` borne les reprises à deux par run, 30 puis 60 secondes sans indication fournisseur, ou délai indiqué; attente de 120 secondes maximum compatible avec le bail restant.
+- `agent-runtime.ts` conserve messages, outils et raisonnement de ce tour; revalide chaque transmission, provisionne chaque tentative et empêche un appel pendant l’attente. Le compteur et les métadonnées techniques sont persistés sous verrou. Annulation/déconnexion interrompent l’attente.
+- `workflow-runtime.ts`, la file et le superviseur permettent 180 secondes au parcours; contrat privé v3 pour empêcher le mélange de superviseurs limités à 90 secondes et de nouveaux workers. Affaires inchangées.
+- L’interface indique l’attente automatique. Le script `research8-retry` ajoute `provider_retries` et `provider_retry` au diagnostic en lecture seule.
+- Le modèle scripté injecte un 429 après des outils; le smoke novembre exige sa reprise dans la vraie boucle Hermes pour buyer et contenu. Tests PostgreSQL : reprise 429/503, payload identique, coût conservé, épuisement, délai trop long, budget, expiration, révocation et annulation.
+
+## Vérification
+
+En cours. TypeScript vérifié et six tests Python ciblés réussis. `npm run verify`, tests VPS, PostgreSQL réel, navigateur, stack et mises à niveau doivent passer avant publication du bloc de déploiement.
+
+Références officielles consultées : [OpenRouter limites](https://openrouter.ai/docs/api_reference/limits), [erreurs et Retry-After](https://openrouter.ai/docs/api_reference/errors-and-debugging). Un 429 peut provenir de la plateforme ou du fournisseur amont; les appels acceptés n’établissent pas la disponibilité de tous les appels suivants.
+
+## Limites et suite
+
+Les fournisseurs restent simulés dans les tests. Les reprises bornées absorbent un refus temporaire, pas un quota durablement épuisé. Au-delà des délais, du nombre d’appels ou des budgets, le diagnostic reste en échec avec le code fournisseur; aucun résultat incomplet n’est publié. Le prochain diagnostic réel doit être testé puis relu après déploiement. La recherche existante peut rester en pause. Ni nouveau modèle ni fallback régional ne sont ajoutés par ce lot.

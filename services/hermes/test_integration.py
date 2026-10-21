@@ -74,6 +74,16 @@ class Endpoint(BaseHTTPRequestHandler):
 
 
 class ModelSettings(unittest.TestCase):
+    def test_execution_deadlines_are_bounded_and_workflows_allow_provider_backoff(self):
+        from server import execution_timeout_ms
+        for workflow, maximum in (("deal", 90000), ("buyer", 180000), ("content", 180000)):
+            self.assertEqual(execution_timeout_ms({"workflow": workflow}), maximum)
+            self.assertEqual(execution_timeout_ms({"workflow": workflow, "timeoutMs": 999999}), maximum)
+            self.assertEqual(execution_timeout_ms({"workflow": workflow, "timeoutMs": 30000}), 30000)
+        for value in (True, -1, 0, "180000"):
+            with self.assertRaises(ValueError):
+                execution_timeout_ms({"workflow": "buyer", "timeoutMs": value})
+
     def test_settings_are_model_independent_and_bounded(self):
         request = {"model": "example/next-model", "modelSettings": {"maxOutputTokens": 8192, "reasoning": "low"}}
         self.assertEqual(model_settings(request), request["modelSettings"])
@@ -129,6 +139,18 @@ class FinalResponse(unittest.TestCase):
 
 
 class WorkflowEvidence(unittest.TestCase):
+    def test_simulated_429_happens_once_after_tools_and_is_isolated_by_workflow(self):
+        from model_stub import transient_workflow_fixture
+        for _ in range(2):
+            evidence = {"context": {"references": [f"workflow:{uuid4()}"]}}
+            body = {"response_format": {"type": "json_schema"}, "messages": [
+                {"role": "user", "content": "ULYSSE_WORKFLOW_EVIDENCE_V1\n" + json.dumps(evidence)},
+            ]}
+            self.assertFalse(transient_workflow_fixture(body))
+            body["messages"].append({"role": "tool", "content": "{}"})
+            self.assertTrue(transient_workflow_fixture(body))
+            self.assertFalse(transient_workflow_fixture(body))
+
     def test_prepared_sources_need_no_duplicate_read_but_competitors_still_do(self):
         from model_stub import _workflow_step
         sources = [{"id": str(uuid4()), "text": f"Source fictive {i}"} for i in range(8)]

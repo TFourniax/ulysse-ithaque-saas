@@ -36,6 +36,8 @@ const STATES: Record<WorkflowRunDto['status'], string> = {
   failed: 'Analyse interrompue',
 };
 const WORKFLOW_ERRORS: Record<string, string> = {
+  provider_retry_wait:
+    'Le fournisseur demande une pause. Ulysse attend puis reprend automatiquement l’appel en cours.',
   budget_reached:
     'L’enveloppe nécessaire à cette analyse n’a pas pu être réservée. Les dépenses et réservations de la session et du mois sont conservées. Les données de recherche restent disponibles.',
   engine_unavailable: 'Activez le moteur d’analyse pour produire ce résultat.',
@@ -177,8 +179,9 @@ function ResultCard({
         </Banner>
       )}
       {run.errorCode && (
-        <Banner kind="warning">
-          {WORKFLOW_ERRORS[run.errorCode] ?? 'Analyse non disponible.'} ({run.errorCode})
+        <Banner kind={run.errorCode === 'provider_retry_wait' ? 'info' : 'warning'}>
+          {WORKFLOW_ERRORS[run.errorCode] ?? 'Analyse non disponible.'}
+          {run.errorCode !== 'provider_retry_wait' && ` (${run.errorCode})`}
         </Banner>
       )}
       {r && (

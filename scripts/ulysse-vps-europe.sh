@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-21.research7-schema
+ULYSSE_SCRIPT_VERSION=2026-10-21.research8-retry
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -101,6 +101,8 @@ SELECT r.id,r.workflow_kind,r.model,r.status,r.error_code,r.started_at,
        r.snapshot->'workflowEvidence'->>'sourceCount' AS automatically_supplied_sources,
        r.snapshot->'workflowEvidence'->>'referenceCount' AS automatically_supplied_references,
        r.snapshot->'workflowEvidence'->>'structuredOutput' AS native_response_schema,
+       r.snapshot->>'providerRetryCount' AS provider_retries,
+       r.snapshot->'providerRetry' AS provider_retry,
        r.snapshot->>'formatRepairAttempted' AS format_repair_attempted,
        r.snapshot->'workflowFormat'->>'code' AS format_code,
        r.snapshot->'workflowFormat'->>'finishReason' AS finish_reason,

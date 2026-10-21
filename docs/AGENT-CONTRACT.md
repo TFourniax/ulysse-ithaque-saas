@@ -14,9 +14,9 @@ Ce document décrit les contrats implémentés, leur autorité et leurs limites.
 | mode | `hermes-live` ou `hermes-stub` (vrai Hermes, modèle simulé) ; `simulated` reste une exécution du worker sans Hermes |
 | model | Identifiant du profil serveur validé ; aucun modèle/fournisseur choisi par une source ou par Hermes |
 | modelSettings | maxOutputTokens et reasoning normalisés, bornés côté worker et superviseur ; aucun secret/URL |
-| timeoutMs | 90 000 ms, plafonné par le superviseur ; boucle à 85 s |
+| timeoutMs | Affaires : 90 000 ms / boucle 85 s; buyer/content : 180 000 ms / boucle 175 s; plafonnés par le superviseur |
 
-Avant chaque demande, le worker lit `GET /health` : `executionContract` doit être `ulysse-execution-v2` ; `hermesCommit` et `instructionsSha256` doivent égaler le commit épinglé et l'empreinte attendus, sinon le run échoue avec `hermes_version_mismatch` sans appel. Version des instructions enregistrée sur le run : `ulysse-agent-v1+<12 premiers caractères de l'empreinte>`.
+Avant chaque demande, le worker lit `GET /health` : `executionContract` doit être `ulysse-execution-v3` ; `hermesCommit` et `instructionsSha256` doivent égaler le commit épinglé et l'empreinte attendus, sinon le run échoue avec `hermes_version_mismatch` sans appel. Version des instructions enregistrée sur le run : `ulysse-agent-v1+<12 premiers caractères de l'empreinte>`. La v3 allonge le bail buyer/content pour deux reprises transitoires maximum à la passerelle, sous le même plafond de huit appels et les budgets actifs; voir [ADR-0013](adr/0013-november-workflows.md).
 
 Entreprise, périmètre, déclencheur, versions de source/doctrine/contexte, modèle, Hermes, instructions et corrélation sont établis dans PostgreSQL. Hermes n'a aucun champ permettant de choisir une entreprise. La capacité retrouve exclusivement le run actif, non expiré et son entreprise ; chaque outil recontrôle également la source et les versions. Elle expire après 90 s et cesse d'autoriser dès que le run est terminé, révoqué ou interrompu. Elle n'est ni un identifiant utilisateur ni une session navigateur.
 

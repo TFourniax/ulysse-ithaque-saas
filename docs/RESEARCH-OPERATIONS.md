@@ -33,6 +33,10 @@ Pour la démo déjà configurée, ce déploiement conserve la clé Brave, Mistra
 
 Le diagnostic `diagnose` affiche désormais `automatically_supplied_sources` et `automatically_supplied_references` pour les nouveaux appels. Un nombre d’outils nul ne signifie plus que les sources obligatoires ont été omises : leurs textes sont fournis par la passerelle. Les lectures supplémentaires de concurrents restent tracées comme outils. Ces compteurs ne prouvent pas la justesse de la comparaison.
 
+## Refus temporaire : reprise automatique
+
+Pour `provider_http_429` ou `provider_http_503`, le correctif de reprise décrit dans le [journal dédié](journal/2026-10-21-UL-020-provider-retry.md) reprend le même appel buyer/content au plus deux fois, avec attente affichée. Il respecte le délai fournisseur, ou attend 30 puis 60 secondes en son absence. Les reprises partagent le plafond de huit appels et les budgets actifs; les transmissions refusées gardent leur provision. Un délai supérieur à deux minutes ou incompatible avec le temps restant arrête le diagnostic. Le bail total passe à trois minutes; une limite durable de compte ou de fournisseur peut toujours provoquer un échec. `diagnose` ajoute le compteur `provider_retries` et les métadonnées techniques `provider_retry`, sans texte fournisseur. L’application et Hermes doivent être mis à jour ensemble.
+
 ## Réponse tronquée : ajuster le plafond Mistral
 
 `result_truncated` indique une réponse terminale arrêtée avec `finish_reason=length`. Le dernier diagnostic transmis indiquait Mistral à 3 000 tokens de sortie; la correction de format conserve ce même plafond. La capture seule ne prouve pas le profil actuellement actif ni qu’une correction a été tentée.

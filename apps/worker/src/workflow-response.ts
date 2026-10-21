@@ -4,7 +4,7 @@ import { z } from 'zod';
 
 /** The provider and the publication boundary share one closed result contract. */
 export function workflowResponseFormat(kind: 'buyer' | 'content', references: string[]) {
-  const allowedReferences = [...new Set(references)];
+  const allowedReferences = [...new Set(references)].sort();
   if (!allowedReferences.length) throw new Error('workflow_evidence_missing');
   const contract = WorkflowResult.extend({
     kind: z.literal(kind),

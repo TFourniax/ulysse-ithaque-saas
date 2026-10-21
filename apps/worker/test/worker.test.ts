@@ -1439,8 +1439,11 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
                 { status: 403 },
               )
             : scenario === 'upstream'
-              ? new Response('private-details', { status: 503 })
-              : Response.json({ error: { code: 429, message: 'private-details' } }),
+              ? new Response('private-details', { status: 503, headers: { 'retry-after': '3600' } })
+              : Response.json(
+                  { error: { code: 429, message: 'private-details' } },
+                  { headers: { 'retry-after': '3600' } },
+                ),
         );
       });
       const expected = {
@@ -1491,6 +1494,191 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       assert.equal(saved.model_calls, 1);
       assert.equal(saved.tool_calls, 0);
       assert.equal(calls, 1);
+      mock.mock.restore();
+    }
+  });
+  test('workflow resumes the same provider turn after 429/503 and keeps each transmission and its cost', async (t) => {
+    const instructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    for (const status of [429, 503]) {
+      const w = await setup(`workflow-retry-${status}`);
+      const bodies: string[] = [];
+      const times: number[] = [];
+      let waitingObserved = false;
+      const result = {
+        ...pendingWorkflow('buyer', [], 'Reprise fournisseur vérifiée'),
+        outcome: 'draft',
+        findings: [
+          {
+            topic: 'Offre',
+            analysis: 'Service documenté.',
+            references: [`source:${w.source.id}:r1`],
+          },
+        ],
+        uniqueness: {
+          verdict: 'insufficient_evidence',
+          reason: 'Corpus limité.',
+          references: [`source:${w.source.id}:r1`],
+        },
+      } satisfies WorkflowResult;
+      const mock = t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
+        bodies.push(z.string().parse(init.body));
+        times.push(Date.now());
+        return Promise.resolve(
+          bodies.length === 1
+            ? new Response('', { status, headers: { 'retry-after': '0' } })
+            : Response.json({
+                choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }],
+                usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.0001 },
+              }),
+        );
+      });
+      const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+        execute: async (request) => {
+          assert.equal(request.timeoutMs, 180_000);
+          const body = { messages: [{ role: 'system', content: instructions }] };
+          const pending = engine.inference(request.capability, body);
+          await waitFor(
+            async () =>
+              (await w.workspace.listWorkflows(w.owner))[0]?.errorCode === 'provider_retry_wait',
+          );
+          waitingObserved = true;
+          assert.equal((await w.workspace.listWorkflows(w.owner))[0]?.status, 'running');
+          await assert.rejects(engine.inference(request.capability, body), /provider cooldown/);
+          const payload = z
+            .object({ choices: z.array(z.object({ message: z.object({ content: z.string() }) })) })
+            .parse(await pending);
+          return JSON.parse(payload.choices[0]!.message.content) as unknown;
+        },
+      });
+      const id = await w.workspace.create(
+        w.owner,
+        { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+        'hermes-live',
+      );
+      await engine.workflows.run(w.ctx, id);
+      const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+      assert.equal(run.status, 'draft', run.errorCode ?? '');
+      assert.equal(run.errorCode, null);
+      assert.equal(waitingObserved, true);
+      assert.equal(bodies.length, 2);
+      assert.equal(
+        bodies[0],
+        bodies[1],
+        'same messages, schema, model, endpoint parameters and reasoning',
+      );
+      assert.ok(times[1]! - times[0]! >= 1000);
+      const saved = (
+        await engine.store.transaction(w.ctx, (_tx, sql) =>
+          sql.query(
+            'SELECT model_calls,tool_calls,input_tokens,output_tokens,uncertain_calls,committed_usd,reserved_usd,snapshot FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+            [w.tenantId, run.agentRunId],
+          ),
+        )
+      ).rows[0] as Record<string, unknown>;
+      assert.equal(saved.model_calls, 2);
+      assert.equal(saved.tool_calls, 0);
+      assert.equal(saved.input_tokens, 100, 'successful usage settled exactly once');
+      assert.equal(saved.output_tokens, 20);
+      assert.equal(saved.uncertain_calls, 1, 'refused request retains its provision');
+      assert.equal(saved.committed_usd, saved.reserved_usd);
+      assert.ok(Number(saved.committed_usd) > 0.0001 && Number(saved.committed_usd) < 0.25);
+      assert.equal(
+        z.object({ providerRetryCount: z.literal(1) }).safeParse(saved.snapshot).success,
+        true,
+      );
+      mock.mock.restore();
+    }
+  });
+  test('workflow retry obeys its ceiling, provider delay, budget, deadline, revocation and cancellation', async (t) => {
+    const instructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    for (const scenario of [
+      'exhausted',
+      'long-delay',
+      'budget',
+      'deadline',
+      'withdrawn',
+      'abort',
+    ]) {
+      const w = await setup(`workflow-retry-stop-${scenario}`);
+      let calls = 0;
+      let runId = '';
+      let waitingObserved = false;
+      const controller = new AbortController();
+      const mock = t.mock.method(globalThis, 'fetch', async () => {
+        calls++;
+        if (scenario === 'budget' || scenario === 'deadline')
+          await engine.store.transaction(w.ctx, (_tx, sql) =>
+            sql.query(
+              scenario === 'budget'
+                ? 'UPDATE agent_runs SET reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2'
+                : "UPDATE agent_runs SET expires_at=clock_timestamp()+interval '5 seconds' WHERE tenant_id=$1 AND id=$2",
+              [w.tenantId, runId],
+            ),
+          );
+        return new Response('', {
+          status: 429,
+          headers: { 'retry-after': scenario === 'long-delay' ? '3600' : '0' },
+        });
+      });
+      const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+        execute: async (request) => {
+          runId = request.runId;
+          const pending = engine.inference(
+            request.capability,
+            { messages: [{ role: 'system', content: instructions }] },
+            controller.signal,
+          );
+          if (scenario === 'withdrawn' || scenario === 'abort') {
+            await waitFor(
+              async () =>
+                (await w.workspace.listWorkflows(w.owner))[0]?.errorCode === 'provider_retry_wait',
+            );
+            waitingObserved = true;
+            if (scenario === 'withdrawn')
+              await w.workspace.withdraw(w.owner, w.source.id, w.source.revision);
+            else controller.abort();
+          }
+          return pending;
+        },
+      });
+      const id = await w.workspace.create(
+        w.owner,
+        { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+        'hermes-live',
+      );
+      await engine.workflows.run(w.ctx, id);
+      const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+      assert.equal(calls, scenario === 'exhausted' ? 3 : 1);
+      assert.equal(
+        run.status,
+        scenario === 'withdrawn' ? 'obsolete' : 'failed',
+        run.errorCode ?? '',
+      );
+      if (!['withdrawn', 'abort'].includes(scenario))
+        assert.equal(run.errorCode, 'provider_http_429');
+      else assert.equal(waitingObserved, true);
+      const saved = (
+        await engine.store.transaction(w.ctx, (_tx, sql) =>
+          sql.query(
+            'SELECT model_calls,uncertain_calls,committed_usd,reserved_usd,snapshot FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+            [w.tenantId, runId],
+          ),
+        )
+      ).rows[0] as Record<string, unknown>;
+      assert.equal(saved.model_calls, calls);
+      assert.equal(saved.uncertain_calls, calls);
+      assert.equal(saved.committed_usd, saved.reserved_usd);
+      if (scenario === 'exhausted')
+        assert.equal(
+          z.object({ providerRetryCount: z.literal(2) }).safeParse(saved.snapshot).success,
+          true,
+        );
       mock.mock.restore();
     }
   });
@@ -1747,7 +1935,10 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
           );
           assert.equal(sent.messages.at(-2)?.role, 'assistant');
           assert.match(sent.messages.at(-1)?.content ?? '', /Une seule correction/);
-          if (scenario === 'limited') return Promise.resolve(new Response('', { status: 429 }));
+          if (scenario === 'limited')
+            return Promise.resolve(
+              new Response('', { status: 429, headers: { 'retry-after': '3600' } }),
+            );
         }
         const result =
           calls === 1 || scenario === 'invalid'

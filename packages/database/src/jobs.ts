@@ -57,7 +57,7 @@ export const QUEUE_DEFINITIONS: readonly QueueDefinition[] = [
     retryDelay: 10,
     retryBackoff: true,
     retryDelayMax: 120,
-    expireInSeconds: 120,
+    expireInSeconds: 240,
     deadLetter: QUEUES.deadLetter,
   },
   {

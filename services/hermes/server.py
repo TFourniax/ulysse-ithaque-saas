@@ -15,7 +15,15 @@ from uuid import UUID
 
 SLOTS = threading.BoundedSemaphore(2)
 MODES = {"hermes-live", "hermes-stub"}
-EXECUTION_CONTRACT = "ulysse-execution-v2"
+EXECUTION_CONTRACT = "ulysse-execution-v3"
+
+
+def execution_timeout_ms(request):
+    maximum = 180000 if request.get("workflow", "deal") in ("buyer", "content") else 90000
+    requested = request.get("timeoutMs", maximum)
+    if type(requested) is not int or requested < 5000:
+        raise ValueError("invalid_execution_timeout")
+    return min(requested, maximum)
 
 
 def model_settings(request):
@@ -92,7 +100,7 @@ def isolated_run(request):
         completed = subprocess.run(
             [sys.executable, str(Path(__file__).with_name("runner.py"))],
             input=json.dumps(request), capture_output=True, text=True, env=env, cwd=home,
-            timeout=min(int(request.get("timeoutMs", 90000)), 90000) / 1000, check=False,
+            timeout=execution_timeout_ms(request) / 1000, check=False,
         )
         if completed.returncode:
             # Runner diagnostics contain class names and source locations only.

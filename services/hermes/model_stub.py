@@ -8,6 +8,8 @@ says nothing about the relevance of a real model.
 import json
 import re
 import sys
+import threading
+from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -95,6 +97,31 @@ def _final(calls):
 
 
 WORKFLOW_TOOLS = {"get_workflow_context", "list_company_sources", "read_company_source"}
+RETRY_FIXTURES = deque(maxlen=256)
+RETRY_LOCK = threading.Lock()
+
+
+def workflow_fixture_key(body):
+    prefix = "ULYSSE_WORKFLOW_EVIDENCE_V1\n"
+    for message in body.get("messages", []):
+        text = message.get("content")
+        if message.get("role") == "user" and isinstance(text, str) and text.startswith(prefix):
+            evidence = json.loads(text[len(prefix):])
+            return next((ref for ref in evidence.get("context", {}).get("references", [])
+                         if isinstance(ref, str) and re.fullmatch(r"workflow:[0-9a-f-]{36}", ref)), None)
+    return None
+
+
+def transient_workflow_fixture(body):
+    """One refusal after tools, only in the simulated endpoint; no external traffic."""
+    if not body.get("response_format") or not any(m.get("role") == "tool" for m in body.get("messages", [])):
+        return False
+    key = workflow_fixture_key(body)
+    with RETRY_LOCK:
+        if not key or key in RETRY_FIXTURES:
+            return False
+        RETRY_FIXTURES.append(key)
+        return True
 
 
 def _workflow_step(calls, evidence=None):
@@ -154,6 +181,9 @@ def respond(body):
                 if schema.get("properties", {}).get("kind", {}).get("const") != workflow_result["kind"]:
                     raise ValueError("wrong simulated native workflow kind")
                 workflow_result["limits"].append("Schéma natif reçu par le fournisseur simulé.")
+                with RETRY_LOCK:
+                    if workflow_fixture_key(body) in RETRY_FIXTURES:
+                        workflow_result["limits"].append("Reprise après HTTP 429 du fournisseur simulé.")
     elif not set(FIRST) <= called:
         pending = [(n, {"subjectId": subject.group(0)} if n == "get_opportunity" and subject else {})
                    for n in FIRST if n not in called]
@@ -196,15 +226,21 @@ class Handler(BaseHTTPRequestHandler):
             size = int(self.headers.get("Content-Length", "0"))
             if size <= 0 or size > 100000:
                 raise ValueError("request_size")
-            self._send(200, respond(json.loads(self.rfile.read(size))))
+            body = json.loads(self.rfile.read(size))
+            if transient_workflow_fixture(body):
+                self._send(429, {"error": {"code": 429, "message": "simulated temporary rate limit"}}, retry_after="1")
+            else:
+                self._send(200, respond(body))
         except Exception:
             self._send(400, {"error": {"message": "invalid simulated request", "type": "invalid_request_error"}})
 
-    def _send(self, status, body):
+    def _send(self, status, body, retry_after=None):
         data = json.dumps(body, ensure_ascii=False).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
+        if retry_after is not None:
+            self.send_header("Retry-After", retry_after)
         self.end_headers()
         self.wfile.write(data)
 

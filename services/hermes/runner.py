@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import run_state
-from server import model_settings
+from server import model_settings, execution_timeout_ms
 
 DEAL_NAMES = (
     "get_opportunity", "list_activities", "search_documents", "read_document_excerpt",
@@ -56,7 +56,7 @@ def execute(request):
     agent = AIAgent(
         model=request["model"], api_key=run_state.CAPABILITY, base_url=f"{run_state.GATEWAY_URL}/v1",
         provider="custom", api_mode="chat_completions", enabled_toolsets=["ulysse"],
-        max_iterations=8, max_tokens=settings["maxOutputTokens"], run_budget_seconds=85,
+        max_iterations=8, max_tokens=settings["maxOutputTokens"], run_budget_seconds=execution_timeout_ms(request) / 1000 - 5,
         ephemeral_system_prompt=run_state.INSTRUCTIONS, quiet_mode=True, verbose_logging=False,
         save_trajectories=False, skip_context_files=True, load_soul_identity=False,
         skip_memory=True, skip_background_review=True, session_db=None,
