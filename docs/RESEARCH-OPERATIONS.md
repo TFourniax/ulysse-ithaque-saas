@@ -2,6 +2,8 @@
 
 État : code publié, 11 contrôles CI verts au `375bfe5d28e849f7392d05210a263a1603081383`; activation VPS et qualité du benchmark live à vérifier. [Preuves CI](journal/2026-10-21-UL-020-publication-ci.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
 
+Le tarif d’entrée du profil GLM de cette révision a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. Attendre sa révision vérifiée avant une nouvelle tentative. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
+
 ## Préparer et déployer
 
 La branche est `codex/ul-020-web-research`, issue d’UL-019, [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). La commande ci-dessous épingle le code dont les 11 contrôles sont verts; les commits documentaires suivants ne changent pas ce code. Les migrations additives 0014 et 0015 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : les outils de lecture par lots et l’empreinte du prompt évoluent. Le script conserve le modèle européen, les clés, la session et les plafonds actifs. Il vérifie une sauvegarde chiffrée avant migration. Prévoir une brève interruption pendant le remplacement des services.
@@ -15,7 +17,7 @@ umask 077
 cd /
 [[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
 ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-ULYSSE_REVISION=375bfe5d28e849f7392d05210a263a1603081383
+: "${ULYSSE_REVISION:?Renseigner la revision verifiee du correctif tarifaire UL-020}"
 ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research

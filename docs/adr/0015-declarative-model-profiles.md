@@ -11,7 +11,7 @@ UL-018 a isolé les paramètres et tarifs mais gardait une union de modèles Typ
 - Catalogue JSON versionné dans le worker ; schéma strict Zod v1. Profils GLM, GPT mini, Haiku et Mistral Small 4 en Europe, plus GPT historique pour compatibilité. Aucun changement de modèle implicite lors d'une lecture du catalogue.
 - Option administrateur AGENT_MODEL_PROFILE_JSON : un profil externe peut remplacer les paramètres du modèle sélectionné sans reconstruction. Aucune URL, clé, option de fallback, plugin ou route globale dans un profil externe. Le modèle doit correspondre exactement à AGENT_MODEL_ID.
 - Adaptateur OpenRouter fixe : domaine européen, endpoint exclusif, ZDR, non-collecte, prix maximaux, paramètres obligatoires, pas de redirection. La configuration ne devient jamais une permission fournie par une source métier.
-- GLM : inceptron/fp8, 0,10/0,69 USD par million de tokens au 20 octobre ; raisonnement low activé, temperature 1/top_p 0,95, 8 192 tokens de sortie totale. Précontrôle modèle autorisé, endpoint ZDR actif, prix, paramètres et niveaux de raisonnement annoncés. Les niveaux absents du catalogue ne sont pas inventés comme preuve de compatibilité : la recette live reste requise.
+- GLM : inceptron/fp8, 0,10/0,69 USD par million de tokens au 20 octobre, mis à jour à 0,175/0,69 après vérification le 21 octobre ; raisonnement low activé, temperature 1/top_p 0,95, 8 192 tokens de sortie totale. Précontrôle modèle autorisé, endpoint ZDR actif, prix, paramètres et niveaux de raisonnement annoncés. Les niveaux absents du catalogue ne sont pas inventés comme preuve de compatibilité : la recette live reste requise.
 - Contrat privé ulysse-execution-v2 exposé par la santé Hermes. AgentExecutor porte modelSettings : limite de sortie et mode/effort de raisonnement. Le superviseur vérifie syntaxe et limites ; le worker garde l'autorité sur le modèle réellement appelé. Aucun catalogue Python dupliqué.
 - Snapshot du profil normalisé et empreinte SHA-256 dans les runs deal/buyer/content. Le gateway refuse un profil différent de celui réservé, même si le modèle n'a pas changé. Aucune migration.
 - Les tokens de raisonnement font partie de completion_tokens et de la réservation totale. Les appels incertains restent engagés, les plafonds et sessions restent inchangés. Ni raisonnement brut ni nouvelle trajectoire persistée.
@@ -19,6 +19,10 @@ UL-018 a isolé les paramètres et tarifs mais gardait une union de modèles Typ
 - Les capacités multimodales déclarées sont des métadonnées, pas une autorisation. Le gateway accepte uniquement le contrat de messages texte actuellement comptabilisé. Un nouveau protocole, une nouvelle modalité ou tarification appelle un adaptateur/contrat testé.
 
 ## Exploitation et limites
+
+### Dérive de tarif constatée le 21 octobre
+
+Le précontrôle a correctement arrêté la mise à niveau UL-020 avant arrêt des services et migration : le tarif d’entrée du registre public dépassait le plafond fourni. Seul ce tarif du profil GLM inclus est actualisé, après recoupement du registre ZDR et de la fiche officielle. Les prix restent des plafonds de routage et servent aux réservations; aucune synchronisation automatique vers un prix supérieur, suppression de contrôle ou augmentation des budgets globaux. Les profils administrateur sont conservés. Le refus inclut seulement l’identité validée du profil et les prix numériques, jamais un corps fournisseur, une clé ou une donnée d’entreprise. [Recette](../journal/2026-10-21-UL-020-glm-price-drift.md).
 
 ### Diagnostic live après la première recette VPS
 
