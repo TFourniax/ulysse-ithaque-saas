@@ -1,6 +1,6 @@
 # Recherche publique — activation et recette UL-020
 
-État : correctif du tarif GLM publié, attente de la recette CI complète; activation VPS et qualité du benchmark live à vérifier. [Correctif et vérifications](journal/2026-10-21-UL-020-glm-price-drift.md), [preuves CI initiales](journal/2026-10-21-UL-020-publication-ci.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
+État : correctif du tarif GLM publié au `51f0f7f515d2fbca83a64cf9e95e60daaf480381`, **11 contrôles CI verts**; activation VPS et qualité du benchmark live à vérifier. [Correctif et vérifications](journal/2026-10-21-UL-020-glm-price-drift.md), [preuves CI initiales](journal/2026-10-21-UL-020-publication-ci.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
 
 Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. La tentative a été arrêtée avant migration et arrêt des services; pas de rollback à effectuer pour ce refus. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
 
@@ -17,7 +17,7 @@ umask 077
 cd /
 [[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
 ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-: "${ULYSSE_REVISION:?Renseigner la revision verifiee du correctif tarifaire UL-020}"
+ULYSSE_REVISION=51f0f7f515d2fbca83a64cf9e95e60daaf480381
 ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
