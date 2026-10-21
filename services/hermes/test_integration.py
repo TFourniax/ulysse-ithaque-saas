@@ -128,6 +128,23 @@ class FinalResponse(unittest.TestCase):
                 parse_final(invalid)
 
 
+class WorkflowEvidence(unittest.TestCase):
+    def test_prepared_sources_need_no_duplicate_read_but_competitors_still_do(self):
+        from model_stub import _workflow_step
+        sources = [{"id": str(uuid4()), "text": f"Source fictive {i}"} for i in range(8)]
+        rival = {"id": str(uuid4())}
+        evidence = {"context": {"kind": "buyer"}, "sources": sources, "untrusted": True}
+        calls = [{"name": "list_company_sources", "args": {}, "result": {"items": [*sources, rival]}}]
+        pending, result = _workflow_step(calls, evidence)
+        self.assertIsNone(result)
+        self.assertEqual(pending, [("read_company_source", {"sourceIds": [rival["id"]]})])
+        calls.append({"name": "read_company_source", "args": {"sourceIds": [rival["id"]]}, "result": {"items": [rival]}})
+        pending, result = _workflow_step(calls, evidence)
+        self.assertEqual(pending, [])
+        self.assertEqual(result["outcome"], "abstained")
+        self.assertIn("Sources obligatoires fournies automatiquement.", result["limits"])
+
+
 class HermesIntegration(unittest.TestCase):
     def setUp(self):
         Endpoint.calls = []

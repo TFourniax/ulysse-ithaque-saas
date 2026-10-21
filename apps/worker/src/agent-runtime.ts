@@ -41,7 +41,7 @@ export const EXECUTION_CONTRACT = 'ulysse-execution-v2';
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
 export const WORKFLOW_INSTRUCTIONS_SHA256 =
-  'b09fbbb7db15ee97513deb10502be9fc9d6b5d2a0e42b71e72d5ed77d5779e81';
+  '6a2aadc0222906211d24ba4d1235305784ec75a3c6bafbb76ace863a70081f81';
 export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
 /** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
 export const MAX_ATTEMPTS = 2;
@@ -880,70 +880,115 @@ export class AgentRuntime {
     const provider = this.provider;
     ensure(provider && this.config.AGENT_MODEL_ID, 'INVALID_INPUT', 'model absent');
     ensure(bytes <= provider.profile.maxContextBytes, 'INVALID_INPUT', 'context limit');
-    // byte count is a conservative upper bound on text tokens; schema/role overhead is included.
-    // Fixed model, no provider/model fallback, maximum prices pinned in request routing.
-    const upperCost = provider.estimate(bytes + 2048, provider.profile.generation.maxOutputTokens);
-    const { runId, mode, workflowKind } = await this.store.transaction(ctx, async (tx, sql) => {
-      const query = await sql.query(
-        'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
-        [ctx.tenantId, hash(capability)],
-      );
-      const run = Run.parse(query.rows[0]);
-      ensure(
-        run.mode !== 'simulated' &&
-          run.mode === this.config.ULYSSE_ANALYSIS_MODE &&
-          run.model === this.config.AGENT_MODEL_ID &&
-          run.snapshot.modelProfileHash === provider.profileHash &&
-          run.status === 'running' &&
-          run.model_calls < 8 &&
-          Date.parse(run.expires_at) > Date.now(),
-        'FORBIDDEN',
-        'model limit',
-      );
-      if (run.workflow_kind === 'deal') {
-        const { opportunity: o, doctrine: d, context: c } = await this.current(tx, run.subject_id);
-        ensure(agentInputHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
-      } else await this.workflows.assertCurrent(ctx, tx, sql, run.subject_id, run.input_hash);
-      // Deterministic authority over what reaches the provider: the versioned Ulysse
-      // instructions as the only system message, and only the Ulysse tools.
-      const system = messages.filter((m) => m.role === 'system' || m.role === 'developer');
-      ensure(
-        system.length === 1 &&
-          messages[0] === system[0] &&
-          typeof system[0]?.content === 'string' &&
-          sha256(system[0].content) ===
-            (run.workflow_kind === 'deal'
-              ? AGENT_INSTRUCTIONS_SHA256
-              : WORKFLOW_INSTRUCTIONS_SHA256),
-        'FORBIDDEN',
-        'foreign instructions',
-      );
-      const allowedTools = run.workflow_kind === 'deal' ? TOOL_NAMES : WORKFLOW_TOOLS;
-      if (Array.isArray(body.tools)) {
-        const names = body.tools.map((t: unknown) => record(record(t).function).name);
-        ensure(
-          names.length === allowedTools.length &&
-            allowedTools.every((name) => names.includes(name)),
-          'FORBIDDEN',
-          'foreign tools',
+    const { runId, mode, workflowKind, evidence, preparedMessages, upperCost } =
+      await this.store.transaction(ctx, async (tx, sql) => {
+        const query = await sql.query(
+          'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
+          [ctx.tenantId, hash(capability)],
         );
-      }
-      ensure(run.committed_usd + upperCost <= run.reserved_usd, 'FORBIDDEN', 'budget limit');
-      await sql.query(
-        "UPDATE agent_runs SET model_calls=model_calls+1,uncertain_calls=uncertain_calls+1,committed_usd=committed_usd+$3,cost_state='unknown' WHERE tenant_id=$1 AND id=$2",
-        [ctx.tenantId, run.id, upperCost],
-      );
-      await this.store.event(
-        sql,
-        ctx.tenantId,
-        run.id,
-        'model',
-        run.mode === 'hermes-live'
-          ? `Appel modèle réservé : ${this.config.AGENT_MODEL_ID}, ${this.config.AGENT_PROVIDER_ROUTE}`
-          : 'Appel au modèle simulé (aucun fournisseur)',
-      );
-      return { runId: run.id, mode: run.mode, workflowKind: run.workflow_kind };
-    });
+        const run = Run.parse(query.rows[0]);
+        ensure(
+          run.mode !== 'simulated' &&
+            run.mode === this.config.ULYSSE_ANALYSIS_MODE &&
+            run.model === this.config.AGENT_MODEL_ID &&
+            run.snapshot.modelProfileHash === provider.profileHash &&
+            run.status === 'running' &&
+            run.model_calls < 8 &&
+            Date.parse(run.expires_at) > Date.now(),
+          'FORBIDDEN',
+          'model limit',
+        );
+        if (run.workflow_kind === 'deal') {
+          const {
+            opportunity: o,
+            doctrine: d,
+            context: c,
+          } = await this.current(tx, run.subject_id);
+          ensure(agentInputHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
+        }
+        // Deterministic authority over what reaches the provider: the versioned Ulysse
+        // instructions as the only system message, and only the Ulysse tools.
+        const system = messages.filter((m) => m.role === 'system' || m.role === 'developer');
+        ensure(
+          system.length === 1 &&
+            messages[0] === system[0] &&
+            typeof system[0]?.content === 'string' &&
+            sha256(system[0].content) ===
+              (run.workflow_kind === 'deal'
+                ? AGENT_INSTRUCTIONS_SHA256
+                : WORKFLOW_INSTRUCTIONS_SHA256),
+          'FORBIDDEN',
+          'foreign instructions',
+        );
+        const allowedTools = run.workflow_kind === 'deal' ? TOOL_NAMES : WORKFLOW_TOOLS;
+        if (Array.isArray(body.tools)) {
+          const names = body.tools.map((t: unknown) => record(record(t).function).name);
+          ensure(
+            names.length === allowedTools.length &&
+              allowedTools.every((name) => names.includes(name)),
+            'FORBIDDEN',
+            'foreign tools',
+          );
+        }
+        const evidence =
+          run.workflow_kind === 'deal'
+            ? null
+            : await this.workflows.prepareEvidence(ctx, tx, sql, run.subject_id, run.input_hash);
+        // Mandatory evidence is supplied as untrusted data, never as a system instruction
+        // or an invented model/tool message (which could break signed reasoning replay).
+        const preparedMessages = evidence
+          ? [messages[0], evidence.message, ...messages.slice(1)]
+          : messages;
+        const preparedBytes = Buffer.byteLength(
+          JSON.stringify({ ...body, messages: preparedMessages }),
+        );
+        ensure(
+          preparedMessages.length <= 32 && preparedBytes <= provider.profile.maxContextBytes,
+          'INVALID_INPUT',
+          'context limit',
+        );
+        // Include the delivered source text in the conservative per-call reservation.
+        const upperCost = provider.estimate(
+          preparedBytes + 2048,
+          provider.profile.generation.maxOutputTokens,
+        );
+        ensure(run.committed_usd + upperCost <= run.reserved_usd, 'FORBIDDEN', 'budget limit');
+        await sql.query(
+          "UPDATE agent_runs SET model_calls=model_calls+1,uncertain_calls=uncertain_calls+1,committed_usd=committed_usd+$3,cost_state='unknown' WHERE tenant_id=$1 AND id=$2",
+          [ctx.tenantId, run.id, upperCost],
+        );
+        if (evidence) {
+          await sql.query(
+            "UPDATE agent_runs SET retrieved=ARRAY(SELECT DISTINCT unnest(retrieved || $3::text[])),snapshot=jsonb_set(snapshot,'{workflowEvidence}',$4::jsonb) WHERE tenant_id=$1 AND id=$2",
+            [
+              ctx.tenantId,
+              run.id,
+              evidence.references,
+              JSON.stringify({
+                sourceCount: evidence.sourceCount,
+                referenceCount: evidence.references.length,
+              }),
+            ],
+          );
+        }
+        await this.store.event(
+          sql,
+          ctx.tenantId,
+          run.id,
+          'model',
+          run.mode === 'hermes-live'
+            ? `Appel modèle réservé : ${this.config.AGENT_MODEL_ID}, ${this.config.AGENT_PROVIDER_ROUTE}`
+            : 'Appel au modèle simulé (aucun fournisseur)',
+        );
+        return {
+          runId: run.id,
+          mode: run.mode,
+          workflowKind: run.workflow_kind,
+          evidence,
+          preparedMessages,
+          upperCost,
+        };
+      });
     const live = mode === 'hermes-live';
     // The provider key only ever leaves for OpenRouter; the stub endpoint receives none.
     const payload = await fetchAgentCompletion(
@@ -958,7 +1003,7 @@ export class AgentRuntime {
         },
         body: JSON.stringify({
           model: this.config.AGENT_MODEL_ID,
-          messages: body.messages,
+          messages: preparedMessages,
           tools: body.tools,
           tool_choice: body.tools === undefined ? undefined : 'auto',
           stream: false,
@@ -1028,14 +1073,21 @@ export class AgentRuntime {
               { role: 'user', content: workflowRepairPrompt(d, workflowKind) },
             ],
           };
-          const repairBytes = Buffer.byteLength(JSON.stringify(repairBody));
+          // Recursive inference rebuilds the evidence exactly once; eligibility must
+          // nevertheless include its bytes and message slot before attempting repair.
+          const repairMessages = evidence
+            ? [repairBody.messages[0], evidence.message, ...repairBody.messages.slice(1)]
+            : repairBody.messages;
+          const repairBytes = Buffer.byteLength(
+            JSON.stringify({ ...repairBody, messages: repairMessages }),
+          );
           const repairCost = provider.estimate(
             repairBytes + 2048,
             provider.profile.generation.maxOutputTokens,
           );
           const eligible =
             inspected.repairable &&
-            repairBody.messages.length <= 32 &&
+            repairMessages.length <= 32 &&
             repairBytes <= provider.profile.maxContextBytes;
           const retry =
             eligible &&

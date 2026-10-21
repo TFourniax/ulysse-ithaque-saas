@@ -56,6 +56,7 @@ try {
     assert.equal(result.mode, 'hermes-stub');
     assert.ok(result.agentRunId, 'went through the Hermes runtime');
     assert.match(result.result.summary, /Modèle simulé/);
+    assert.ok(result.result.limits.includes('Sources obligatoires fournies automatiquement.'));
     assert.equal(result.result.content, null);
     assert.equal(result.result.uniqueness, null);
     console.log(`UL017_${kind.toUpperCase()}_HERMES_STUB=passed`);

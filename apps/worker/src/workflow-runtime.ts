@@ -29,6 +29,36 @@ export const WORKFLOW_TOOLS = [
   'read_company_source',
 ] as const;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+export const WORKFLOW_EVIDENCE_PREFIX = 'ULYSSE_WORKFLOW_EVIDENCE_V1\n';
+function workflowContext(input: WorkflowInput, id: string) {
+  const references = [
+    `workflow:${id}`,
+    `context:v${input.context?.version ?? 0}`,
+    `doctrine:${input.doctrine?.id ?? ''}:v${input.doctrine?.version ?? 0}`,
+  ];
+  if (input.buyer) references.push(`buyer:${input.buyer.id}`);
+  return {
+    references,
+    kind: input.kind,
+    brief: input.brief,
+    context: input.context?.content,
+    doctrine: input.doctrine?.content,
+    buyer: input.buyer,
+    research: input.research
+      ? {
+          id: input.research.id,
+          status: input.research.status,
+          candidateCount: input.research.candidateCount,
+          qualifiedCount: input.research.qualifiedCount,
+          provisionalCount: input.research.pendingReferences.length,
+        }
+      : null,
+    untrusted: true,
+  };
+}
+function requiredSources(input: WorkflowInput, request: WorkflowRequest) {
+  return input.sources.filter((s) => request.sourceIds.includes(s.id));
+}
 const Run = z.object({
   id: z.uuid(),
   subject_id: z.uuid(),
@@ -58,17 +88,33 @@ export class WorkflowRuntime {
     this.settings = settings;
     this.executor = executor;
   }
-  async assertCurrent(
+  async prepareEvidence(
     ctx: Context,
     tx: TenantTx,
     sql: PoolClient,
     subjectId: string,
     inputHash: string,
-  ): Promise<void> {
+  ) {
     const run = await this.store.get(sql, ctx.tenantId, subjectId);
     const input = await this.store.input(tx, sql, run);
     this.store.assertFresh(input);
     ensure(run.status === 'running' && workflowInputHash(input) === inputHash, 'STALE_EVIDENCE');
+    const context = workflowContext(input, subjectId);
+    const sources = requiredSources(input, run).map((s) => ({
+      ...s,
+      reference: sourceReference(s),
+      untrusted: true,
+    }));
+    // Deliver the actual versioned text, not just an identifier marked as read.
+    // Rebuild for every provider call so Hermes need not retain an extra transcript.
+    return {
+      references: [...context.references, ...sources.map((s) => s.reference)],
+      sourceCount: sources.length,
+      message: {
+        role: 'user',
+        content: WORKFLOW_EVIDENCE_PREFIX + JSON.stringify({ context, sources, untrusted: true }),
+      },
+    };
   }
   async run(ctx: Context, id: string, signal?: AbortSignal): Promise<void> {
     requireScope(ctx, 'analysis:run');
@@ -250,12 +296,9 @@ export class WorkflowRuntime {
         this.store.assertFresh(input);
         ensure(run.input_hash === workflowInputHash(input), 'STALE_EVIDENCE');
         const required = [
-          `workflow:${id}`,
-          `context:v${input.context?.version ?? 0}`,
-          `doctrine:${input.doctrine?.id ?? ''}:v${input.doctrine?.version ?? 0}`,
-          ...input.sources.filter((s) => request.sourceIds.includes(s.id)).map(sourceReference),
+          ...workflowContext(input, id).references,
+          ...requiredSources(input, request).map(sourceReference),
         ];
-        if (input.buyer) required.push(`buyer:${input.buyer.id}`);
         ensure(
           required.every((ref) => run.retrieved.includes(ref)),
           'INVALID_INPUT',
@@ -345,30 +388,9 @@ export class WorkflowRuntime {
       let refs: string[] = [];
       let value: unknown;
       if (name === 'get_workflow_context') {
-        refs = [
-          `workflow:${request.id}`,
-          `context:v${input.context?.version ?? 0}`,
-          `doctrine:${input.doctrine?.id ?? ''}:v${input.doctrine?.version ?? 0}`,
-        ];
-        if (input.buyer) refs.push(`buyer:${input.buyer.id}`);
-        value = {
-          references: refs,
-          kind: input.kind,
-          brief: input.brief,
-          context: input.context?.content,
-          doctrine: input.doctrine?.content,
-          buyer: input.buyer,
-          research: input.research
-            ? {
-                id: input.research.id,
-                status: input.research.status,
-                candidateCount: input.research.candidateCount,
-                qualifiedCount: input.research.qualifiedCount,
-                provisionalCount: input.research.pendingReferences.length,
-              }
-            : null,
-          untrusted: true,
-        };
+        const context = workflowContext(input, request.id);
+        refs = context.references;
+        value = context;
       } else if (name === 'list_company_sources') {
         value = {
           items: input.sources.slice(params.offset ?? 0, (params.offset ?? 0) + 20).map((s) => ({

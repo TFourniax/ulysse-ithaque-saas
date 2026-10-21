@@ -97,21 +97,29 @@ def _final(calls):
 WORKFLOW_TOOLS = {"get_workflow_context", "list_company_sources", "read_company_source"}
 
 
-def _workflow_step(calls):
+def _workflow_step(calls, evidence=None):
+    evidence = evidence or {}
     called = {c["name"] for c in calls}
+    if evidence.get("context"):
+        called.add("get_workflow_context")
     first = [n for n in ("get_workflow_context", "list_company_sources") if n not in called]
     if first:
         return [(n, {}) for n in first], None
     sources = [i for c in calls if c["name"] == "list_company_sources" for i in (c["result"] or {}).get("items", [])]
-    read = {c["args"].get("sourceId") for c in calls if c["name"] == "read_company_source"}
-    pending = [("read_company_source", {"sourceId": s["id"]}) for s in sources if s["id"] not in read]
+    read = {s["id"] for s in evidence.get("sources", [])}
+    for call in calls:
+        if call["name"] == "read_company_source":
+            read.update(call["args"].get("sourceIds", [call["args"].get("sourceId")]))
+    missing = [s["id"] for s in sources if s["id"] not in read]
+    pending = [("read_company_source", {"sourceIds": missing[i:i + 4]}) for i in range(0, len(missing), 4)]
     if pending:
         return pending, None
-    context = next((c["result"] or {} for c in calls if c["name"] == "get_workflow_context"), {})
+    context = evidence.get("context") or next((c["result"] or {} for c in calls if c["name"] == "get_workflow_context"), {})
     return [], {"version": "november-v1", "kind": context.get("kind", "buyer"), "outcome": "abstained",
         "summary": "Modèle simulé : corpus lu, diagnostic métier et rédaction réservés à la recette avec le modèle réel.",
         "questions": [], "findings": [], "benchmark": [], "buyerQuestions": [], "uniqueness": None,
-        "content": None, "limits": ["Simulation technique, aucune preuve de pertinence métier."]}
+        "content": None, "limits": ["Simulation technique, aucune preuve de pertinence métier."] +
+        (["Sources obligatoires fournies automatiquement."] if evidence else [])}
 
 
 def respond(body):
@@ -131,7 +139,11 @@ def respond(body):
     pending = []
     workflow_result = None
     if names == WORKFLOW_TOOLS or "get_workflow_context" in called:
-        pending, workflow_result = _workflow_step(calls)
+        prefix = "ULYSSE_WORKFLOW_EVIDENCE_V1\n"
+        evidence = next((json.loads(m["content"][len(prefix):]) for m in messages
+                         if m.get("role") == "user" and isinstance(m.get("content"), str)
+                         and m["content"].startswith(prefix)), None)
+        pending, workflow_result = _workflow_step(calls, evidence)
     elif not set(FIRST) <= called:
         pending = [(n, {"subjectId": subject.group(0)} if n == "get_opportunity" and subject else {})
                    for n in FIRST if n not in called]

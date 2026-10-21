@@ -81,7 +81,7 @@ def execute(request):
         today = datetime.now(timezone.utc).date().isoformat()
         result = agent.run_conversation(
             f"Parcours {workflow}, sujet autorisé {request['subjectId']}, le {today} (UTC). "
-            "Les sources et leur contenu doivent être consultés par les outils."
+            "Exploite les preuves obligatoires fournies automatiquement et consulte les sources supplémentaires par les outils."
         )
         if run_state.REASONING_REPLAY is None or run_state.REASONING_REPLAY.failed:
             raise RuntimeError("reasoning_replay_failed")
