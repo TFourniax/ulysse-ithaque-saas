@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ulysse demo only. Run as Linux user ulysse (UID 10002), never as root.
-# audit | diagnose [tenant-slug] | diagnose-research [tenant-slug] | deploy <commit> | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback
+# audit | diagnose [tenant-slug] | diagnose-budget [tenant-slug] | diagnose-research [tenant-slug] | deploy <commit> | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback
 # This script never runs a global docker command, down, prune, seed or reset.
 set -Eeuo pipefail
 umask 077
@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-21.research4-buyer-pause
+ULYSSE_SCRIPT_VERSION=2026-10-21.research5-budget
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -110,6 +110,93 @@ WHERE t.slug=:'tenant_slug' AND r.workflow_kind IN ('buyer','content')
 ORDER BY r.started_at DESC LIMIT 3;
 ROLLBACK;
 SQL
+}
+diagnose_budget() {
+  local slug=${1:-acme-demo} worker postgres database session mode run_limit session_limit month_limit limit
+  [[ "$slug" =~ ^[a-z0-9][a-z0-9-]{1,62}$ ]] || die 'identifiant entreprise invalide'
+  worker=$(container_id worker); postgres=$(container_id postgres)
+  for cid in "$worker" "$postgres"; do
+    [[ -n "$cid" && "$cid" != *$'\n'* ]] || die 'conteneur Ulysse absent ou ambigu'
+  done
+  database=$(ud exec "$worker" node -e 'process.stdout.write(process.env.ULYSSE_DB_NAME||"")')
+  session=$(ud exec "$worker" node -e 'process.stdout.write(process.env.AGENT_SESSION_ID||"")')
+  [[ -n "$database" && -n "$session" ]] || die 'base ou session Ulysse non determinee'
+  read -r mode run_limit session_limit month_limit <<< "$(ud exec "$worker" node -e 'console.log(["ULYSSE_ANALYSIS_MODE","AGENT_RUN_BUDGET_USD","AGENT_SESSION_BUDGET_USD","AGENT_MONTH_BUDGET_USD"].map(k=>process.env[k]||"").join(" "))')"
+  [[ "$mode" == hermes-live || "$mode" == hermes-stub ]] || die 'mode agent requis'
+  for limit in "$run_limit" "$session_limit" "$month_limit"; do
+    [[ "$limit" =~ ^[0-9]*\.?[0-9]+$ ]] || die 'budget actif invalide'
+  done
+  say "Diagnostic budget en lecture seule pour $slug : aucun appel fournisseur, redemarrage ou modification."
+  say 'Les engagements incluent les provisions des appels incertains. Une reservation inutilisee ne constitue pas une depense facturee.'
+  ud exec "$worker" node --input-type=module -e '
+    import {agentProvider} from "./apps/worker/dist/src/agent-provider.js";
+    const p=agentProvider(process.env.AGENT_MODEL_ID,process.env.AGENT_PROVIDER_ROUTE,process.env.AGENT_MODEL_PROFILE_JSON||undefined);
+    console.log(JSON.stringify({mode:process.env.ULYSSE_ANALYSIS_MODE,model:p.profile.model,profile:p.profile.id,route:p.profile.route,maxOutputTokens:p.profile.generation.maxOutputTokens,reasoning:p.profile.generation.reasoning}));
+  '
+  ud exec -i "$postgres" sh -c 'exec psql -X -U "$POSTGRES_USER" -d "$1" -v ON_ERROR_STOP=1 -P pager=off -P null=- -v tenant_slug="$2" -v session_id="$3" -v mode="$4" -v run_limit="$5" -v session_limit="$6" -v month_limit="$7"' sh "$database" "$slug" "$session" "$mode" "$run_limit" "$session_limit" "$month_limit" <<'BUDGETSQL'
+BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY;
+SET LOCAL statement_timeout = '10s';
+\echo ENVELOPPES_ACTIVES_USD
+WITH settings AS (
+  SELECT t.id AS tenant_id, :'session_id'::text AS session_id, :'mode'::text AS mode,
+         :'run_limit'::numeric AS run_limit, :'session_limit'::numeric AS session_limit,
+         :'month_limit'::numeric AS month_limit, date_trunc('month',clock_timestamp()) AS month_start
+  FROM tenants t WHERE t.slug=:'tenant_slug'
+), scopes AS (
+  SELECT s.*, v.scope, v.ceiling FROM settings s
+  CROSS JOIN LATERAL (VALUES ('session',s.session_limit),('month',s.month_limit)) v(scope,ceiling)
+), totals AS (
+  SELECT s.scope,s.ceiling,s.run_limit,a.*,q.research_committed_usd,q.research_uncertain_calls,
+         h.historical_usd,h.historical_unknown_calls
+  FROM scopes s
+  CROSS JOIN LATERAL (
+    SELECT coalesce(sum(r.committed_usd),0) AS agent_committed_usd,
+           coalesce(sum(greatest(r.reserved_usd,r.committed_usd)),0) AS agent_held_usd,
+           coalesce(sum(greatest(r.reserved_usd-r.committed_usd,0))
+             FILTER (WHERE r.workflow_kind IN ('buyer','content') AND r.status NOT IN ('running','validating')),0) AS terminal_unused_usd,
+           coalesce(sum(r.uncertain_calls),0) AS agent_uncertain_calls
+    FROM agent_runs r WHERE r.mode=s.mode AND
+      ((s.scope='session' AND r.session_id=s.session_id) OR
+       (s.scope='month' AND r.tenant_id=s.tenant_id AND r.started_at>=s.month_start))
+  ) a
+  CROSS JOIN LATERAL (
+    SELECT coalesce(sum(c.cost_usd),0) AS research_committed_usd,
+           count(*) FILTER (WHERE c.cost_state='unknown') AS research_uncertain_calls
+    FROM research_calls c WHERE s.mode='hermes-live' AND
+      ((s.scope='session' AND c.session_id=s.session_id) OR
+       (s.scope='month' AND c.tenant_id=s.tenant_id AND c.created_at>=s.month_start))
+  ) q
+  CROSS JOIN LATERAL (
+    SELECT coalesce(sum(coalesce(u.cost_usd,s.month_limit)),0) AS historical_usd,
+           count(*) FILTER (WHERE u.cost_usd IS NULL) AS historical_unknown_calls
+    FROM model_usage u WHERE s.mode='hermes-live' AND s.scope='month'
+      AND u.tenant_id=s.tenant_id AND u.created_at>=s.month_start
+  ) h
+)
+SELECT scope,ceiling AS ceiling_usd,run_limit AS next_run_reservation_usd,
+       agent_committed_usd,agent_held_usd,terminal_unused_usd,agent_uncertain_calls,
+       research_committed_usd,research_uncertain_calls,historical_usd,historical_unknown_calls,
+       agent_held_usd+research_committed_usd+historical_usd AS total_held_usd,
+       agent_held_usd+research_committed_usd+historical_usd+run_limit<=ceiling AS room_for_next_run
+FROM totals ORDER BY scope;
+\echo DERNIERES_ANALYSES_ET_RESERVATIONS
+SELECT r.id,r.workflow_kind,r.status,r.error_code,r.started_at,r.model_calls,
+       r.cost_state,r.uncertain_calls,r.committed_usd,r.reserved_usd,
+       r.session_id=:'session_id' AS current_session,
+       r.snapshot->'modelProfile'->'generation'->>'maxOutputTokens' AS output_limit,
+       r.snapshot->>'formatRepairAttempted' AS format_repair_attempted,
+       r.snapshot->'workflowFormat'->>'code' AS format_code
+FROM agent_runs r JOIN tenants t ON t.id=r.tenant_id
+WHERE t.slug=:'tenant_slug' AND r.workflow_kind IN ('buyer','content')
+ORDER BY r.started_at DESC,r.id DESC LIMIT 8;
+\echo CONCURRENCE_ACTUELLE
+SELECT count(*) FILTER (WHERE r.tenant_id=t.id) AS tenant_active_runs,
+       count(*) AS global_active_runs
+FROM agent_runs r CROSS JOIN tenants t WHERE t.slug=:'tenant_slug'
+  AND r.mode IN ('hermes-live','hermes-stub') AND r.status IN ('running','validating')
+  AND r.expires_at>clock_timestamp() AND r.reserved_usd>0;
+ROLLBACK;
+BUDGETSQL
 }
 diagnose_research() {
   local slug=${1:-acme-demo} worker postgres database
@@ -217,6 +304,7 @@ case "$action" in
   audit) audit; exit 0 ;;
   status) audit; check_health; exit 0 ;;
   diagnose) diagnose "${2:-acme-demo}"; exit 0 ;;
+  diagnose-budget) diagnose_budget "${2:-acme-demo}"; exit 0 ;;
   diagnose-research) diagnose_research "${2:-acme-demo}"; exit 0 ;;
   deploy|model|research|rollback) ;;
   models)
@@ -224,7 +312,7 @@ case "$action" in
     [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
     ud exec "$worker" node --input-type=module -e 'import {modelProfiles} from "./apps/worker/dist/src/agent-provider.js"; console.log(JSON.stringify(modelProfiles(),null,2))'
     exit 0 ;;
-  *) die 'actions : audit | diagnose [tenant] | diagnose-research [tenant] | deploy COMMIT | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
+  *) die 'actions : audit | diagnose [tenant] | diagnose-budget [tenant] | diagnose-research [tenant] | deploy COMMIT | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
 esac
 mkdir -p "$ULYSSE_RELEASES"
 exec 9>"$ULYSSE_PRIVATE/november-deploy.lock"

@@ -36,6 +36,8 @@ const STATES: Record<WorkflowRunDto['status'], string> = {
   failed: 'Analyse interrompue',
 };
 const WORKFLOW_ERRORS: Record<string, string> = {
+  budget_reached:
+    'L’enveloppe nécessaire à cette analyse n’a pas pu être réservée. Les dépenses et réservations de la session et du mois sont conservées. Les données de recherche restent disponibles.',
   engine_unavailable: 'Activez le moteur d’analyse pour produire ce résultat.',
   STALE_EVIDENCE: 'Actualisez les sources sélectionnées avant de relancer.',
   versions_changed: 'Le contexte ou les sources ont changé pendant l’analyse.',

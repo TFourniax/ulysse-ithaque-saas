@@ -85,6 +85,10 @@ export class WorkflowRuntime {
           [ctx.tenantId, request.agentRunId],
         );
         if (active.rowCount) throw new Error('workflow_already_running');
+        await sql.query(
+          "UPDATE agent_runs SET status='interrupted',completed_at=clock_timestamp(),error_code='lease_expired',reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status IN ('running','validating') AND expires_at<=clock_timestamp()",
+          [ctx.tenantId, request.agentRunId],
+        );
         await this.finish(sql, ctx, id, 'failed', null, 'interrupted');
         return false;
       }
@@ -133,7 +137,15 @@ export class WorkflowRuntime {
         return false;
       }
       await sql.query(
-        "UPDATE agent_runs SET status='interrupted',completed_at=clock_timestamp(),error_code='lease_expired' WHERE tenant_id=$1 AND status IN ('running','validating') AND expires_at<=clock_timestamp()",
+        "UPDATE agent_runs SET status='interrupted',completed_at=clock_timestamp(),error_code='lease_expired',reserved_usd=committed_usd WHERE tenant_id=$1 AND status IN ('running','validating') AND expires_at<=clock_timestamp()",
+        [ctx.tenantId],
+      );
+      // Older buyer/content runs kept their whole run envelope after failure. Each
+      // transmitted call already has its conservative upper cost in committed_usd,
+      // including calls still uncertain or in flight. Release only the unused part;
+      // preserve costs, counters, session identity and all business history.
+      await sql.query(
+        "UPDATE agent_runs SET reserved_usd=committed_usd WHERE tenant_id=$1 AND workflow_kind IN ('buyer','content') AND status NOT IN ('running','validating') AND reserved_usd>committed_usd",
         [ctx.tenantId],
       );
       const slots = await sql.query<{ available: boolean }>(
@@ -251,7 +263,7 @@ export class WorkflowRuntime {
         );
         validateWorkflowPublication(result, input, new Set(run.retrieved));
         await sql.query(
-          "UPDATE agent_runs SET status=$3,result=$4,error_code=NULL,completed_at=clock_timestamp(),reserved_usd=CASE WHEN cost_state='unknown' THEN reserved_usd ELSE committed_usd END WHERE tenant_id=$1 AND id=$2",
+          'UPDATE agent_runs SET status=$3,result=$4,error_code=NULL,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2',
           [
             ctx.tenantId,
             agentId,
@@ -274,7 +286,7 @@ export class WorkflowRuntime {
       const code = signal?.aborted ? 'interrupted' : workflowFailure(error, stage);
       await this.store.transaction(ctx, async (_tx, sql) => {
         const failed = await sql.query<{ error_code: string }>(
-          "UPDATE agent_runs SET status=$3,error_code=CASE WHEN $3='obsolete' THEN $4 ELSE coalesce(error_code,$4) END,completed_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 AND status='running' RETURNING error_code",
+          "UPDATE agent_runs SET status=$3,error_code=CASE WHEN $3='obsolete' THEN $4 ELSE coalesce(error_code,$4) END,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status='running' RETURNING error_code",
           [ctx.tenantId, agentId, obsolete ? 'obsolete' : 'failed', code],
         );
         const cause = failed.rows[0]?.error_code ?? code;

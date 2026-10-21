@@ -1473,10 +1473,11 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
           error_code: string;
           cost_state: string;
           committed_usd: string;
+          reserved_usd: string;
           model_calls: number;
           tool_calls: number;
         }>(
-          'SELECT error_code,cost_state,committed_usd,model_calls,tool_calls FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+          'SELECT error_code,cost_state,committed_usd,reserved_usd,model_calls,tool_calls FROM agent_runs WHERE tenant_id=$1 AND id=$2',
           [w.tenantId, run.agentRunId],
         ),
       );
@@ -1485,6 +1486,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       assert.equal(saved.error_code, expected);
       assert.equal(saved.cost_state, 'unknown');
       assert.ok(Number(saved.committed_usd) > 0);
+      assert.equal(saved.reserved_usd, saved.committed_usd);
       assert.equal(saved.model_calls, 1);
       assert.equal(saved.tool_calls, 0);
       assert.equal(calls, 1);
@@ -1590,10 +1592,11 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
           snapshot: Record<string, unknown>;
           model_calls: number;
           committed_usd: string;
+          reserved_usd: string;
           uncertain_calls: number;
           input_tokens: number;
         }>(
-          'SELECT snapshot,model_calls,committed_usd,uncertain_calls,input_tokens FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+          'SELECT snapshot,model_calls,committed_usd,reserved_usd,uncertain_calls,input_tokens FROM agent_runs WHERE tenant_id=$1 AND id=$2',
           [w.tenantId, run.agentRunId],
         ),
       );
@@ -1608,10 +1611,214 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       });
       assert.equal(saved.uncertain_calls, scenario === 'limited' ? 1 : 0);
       assert.equal(saved.input_tokens, scenario === 'limited' ? 100 : 200);
+      assert.equal(saved.reserved_usd, saved.committed_usd);
       if (scenario !== 'limited') assert.equal(Number(saved.committed_usd), 0.0002);
       else assert.ok(Number(saved.committed_usd) > 0.0001);
       mock.mock.restore();
     }
+  });
+  test('workflow recovers legacy unused envelopes within its tenant and still enforces uncertain costs', async (t) => {
+    const w = await setup('workflow-budget-recovery');
+    const other = await setup('workflow-budget-other');
+    const config = { ...liveTestConfig(), AGENT_SESSION_BUDGET_USD: 0.5 };
+    const engine = new AgentRuntime(workerPool, config, {
+      execute: async () => {
+        throw new Error('hermes_http_422');
+      },
+    });
+    const historical = [
+      { id: crypto.randomUUID(), status: 'failed', cost: 0.01, uncertain: 0 },
+      { id: crypto.randomUUID(), status: 'failed', cost: 0.02, uncertain: 1 },
+      { id: crypto.randomUUID(), status: 'running', cost: 0.03, uncertain: 1 },
+    ];
+    for (const tenant of [w, other]) {
+      await engine.store.transaction(tenant.ctx, async (_tx, sql) => {
+        for (const row of historical) {
+          await sql.query(
+            "INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id,workflow_kind,model_calls,uncertain_calls,cost_state,committed_usd,reserved_usd) VALUES($1,$2::uuid,$2::uuid,$2::text,'hermes-live',$3,'test','{}',$2::text,clock_timestamp()-interval '1 second',$4,'openai/gpt-4.1-mini','test','test','test','buyer',1,$5,$6,$7,.25)",
+            [
+              tenant.tenantId,
+              row.id,
+              row.status,
+              tenant === w ? config.AGENT_SESSION_ID : `other-${config.AGENT_SESSION_ID}`,
+              row.uncertain,
+              row.uncertain ? 'unknown' : 'declared',
+              row.cost,
+            ],
+          );
+        }
+      });
+    }
+    // Execute the exact budget-report SELECT embedded in the standalone VPS script.
+    const script = await readFile(
+      new URL('../../../scripts/ulysse-vps-europe.sh', import.meta.url),
+      'utf8',
+    );
+    const reportSql = script
+      .split('\\echo ENVELOPPES_ACTIVES_USD\n')[1]!
+      .split('\\echo DERNIERES_ANALYSES_ET_RESERVATIONS')[0]!
+      .replaceAll(":'tenant_slug'", '$1')
+      .replaceAll(":'session_id'", '$2')
+      .replaceAll(":'mode'", '$3')
+      .replaceAll(":'run_limit'", '$4')
+      .replaceAll(":'session_limit'", '$5')
+      .replaceAll(":'month_limit'", '$6');
+    const report = () =>
+      engine.store.transaction(w.ctx, async (_tx, sql) => {
+        const tenant = await sql.query<{ slug: string }>('SELECT slug FROM tenants WHERE id=$1', [
+          w.tenantId,
+        ]);
+        return (
+          await sql.query<{
+            scope: string;
+            agent_committed_usd: string;
+            terminal_unused_usd: string;
+            total_held_usd: string;
+            room_for_next_run: boolean;
+          }>(reportSql, [
+            tenant.rows[0]!.slug,
+            config.AGENT_SESSION_ID,
+            'hermes-live',
+            0.25,
+            0.5,
+            10,
+          ])
+        ).rows;
+      });
+    const before = (await report()).find((r) => r.scope === 'session')!;
+    assert.equal(Number(before.total_held_usd), 0.75);
+    assert.equal(Number(before.terminal_unused_usd), 0.47);
+    assert.equal(before.room_for_next_run, false);
+    const id = await w.workspace.create(
+      w.owner,
+      { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    await engine.workflows.run(w.ctx, id);
+    const run = (await w.workspace.listWorkflows(w.owner)).find((r) => r.id === id)!;
+    assert.equal(run.errorCode, 'hermes_http_422', 'reservation succeeds after recovery');
+    for (const tenant of [w, other]) {
+      const rows = await engine.store.transaction(tenant.ctx, async (_tx, sql) =>
+        sql.query<{
+          id: string;
+          status: string;
+          committed_usd: string;
+          reserved_usd: string;
+          uncertain_calls: number;
+        }>(
+          'SELECT id,status,committed_usd,reserved_usd,uncertain_calls FROM agent_runs WHERE tenant_id=$1 AND id=ANY($2::uuid[])',
+          [tenant.tenantId, historical.map((r) => r.id)],
+        ),
+      );
+      for (const saved of rows.rows) {
+        const initial = historical.find((r) => r.id === saved.id)!;
+        assert.equal(Number(saved.committed_usd), initial.cost);
+        assert.equal(saved.uncertain_calls, initial.uncertain);
+        assert.equal(Number(saved.reserved_usd), tenant === w ? initial.cost : 0.25);
+        assert.equal(
+          saved.status,
+          tenant === w && initial.status === 'running' ? 'interrupted' : initial.status,
+        );
+      }
+    }
+    const after = (await report()).find((r) => r.scope === 'session')!;
+    assert.equal(Number(after.total_held_usd), 0.06);
+    assert.equal(Number(after.agent_committed_usd), 0.06);
+    assert.equal(Number(after.terminal_unused_usd), 0);
+    assert.equal(after.room_for_next_run, true);
+    const execute = t.mock.fn(() => Promise.reject(new Error('must not execute')));
+    const limited = new AgentRuntime(
+      workerPool,
+      { ...config, AGENT_SESSION_BUDGET_USD: 0.3 },
+      { execute },
+    );
+    const blocked = await w.workspace.create(
+      w.owner,
+      { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    await limited.workflows.run(w.ctx, blocked);
+    const refused = (await w.workspace.listWorkflows(w.owner)).find((r) => r.id === blocked)!;
+    assert.equal(refused.errorCode, 'budget_reached');
+    assert.equal(execute.mock.callCount(), 0, 'uncertain costs still block an unaffordable run');
+  });
+  test('an expired workflow retains its in-flight provision and settles late usage without publishing', async (t) => {
+    const w = await setup('workflow-budget-late');
+    const workflowInstructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    let deliver: (response: Response) => void = () => {
+      throw new Error('provider not called');
+    };
+    let started: () => void = () => undefined;
+    const transmitting = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    t.mock.method(
+      globalThis,
+      'fetch',
+      () =>
+        new Promise<Response>((resolve) => {
+          deliver = resolve;
+          started();
+        }),
+    );
+    let reservedInFlight = 0;
+    const id = await w.workspace.create(
+      w.owner,
+      { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        const response = engine.inference(request.capability, {
+          messages: [{ role: 'system', content: workflowInstructions }],
+        });
+        await transmitting;
+        await engine.store.transaction(w.ctx, async (_tx, sql) => {
+          await sql.query(
+            "UPDATE agent_runs SET expires_at=clock_timestamp()-interval '1 second' WHERE tenant_id=$1 AND id=$2",
+            [w.tenantId, request.runId],
+          );
+        });
+        await engine.workflows.run(w.ctx, id);
+        const during = await engine.store.transaction(w.ctx, async (_tx, sql) =>
+          sql.query<{ reserved_usd: string; committed_usd: string; uncertain_calls: number }>(
+            'SELECT reserved_usd,committed_usd,uncertain_calls FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+            [w.tenantId, request.runId],
+          ),
+        );
+        const row = during.rows[0]!;
+        assert.equal(row.reserved_usd, row.committed_usd);
+        assert.equal(row.uncertain_calls, 1);
+        reservedInFlight = Number(row.reserved_usd);
+        const result = pendingWorkflow('buyer', [], 'Réponse tardive fictive');
+        deliver(
+          Response.json({
+            choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }],
+            usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.0001 },
+          }),
+        );
+        await response;
+        return result;
+      },
+    });
+    await engine.workflows.run(w.ctx, id);
+    const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+    assert.equal(run.status, 'failed');
+    assert.equal(run.result, null);
+    assert.equal(run.errorCode, 'interrupted');
+    assert.ok(reservedInFlight > 0.0001 && reservedInFlight < 0.25);
+    const after = await engine.store.transaction(w.ctx, async (_tx, sql) =>
+      sql.query<{ reserved_usd: string; committed_usd: string; uncertain_calls: number }>(
+        'SELECT reserved_usd,committed_usd,uncertain_calls FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+        [w.tenantId, run.agentRunId],
+      ),
+    );
+    assert.equal(Number(after.rows[0]!.committed_usd), 0.0001);
+    assert.equal(Number(after.rows[0]!.reserved_usd), 0.0001);
+    assert.equal(after.rows[0]!.uncertain_calls, 0);
   });
   test('workflow distinguishes invalid final schema from required unread sources', async () => {
     for (const scenario of ['schema', 'unread']) {

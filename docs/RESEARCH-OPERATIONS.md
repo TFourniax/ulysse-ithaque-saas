@@ -136,6 +136,16 @@ sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose
 
 La sortie ajoute `format_repair_attempted`, `format_code`, `finish_reason` et `format_issues` pour les nouveaux appels. Ces champs techniques décrivent le refus sans exposer la réponse. Les anciens échecs `result_invalid` ne sont pas reconstitués. Une correction n’est tentée qu’une fois, si les plafonds et le temps restant le permettent.
 
+## Diagnostiquer le budget
+
+Pour un refus `budget_reached`, le script `2026-10-21.research5-budget` ajoute un relevé compatible avec les images UL-020 déjà en service :
+
+```bash
+sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose-budget
+```
+
+Il ne modifie rien et n’appelle aucun fournisseur. Il affiche le profil actif, les plafonds session/mois, l’enveloppe nécessaire au prochain run, les engagements, les réservations et le reliquat inutilisé des parcours terminés. `room_for_next_run` décrit la marge budgétaire au moment du relevé; la concurrence est affichée séparément. Les appels incertains restent provisionnés, y compris les coûts historiques inconnus qui bloquent le plafond mensuel. La session interne, les clés, les prompts, les sources et les réponses ne sont pas imprimés. Après la correction [des réservations](journal/2026-10-21-UL-020-workflow-budget-reservations.md), la première nouvelle analyse réconcilie les anciennes enveloppes inutilisées de son tenant avant de demander son budget. Le relevé seul ne fait pas cette réconciliation.
+
 ## Retour arrière
 
 `research off` coupe les nouveaux appels de recherche et conserve les données. Le retrait de l’autorisation applicative arrête aussi les campagnes et invalide les dépendances concernées. `rollback` réactive la configuration précédente enregistrée par le script; les migrations et l’historique restent en place. Après une opération de configuration isolée, ce retour concerne cette opération, pas automatiquement le déploiement applicatif antérieur. Consulter la configuration privée active avant toute opération d’exploitation.

@@ -996,7 +996,7 @@ export class AgentRuntime {
       // Record what was charged even above the bound, then refuse to continue.
       await this.store.transaction(ctx, async (_tx, sql) => {
         await sql.query(
-          "UPDATE agent_runs SET committed_usd=committed_usd-$3+$4,uncertain_calls=uncertain_calls-1,estimated_calls=estimated_calls+CASE WHEN $5='estimated' THEN 1 ELSE 0 END,cost_state=CASE WHEN uncertain_calls>1 THEN 'unknown' WHEN estimated_calls>0 OR $5='estimated' THEN 'estimated' ELSE 'declared' END,input_tokens=input_tokens+$6,output_tokens=output_tokens+$7 WHERE tenant_id=$1 AND id=$2",
+          "UPDATE agent_runs SET committed_usd=committed_usd-$3+$4,reserved_usd=CASE WHEN status IN ('running','validating') THEN reserved_usd ELSE committed_usd-$3+$4 END,uncertain_calls=uncertain_calls-1,estimated_calls=estimated_calls+CASE WHEN $5='estimated' THEN 1 ELSE 0 END,cost_state=CASE WHEN uncertain_calls>1 THEN 'unknown' WHEN estimated_calls>0 OR $5='estimated' THEN 'estimated' ELSE 'declared' END,input_tokens=input_tokens+$6,output_tokens=output_tokens+$7 WHERE tenant_id=$1 AND id=$2",
           [
             ctx.tenantId,
             runId,
