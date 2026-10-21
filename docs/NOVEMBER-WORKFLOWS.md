@@ -10,7 +10,7 @@ Périmètre confirmé par Thomas le 20 octobre 2026 : ces trois capacités sont 
 
 ## Comportement cible confirmé le 21 octobre
 
-Ulysse doit compléter lui-même les informations accessibles : découverte web concurrentielle par plusieurs axes, collecte, qualification, enrichissement, benchmark sourcé puis revue humaine. Le lot [UL-020](WEB-RESEARCH-BENCHMARK.md) est implémenté localement; sa recette d’intégration et live reste ouverte. Le parcours d’import manuel ci-dessous reste celui de la version VPS rapportée par Thomas.
+Ulysse doit compléter lui-même les informations accessibles : découverte web concurrentielle par plusieurs axes, collecte, qualification, enrichissement, benchmark sourcé puis revue humaine. Le lot [UL-020](WEB-RESEARCH-BENCHMARK.md) est publié; ses 11 contrôles CI sont verts au `375bfe5`, avec fournisseurs scriptés. Le déploiement VPS et la recette live restent ouverts. Le parcours d’import manuel ci-dessous reste celui de la version VPS rapportée par Thomas.
 
 Dans la version UL-020, ouvrir **Recherche et benchmark**, vérifier le profil public prérempli et ajouter le domaine officiel. Une autorisation déclenche la première campagne et permet les recherches suivantes avant un diagnostic lorsque le contexte ou la fraîcheur l’exigent. Aucun concurrent n’est à importer. Les offres sont présentées dans une matrice paginée avec citations, dates, inconnues et erreurs de lecture. Valider, corriger ou écarter les fiches, éventuellement par sélection groupée, puis préparer le diagnostic. Un brouillon utilisant des preuves provisoires doit être régénéré après leur revue, car celle-ci change leur version. Le contenu issu du diagnostic conserve les mêmes dépendances.
 
@@ -48,7 +48,7 @@ Vérifier : bénéfice distinct de fonctionnalité ; différence de marché born
 
 ## Limites à traiter avant ouverture de la bêta
 
-- UL-020 raccorde la recherche web et le benchmark dans le code; CI d’intégration, déploiement et recette fournisseur restent à faire. La veille planifiée hors demande de diagnostic, les alias entre domaines et la corroboration indépendante ne sont pas livrés.
+- UL-020 raccorde la recherche web et le benchmark, avec CI d’intégration verte; déploiement et recette fournisseur restent à faire. La veille planifiée hors demande de diagnostic, les alias entre domaines et la corroboration indépendante ne sont pas livrés.
 - Sources CRM et corpus client réel non raccordés. La doctrine privée reste à importer et à valider dans le tenant.
 - Pertinence, qualité rédactionnelle et coût live à mesurer sur la recette fictive ; les tests structurels ne prouvent pas la qualité du raisonnement.
 - Déploiement et état du VPS déclaré par Thomas non inspectés dans cette session ; aucun changement sur le serveur.

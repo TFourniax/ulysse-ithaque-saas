@@ -1,5 +1,7 @@
 # UL-020 — implémentation de la recherche publique
 
+Ce journal décrit la phase locale. La publication, le correctif de privilège PostgreSQL et les 11 contrôles CI verts au `375bfe5` sont consignés dans le [journal suivant](2026-10-21-UL-020-publication-ci.md).
+
 Date : 21 octobre 2026. Responsable : Codex. Branche locale : `codex/ul-020-web-research`, base `9e0d520` (UL-019 et constat du premier diagnostic GLM). Objectif : préparer un corpus concurrentiel qualifié et un benchmark sans saisie manuelle de concurrents, puis les soumettre à revue humaine.
 
 ## Changements

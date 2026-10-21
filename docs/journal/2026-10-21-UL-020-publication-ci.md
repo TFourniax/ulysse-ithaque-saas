@@ -8,4 +8,21 @@ La [première CI](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/
 
 Correction : migration additive 0015 accordant seulement `UPDATE(id)` au rôle NOLOGIN definer, contrôle ACL complété. Aucune réécriture de migration appliquée. Le filtre de branches de la recette Hermes est étendu à la base UL-019, pour exécuter aussi la boucle réelle simulée et les scénarios de mise à niveau. Les messages de déploiement indiquent le modèle européen effectivement conservé sans annoncer systématiquement GLM après un changement de profil autorisé.
 
-Vérifications locales avant publication du correctif : `npm run verify`, `python3 scripts/test-vps-europe.py`, `bash -n scripts/ulysse-vps-europe.sh`. Recette CI corrigée et résultat final à consigner après exécution. L’accès réel Brave, la collecte Paitite et sa qualité métier restent à vérifier après activation de la démo; aucune clé n’est publiée.
+Vérifications locales avant publication du correctif : `npm run verify` (111 tests unitaires), `python3 scripts/test-vps-europe.py` (9/9), `bash -n scripts/ulysse-vps-europe.sh` et `git diff --check` verts.
+
+## Résultats du code à déployer
+
+Révision exacte : `375bfe5d28e849f7392d05210a263a1603081383`. [CI applicative](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39519287123) : **5/5**; [Hermes et mises à niveau](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39519287261) : **6/6**. Tous les jobs sont terminés avec succès, y compris les stacks neuves et les mises à niveau depuis UL-016.
+
+| Contrôle | Preuve |
+| --- | --- |
+| Statique et unitaire Linux/Windows | Format, lint typé, tsc, cycles, OpenAPI, documentation et 111 tests unitaires verts |
+| PostgreSQL réel | 16 migrations appliquées, dont 0014 et 0015; 50/50 tests, ACL exhaustives et rôles d’exécution |
+| API et worker réels | 18/18 API, 36/36 worker; quatre scénarios de recherche persistante supplémentaires |
+| Navigateur et Keycloak | 15 parcours verts, dont autorisation et persistance de campagne; accessibilité et mobile |
+| Stack applicative | Démarrage, redémarrage, sessions, données et restauration de sauvegarde chiffrée |
+| Hermes épinglé | Boucle réelle contre modèle scripté; stacks fraîches et mises à niveau, historique préservé |
+
+Les scénarios worker vérifient la découverte de dix domaines sans import manuel, plus de huit pages effectivement lues, le dédoublonnage et la poursuite après une lecture en échec. Ils couvrent aussi la reprise sans double publication, la conservation des coûts incertains, l’annulation en vol, l’isolation tenant et viewer, le déclenchement/réemploi automatique avant diagnostic, le blocage de validation sur des preuves provisoires et la régénération après revue versionnée.
+
+La procédure [RESEARCH-OPERATIONS](../RESEARCH-OPERATIONS.md) épingle cette révision de code. Elle inclut une saisie masquée de la clé dans le terminal du VPS et l’activation du worker. Les changements de documentation postérieurs ne changent pas le code testé. Aucun déploiement VPS ni appel réel Brave/GLM n’a été exécuté depuis cet environnement. L’accès réel Brave, la collecte Paitite, le coût/délai observés et la qualité métier restent à vérifier après activation de la démo; aucune clé n’est publiée. DEBT-024 reste partielle pour cette recette, DEBT-025/026 restent ouvertes pour les limites produit décrites.

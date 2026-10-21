@@ -1,33 +1,53 @@
 # Recherche publique — activation et recette UL-020
 
-État : code local, intégration et activation live à vérifier. Ne pas déployer avant les contrôles CI PostgreSQL, navigateur, stack et compatibilité Hermes. [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
+État : code publié, 11 contrôles CI verts au `375bfe5d28e849f7392d05210a263a1603081383`; activation VPS et qualité du benchmark live à vérifier. [Preuves CI](journal/2026-10-21-UL-020-publication-ci.md), [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
 
 ## Préparer et déployer
 
-La branche est `codex/ul-020-web-research`, issue d’UL-019. Retenir le SHA complet dont les contrôles sont verts dans la [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). Les migrations additives 0014 et 0015 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : les outils de lecture par lots et l’empreinte du prompt évoluent. Le script conserve le modèle européen, les clés, la session et les plafonds actifs.
+La branche est `codex/ul-020-web-research`, issue d’UL-019, [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). La commande ci-dessous épingle le code dont les 11 contrôles sont verts; les commits documentaires suivants ne changent pas ce code. Les migrations additives 0014 et 0015 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : les outils de lecture par lots et l’empreinte du prompt évoluent. Le script conserve le modèle européen, les clés, la session et les plafonds actifs. Il vérifie une sauvegarde chiffrée avant migration. Prévoir une brève interruption pendant le remplacement des services.
 
-Sur le VPS, exécuter en tant qu’utilisateur `ulysse` avec le script provenant du SHA retenu, selon la procédure [modèles Europe](MODEL-EU.md). Le script vérifie l’hôte, l’UID, le Docker rootless, la configuration active et l’absence de dérive. Il n’est pas destiné à un autre Docker ou serveur.
+Sur le VPS, depuis le terminal `hermesadmin`, exécuter ce bloc qui utilise le compte `ulysse`, selon la procédure [modèles Europe](MODEL-EU.md). Le script vérifie l’hôte, l’UID, le Docker rootless, la configuration active et l’absence de dérive. Il n’est pas destiné à un autre Docker ou serveur. En cas d’arrêt sur erreur, conserver le message et ne pas passer à l’activation.
 
 ```bash
-# Dans la session ulysse sur le VPS, après publication et CI verte.
-: "${ULYSSE_REVISION:?Renseigner le SHA complet verifie de la branche UL-020}"
-ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
+sudo -Hu ulysse bash <<'UPDATE'
+set -Eeuo pipefail
 umask 077
+cd /
+[[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
+ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
+ULYSSE_REVISION=375bfe5d28e849f7392d05210a263a1603081383
+ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
 git -C "$ULYSSE_REPO" show "$ULYSSE_REVISION:scripts/ulysse-vps-europe.sh" > "$ULYSSE_SCRIPT"
 bash -n "$ULYSSE_SCRIPT"
 bash "$ULYSSE_SCRIPT" deploy "$ULYSSE_REVISION"
+UPDATE
 ```
 
 ## Brancher la recherche
 
-Créer une clé Brave Search API dans le compte choisi par l’exploitant. La placer **sur le serveur**, dans `/var/lib/ulysse/home/private/brave-search.key`, fichier régulier appartenant à `ulysse`, permissions `600`. Ne pas la transmettre dans un chat, une commande enregistrée, une capture, Git ou le navigateur applicatif. Le script lit le fichier; les copies de configuration restent dans le répertoire privé.
+Créer une clé [Brave Search API](https://api-dashboard.search.brave.com/login) dans le compte choisi par l’exploitant. La placer **sur le serveur**, dans `/var/lib/ulysse/home/private/brave-search.key`, fichier régulier appartenant à `ulysse`, permissions `600`. Ne pas la transmettre dans un chat, une commande enregistrée, une capture, Git ou le navigateur applicatif. Le script lit le fichier; les copies de configuration restent dans le répertoire privé.
 
 ```bash
+# Depuis le terminal hermesadmin du VPS. La cle est saisie sans affichage.
+sudo -Hu ulysse bash <<'RESEARCH'
+set -Eeuo pipefail
+set +x
+umask 077
+cd /
+[[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
+ULYSSE_KEY_FILE=$(mktemp /var/lib/ulysse/home/private/brave-search.key.XXXXXX)
+trap 'rm -f -- "$ULYSSE_KEY_FILE"' EXIT
+read -r -s -p 'Cle Brave Search API : ' ULYSSE_BRAVE_KEY </dev/tty
+printf '\n' >/dev/tty
+[[ ${#ULYSSE_BRAVE_KEY} -ge 16 ]] || exit 1
+printf '%s\n' "$ULYSSE_BRAVE_KEY" > "$ULYSSE_KEY_FILE"
+unset ULYSSE_BRAVE_KEY
+mv -Tf -- "$ULYSSE_KEY_FILE" /var/lib/ulysse/home/private/brave-search.key
 bash /var/lib/ulysse/home/private/ulysse-research.sh research brave
 bash /var/lib/ulysse/home/private/ulysse-research.sh status
+RESEARCH
 ```
 
 L’action valide la configuration sans requête payante, puis redémarre seulement le worker. Le premier appel réel intervient lorsqu’une campagne autorisée s’exécute. Une campagne déjà autorisée et en cours peut donc reprendre au redémarrage. Pour désactiver le connecteur : même commande avec `research off`. Dans l’application, **Arrêter les recherches automatiques** révoque l’autorisation et annule les campagnes actives; un appel déjà transmis peut encore être facturé, sans publication de sa réponse.

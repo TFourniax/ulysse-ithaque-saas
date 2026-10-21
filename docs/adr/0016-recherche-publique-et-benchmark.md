@@ -1,6 +1,6 @@
 # ADR-0016 — Recherche publique persistante et benchmark à valider
 
-Date : 2026-10-21. Statut : implémentation proposée dans UL-020, recette live requise.
+Date : 2026-10-21. Statut : implémentation publiée dans UL-020 et vérifiée en CI au `375bfe5`, recette live requise.
 
 ## Problème
 
@@ -34,4 +34,4 @@ Les réservations de recherche et de modèle utilisent le même verrou financier
 
 Les contenus rendus uniquement en JavaScript, PDF et accès authentifiés restent signalés non exploitables. La collecte n’est jamais dite exhaustive. La corroboration indépendante, la résolution automatique d’alias entre domaines, la normalisation tarifaire approfondie et une veille planifiée hors demande de diagnostic restent à compléter. Les prix sont présentés avec les conditions extraites, sans classement automatique. La qualité sémantique de la qualification et du benchmark doit être évaluée sur le cas Paitite avec le fournisseur réel.
 
-Le connecteur doit être activé sur le serveur avec une clé Brave, puis le profil public autorisé dans l’application. Aucun secret n’est demandé dans le chat. L’implémentation locale et les tests avec fournisseurs scriptés ne constituent pas cette recette live.
+Le connecteur doit être activé sur le serveur avec une clé Brave, puis le profil public autorisé dans l’application. Aucun secret n’est demandé dans le chat. Les tests locaux et les 11 contrôles CI avec fournisseurs scriptés ne constituent pas cette recette live. [Résultats et limites](../journal/2026-10-21-UL-020-publication-ci.md).

@@ -1,6 +1,6 @@
 # UL-020 — Recherche et benchmark autonomes
 
-Date : 2026-10-21. Responsable : Codex. Cadrage produit confirmé par Thomas. Première implémentation locale décrite dans l’[ADR-0016](adr/0016-recherche-publique-et-benchmark.md); recette d’intégration et activation VPS encore requises. Les critères ci-dessous décrivent la cible complète. La cible est une recherche proactive à partir du contexte d'entreprise, pas un chatbot ni un benchmark composé manuellement par l'utilisateur.
+Date : 2026-10-21. Responsable : Codex. Cadrage produit confirmé par Thomas. Première implémentation publiée, décrite dans l’[ADR-0016](adr/0016-recherche-publique-et-benchmark.md); 11 contrôles CI verts au `375bfe5`, activation VPS et recette live encore requises. Les critères ci-dessous décrivent la cible complète. La cible est une recherche proactive à partir du contexte d'entreprise, pas un chatbot ni un benchmark composé manuellement par l'utilisateur.
 
 ## Résultat attendu
 
@@ -79,8 +79,8 @@ Les nouveaux outils réseau passent par des adaptateurs contrôlés : URL publiq
 
 ## État et dépendances
 
-Le périmètre produit est confirmé. Contrats, migration additive 0014, jobs, adaptateurs Brave/lecture publique, extraction structurée, matrice, revue et liaison aux diagnostics sont implémentés sur `codex/ul-020-web-research`. Le modèle existant et les contraintes Europe/ZDR sont conservés; Brave reçoit seulement le profil public autorisé et n’est pas présenté comme un fournisseur Europe/ZDR.
+Le périmètre produit est confirmé. Contrats, migrations additives 0014/0015, jobs, adaptateurs Brave/lecture publique, extraction structurée, matrice, revue et liaison aux diagnostics sont implémentés sur `codex/ul-020-web-research`. Le modèle existant et les contraintes Europe/ZDR sont conservés; Brave reçoit seulement le profil public autorisé et n’est pas présenté comme un fournisseur Europe/ZDR.
 
-Les contrôles locaux n’établissent pas encore la recette PostgreSQL/Keycloak/stack ni la qualité sémantique live. Il reste à activer le fournisseur sur le serveur puis réaliser le cas Paitite. La fusion d’alias entre domaines, les recoupements indépendants, la réutilisation des décisions d’une campagne à l’autre, la correction structurée de qualification et la veille planifiée restent des écarts explicites à la cible. Le benchmark conserve les prix et conditions extraits sans les normaliser ni les classer automatiquement.
+La recette PostgreSQL/Keycloak/stack et les mises à niveau Hermes sont vertes au `375bfe5` : 11 jobs, avec fournisseurs scriptés. Les tests de recherche couvrent dix domaines découverts, plus de huit pages lues, la reprise sans double publication ni remise à zéro des coûts, l’isolation et l’invalidation des diagnostics après revue. Ces preuves n’établissent pas la qualité sémantique live. Il reste à activer le fournisseur sur le serveur puis réaliser le cas Paitite. La fusion d’alias entre domaines, les recoupements indépendants, la réutilisation des décisions d’une campagne à l’autre, la correction structurée de qualification et la veille planifiée restent des écarts explicites à la cible. Le benchmark conserve les prix et conditions extraits sans les normaliser ni les classer automatiquement.
 
-Voir [activation et recette](RESEARCH-OPERATIONS.md) et [journal des vérifications](journal/2026-10-21-UL-020-research-implementation.md). Les outils web de cette conversation ne constituent pas le fournisseur de production d’Ulysse.
+Voir [activation et recette](RESEARCH-OPERATIONS.md), [journal de publication et CI](journal/2026-10-21-UL-020-publication-ci.md) et [journal d’implémentation](journal/2026-10-21-UL-020-research-implementation.md). Les outils web de cette conversation ne constituent pas le fournisseur de production d’Ulysse.
