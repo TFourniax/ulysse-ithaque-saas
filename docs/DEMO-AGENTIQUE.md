@@ -11,7 +11,7 @@ Branche : `claude/clever-cannon-99ywx2`, [PR #4](https://github.com/TFourniax/ul
 | `rules` | Moteur historique de règles | 0 | Retour arrière, comparaison |
 | `simulated` | Simulation agentique dans le worker, sans Hermes ni modèle | 0 | Recette rapide de l'interface |
 | `hermes-stub` | **Vrai Hermes**, vrais outils, vraie publication, **modèle simulé** dans la stack | 0 | Répétition générale avant le live |
-| `hermes-live` | Vrai Hermes et vrai modèle via OpenRouter | ≤ 0,25 USD/analyse, ≤ 2 USD/session, ≤ 10 USD/entreprise/mois | Démonstration et validation live |
+| `hermes-live` | Vrai Hermes et vrai modèle via OpenRouter | Plafonds configurables ≤ 2 USD/analyse, ≤ 20 USD/session, ≤ 100 USD/entreprise/mois | Démonstration et validation live |
 
 L'origine réelle de chaque analyse est affichée dans **Analyses** et sur chaque proposition. Un résultat simulé n'est jamais présenté comme live.
 
@@ -49,9 +49,9 @@ Ajouter au `.env` racine, ignoré par Git (jamais dans le navigateur, une PR, un
 ```dotenv
 HERMES_SERVICE_TOKEN=<secret aléatoire, 32 caractères minimum>
 AGENT_MODEL_ID=openai/gpt-4.1-mini
-AGENT_RUN_BUDGET_USD=0.25
-AGENT_SESSION_BUDGET_USD=2
-AGENT_MONTH_BUDGET_USD=10
+AGENT_RUN_BUDGET_USD=2
+AGENT_SESSION_BUDGET_USD=20
+AGENT_MONTH_BUDGET_USD=100
 AGENT_SESSION_ID=ul016-validation-thomas-20261007
 # Pour le live seulement : clé dédiée à la démo, avec un plafond côté OpenRouter.
 OPENROUTER_API_KEY=<clé OpenRouter autorisée>

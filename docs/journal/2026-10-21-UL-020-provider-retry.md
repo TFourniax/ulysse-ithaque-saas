@@ -18,10 +18,16 @@ Le code confirme que la passerelle lisait déjà `Retry-After`, mais arrêtait b
 
 ## Vérification
 
-En cours. TypeScript vérifié et six tests Python ciblés réussis. `npm run verify`, tests VPS, PostgreSQL réel, navigateur, stack et mises à niveau doivent passer avant publication du bloc de déploiement.
+Premier code `44f8b934d4f9deaae87cdfaea3f1660951aa4efa` : `npm run verify` réussi, 122 tests unitaires, neuf tests VPS et six tests Python ciblés. Le scénario Hermes sur stack neuve réussit la reprise après 429, schéma natif et continuité du raisonnement compris. La CI PostgreSQL a exposé un cas réel : un retrait de source pendant l’attente clôt déjà le run, donc le catch ne libérait pas son reliquat. Le complément libère ce reliquat même après clôture, sans toucher au coût engagé. Le test a été conservé; ce code et les nouveaux plafonds sont en vérification.
 
 Références officielles consultées : [OpenRouter limites](https://openrouter.ai/docs/api_reference/limits), [erreurs et Retry-After](https://openrouter.ai/docs/api_reference/errors-and-debugging). Un 429 peut provenir de la plateforme ou du fournisseur amont; les appels acceptés n’établissent pas la disponibilité de tous les appels suivants.
 
 ## Limites et suite
 
 Les fournisseurs restent simulés dans les tests. Les reprises bornées absorbent un refus temporaire, pas un quota durablement épuisé. Au-delà des délais, du nombre d’appels ou des budgets, le diagnostic reste en échec avec le code fournisseur; aucun résultat incomplet n’est publié. Le prochain diagnostic réel doit être testé puis relu après déploiement. La recherche existante peut rester en pause. Ni nouveau modèle ni fallback régional ne sont ajoutés par ce lot.
+
+## Priorité et enveloppes révisées pendant l’implémentation
+
+Thomas autorise ensuite un budget raisonnablement plus élevé et précise que l’achèvement utile passe avant les économies de quelques centimes. La configuration préparée devient 2 USD/analyse, 20 USD/session et 100 USD/entreprise/mois, appliquée par `deploy COMMIT --budgets 2 20 100`. L’application valide ces nouvelles bornes; la migration additive 0016 adapte les fonctions de réservation sans modifier les anciennes migrations, les autorisations, les verrous ni l’historique comptable. Sans option, un déploiement garde la configuration active.
+
+La recherche propose 3 USD pour une nouvelle campagne, configurable jusqu’à 10 USD; une extension ajoute un dollar. Les campagnes existantes restent disponibles avec leur enveloppe actuelle. Le contrat HTTP et l’OpenAPI sont alignés. Les tests vérifient la nouvelle configuration, le retour arrière avec les anciens réglages, la réservation workflow à 2 USD et les réservations recherche dans une campagne à 3 USD, puis le refus au-delà des bornes. Ces montants ne sont ni un devis fournisseur ni un prix SaaS.

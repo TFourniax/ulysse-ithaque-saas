@@ -70,9 +70,9 @@ const Config = z.object({
   AGENT_MODEL_ID: ModelId.optional(),
   AGENT_MODEL_PROFILE_JSON: z.string().optional(),
   AGENT_PROVIDER_ROUTE: z.enum(['openrouter', 'openrouter-eu-zdr']).default('openrouter'),
-  AGENT_RUN_BUDGET_USD: z.coerce.number().positive().max(0.25).optional(),
-  AGENT_SESSION_BUDGET_USD: z.coerce.number().positive().max(2).optional(),
-  AGENT_MONTH_BUDGET_USD: z.coerce.number().positive().max(10).optional(),
+  AGENT_RUN_BUDGET_USD: z.coerce.number().positive().max(2).optional(),
+  AGENT_SESSION_BUDGET_USD: z.coerce.number().positive().max(20).optional(),
+  AGENT_MONTH_BUDGET_USD: z.coerce.number().positive().max(100).optional(),
   AGENT_SESSION_ID: z.string().min(8).max(100).optional(),
   /** hermes-stub only: OpenAI-compatible simulated model endpoint of the local stack or CI. */
   AGENT_STUB_PROVIDER_URL: z.url().optional(),

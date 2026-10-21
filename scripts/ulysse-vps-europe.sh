@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-21.research8-retry
+ULYSSE_SCRIPT_VERSION=2026-10-21.research9-capacity
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -317,7 +317,7 @@ case "$action" in
     [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
     ud exec "$worker" node --input-type=module -e 'import {modelProfiles} from "./apps/worker/dist/src/agent-provider.js"; console.log(JSON.stringify(modelProfiles(),null,2))'
     exit 0 ;;
-  *) die 'actions : audit | diagnose [tenant] | diagnose-budget [tenant] | diagnose-research [tenant] | deploy COMMIT | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
+  *) die 'actions : audit | diagnose [tenant] | diagnose-budget [tenant] | diagnose-research [tenant] | deploy COMMIT [--budgets RUN SESSION MONTH] | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
 esac
 mkdir -p "$ULYSSE_RELEASES"
 exec 9>"$ULYSSE_PRIVATE/november-deploy.lock"
@@ -472,6 +472,7 @@ PYMODEL
 fi
 
 revision=${2:-}
+[[ $# == 2 || ( $# == 6 && ${3:-} == --budgets ) ]] || die 'deploy COMMIT [--budgets RUN SESSION MONTH]'
 [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || die 'fournir le SHA complet valide de la version novembre'
 git -C "$ULYSSE_REPO" diff --quiet && git -C "$ULYSSE_REPO" diff --cached --quiet || die 'correctifs locaux suivis par Git : les conserver et les examiner avant la mise a jour'
 # Mettre aussi a jour la reference distante dans les clones mono-branche.
@@ -501,7 +502,7 @@ for service in api worker hermes model-stub; do
 done
 printf '%s\n' "${ULYSSE_SERVICES[@]}" > "$release/services.txt"
 tag="ul020-${revision:0:12}-$(date -u +%s)"
-python3 - "$release" "$tag" <<'PY'
+python3 - "$release" "$tag" "${4:-}" "${5:-}" "${6:-}" <<'PY'
 import json,sys,pathlib,copy
 d=pathlib.Path(sys.argv[1]); c=json.loads((d/'before.json').read_text()); old=copy.deepcopy(c)
 api_mode=c['services']['api']['environment'].get('ULYSSE_ANALYSIS_MODE','rules')
@@ -521,7 +522,7 @@ for service in ('api','worker','db-init','demo-seed'):
     c['services'][service]['image']='ulysse-app:'+sys.argv[2]
 for service in ('hermes','model-stub'):
     if service in c['services']: c['services'][service]['image']='ulysse-hermes:'+sys.argv[2]
-# The user's explicit live activation is retained. No key/session/budget is created or reset.
+# Explicit live activation is retained. Optional budgets never reset a key, session or cost.
 e=c['services']['worker']['environment']
 if api_mode!='hermes-live' or worker_mode!='hermes-live' or len(e.get('OPENROUTER_API_KEY','') or '')<16:
     raise SystemExit('ARRET : cette mise a niveau exige le mode live et la cle deja actifs.')
@@ -530,6 +531,16 @@ if e.get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr':
     e['AGENT_MODEL_PROFILE_JSON']=''
     e['AGENT_PROVIDER_ROUTE']='openrouter-eu-zdr'
 e['AGENT_STUB_PROVIDER_URL']=''
+limits=sys.argv[3:]
+if any(limits):
+    from decimal import Decimal, InvalidOperation
+    if len(limits)!=3 or not all(limits): raise SystemExit('ARRET : trois plafonds requis.')
+    try: amounts=[Decimal(v) for v in limits]
+    except InvalidOperation: raise SystemExit('ARRET : plafonds numeriques requis.') from None
+    if any(not v.is_finite() or not 0<v<=cap for v,cap in zip(amounts,(2,20,100))) or not amounts[0]<=amounts[1]<=amounts[2]:
+        raise SystemExit('ARRET : plafonds ordonnes, positifs, maximum 2/20/100 USD.')
+    for name,value in zip(('AGENT_RUN_BUDGET_USD','AGENT_SESSION_BUDGET_USD','AGENT_MONTH_BUDGET_USD'),amounts):
+        e[name]=format(value,'f')
 # On a failed cutover, restore availability without resuming global inference.
 if old['services']['worker']['environment'].get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr':
     for name in ('api','worker'): old['services'][name]['environment']['ULYSSE_ANALYSIS_MODE']='rules'
@@ -575,4 +586,6 @@ ULYSSE_STOPPED=0
 say "Version installee : $revision"
 say "Sauvegarde et retour arriere : $release"
 say 'Sauvegarde chiffree et catalogue lisible ; cela ne remplace pas un exercice complet de restauration.'
-say 'Modele Europe + ZDR, budgets, session et cle conserves. Tester la recherche et les parcours sur https://demo-ulysse.paitite.com.'
+if [[ ${3:-} == --budgets ]]; then say "Plafonds appliques : ${4} USD/analyse, ${5} USD/session, ${6} USD/mois. Depenses anterieures conservees."
+else say 'Plafonds actifs conserves.'; fi
+say 'Modele Europe + ZDR, session, cles et corpus conserves. Tester les parcours sur https://demo-ulysse.paitite.com.'

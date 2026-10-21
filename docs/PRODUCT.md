@@ -1,5 +1,9 @@
 # Produit : exigences de référence
 
+## Priorité du 21 octobre — résultat fonctionnel avant optimisation fine
+
+Thomas confirme que la qualité et l’achèvement de la tâche priment sur l’économie de quelques centimes. Les budgets doivent permettre une exécution utile, avec une maîtrise raisonnable des dépenses; ils ne doivent pas devenir une contrainte de démonstration artificielle. L’optimisation des coûts vient après la fiabilité du parcours. Pour cette recette, la configuration préparée est de 2 USD par analyse, 20 USD par session et 100 USD par entreprise et par mois; les nouvelles recherches proposent 3 USD par campagne. Ce sont des plafonds techniques, ni des coûts attendus ni des prix SaaS. [Décision d’implémentation](adr/0013-november-workflows.md).
+
 ## Clarification du 21 octobre — acquisition autonome des informations
 
 Thomas précise que l'enrichissement du corpus est une responsabilité d'Ulysse. Lorsqu'une information utile manque, le produit doit rechercher ce qui est accessible sur le web ou dans les sources déjà autorisées, qualifier les informations trouvées et proposer leur validation à l'utilisateur. Il ne doit pas demander à celui-ci de constituer manuellement un benchmark concurrentiel. Une question humaine reste nécessaire pour une information privée, inaccessible, ambiguë ou relevant d'un choix métier.

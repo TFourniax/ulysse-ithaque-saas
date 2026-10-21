@@ -28,6 +28,8 @@ UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre c
 
 ## Prochain lot à prendre
 
+Instruction suivante de Thomas : privilégier la qualité et l’achèvement; relever les enveloppes de recette à 2/20/100 USD, proposer 3 USD aux nouvelles campagnes. Codex prend la migration additive 0016, la validation de configuration, la commande de déploiement explicite et le cas de libération de réservation après retrait pendant une attente. Vérifications en cours, aucun déploiement VPS effectué depuis cet environnement. [Journal](journal/2026-10-21-UL-020-provider-retry.md).
+
 Suivi UL-020 du 21 octobre à 23 h 11 : `provider_http_429` malgré des appels acceptés visibles dans OpenRouter, sans corrélation certaine. Codex étend DEBT-023 à buyer/content : deux reprises bornées du même appel, attente visible et conservation des coûts; pas de changement de modèle, de route ni de budget. Vérification PostgreSQL et vraie boucle Hermes en cours. [Journal](journal/2026-10-21-UL-020-provider-retry.md).
 
 Suivi UL-020 du 21 octobre à 21 h 19 : `result_schema_invalid`. Codex prend DEBT-032 : activer le schéma natif du résultat sur les profils compatibles, compter ses octets, contraindre les citations aux preuves disponibles et vérifier un benchmark complet sur recherche en pause. Correctif `5d70f9feb3d9a4a8d97298bd9366c110516698f3` publié, 11 jobs CI verts, 45 tests worker et 15 navigateur; vraie boucle Hermes et mise à niveau UL-016 vérifiées. Recette live encore ouverte. [Journal](journal/2026-10-21-UL-020-native-result-schema.md).

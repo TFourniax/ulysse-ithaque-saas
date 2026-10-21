@@ -27,7 +27,7 @@ export const ResearchProfile = z
     market: text(200),
     geography: z.string().max(150),
     keywords: z.array(text(100)).max(20),
-    budgetUsd: z.number().min(0.05).max(2),
+    budgetUsd: z.number().min(0.05).max(10),
     maxSearches: z.number().int().min(6).max(100),
     maxPages: z.number().int().min(12).max(500),
     maxAgeDays: z.number().int().min(1).max(90),

@@ -233,7 +233,7 @@ function ProfileForm({
               <input
                 type="number"
                 min="0.05"
-                max="2"
+                max="10"
                 step="0.05"
                 value={profile.budgetUsd}
                 onChange={(e) => setProfile({ ...profile, budgetUsd: Number(e.target.value) })}
@@ -480,7 +480,7 @@ function CampaignView({ id, focused }: { id: string; focused?: string }) {
           ['budget_reached', 'collection_limit'].includes(c.stopReason ?? '')
             ? {
                 limits: {
-                  budgetUsd: Math.min(2, c.profile.budgetUsd + 0.25),
+                  budgetUsd: Math.min(10, c.profile.budgetUsd + 1),
                   maxSearches: Math.min(100, c.profile.maxSearches + 12),
                   maxPages: Math.min(500, c.profile.maxPages + 40),
                 },
@@ -556,7 +556,7 @@ function CampaignView({ id, focused }: { id: string; focused?: string }) {
                   onClick={() => action.mutate('resume')}
                 >
                   {['budget_reached', 'collection_limit'].includes(c.stopReason ?? '')
-                    ? `Poursuivre · plafond ${Math.min(2, c.profile.budgetUsd + 0.25).toFixed(2)} USD`
+                    ? `Poursuivre · plafond ${Math.min(10, c.profile.budgetUsd + 1).toFixed(2)} USD`
                     : 'Reprendre la collecte'}
                 </button>
               )}
@@ -843,7 +843,7 @@ export function ResearchPage() {
     market: (context.data.context?.content.activity ?? '').slice(0, 200),
     geography: '',
     keywords: [],
-    budgetUsd: 0.75,
+    budgetUsd: 3,
     maxSearches: 24,
     maxPages: 120,
     maxAgeDays: 30,

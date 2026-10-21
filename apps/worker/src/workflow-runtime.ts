@@ -335,6 +335,12 @@ export class WorkflowRuntime {
           [ctx.tenantId, agentId, obsolete ? 'obsolete' : 'failed', code],
         );
         const cause = failed.rows[0]?.error_code ?? code;
+        // Revocation may already have closed this run while the gateway was waiting.
+        // Keep all incurred/uncertain costs but release its unused envelope immediately.
+        await sql.query(
+          "UPDATE agent_runs SET reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status NOT IN ('running','validating') AND reserved_usd>committed_usd",
+          [ctx.tenantId, agentId],
+        );
         const run = await this.store.get(sql, ctx.tenantId, id);
         if (run.status === 'running')
           await this.finish(sql, ctx, id, obsolete ? 'obsolete' : 'failed', null, cause);

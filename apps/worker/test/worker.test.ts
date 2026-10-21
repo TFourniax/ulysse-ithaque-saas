@@ -1535,24 +1535,35 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
               }),
         );
       });
-      const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
-        execute: async (request) => {
-          assert.equal(request.timeoutMs, 180_000);
-          const body = { messages: [{ role: 'system', content: instructions }] };
-          const pending = engine.inference(request.capability, body);
-          await waitFor(
-            async () =>
-              (await w.workspace.listWorkflows(w.owner))[0]?.errorCode === 'provider_retry_wait',
-          );
-          waitingObserved = true;
-          assert.equal((await w.workspace.listWorkflows(w.owner))[0]?.status, 'running');
-          await assert.rejects(engine.inference(request.capability, body), /provider cooldown/);
-          const payload = z
-            .object({ choices: z.array(z.object({ message: z.object({ content: z.string() }) })) })
-            .parse(await pending);
-          return JSON.parse(payload.choices[0]!.message.content) as unknown;
+      const engine: AgentRuntime = new AgentRuntime(
+        workerPool,
+        {
+          ...liveTestConfig(),
+          AGENT_RUN_BUDGET_USD: 2,
+          AGENT_SESSION_BUDGET_USD: 20,
+          AGENT_MONTH_BUDGET_USD: 100,
         },
-      });
+        {
+          execute: async (request) => {
+            assert.equal(request.timeoutMs, 180_000);
+            const body = { messages: [{ role: 'system', content: instructions }] };
+            const pending = engine.inference(request.capability, body);
+            await waitFor(
+              async () =>
+                (await w.workspace.listWorkflows(w.owner))[0]?.errorCode === 'provider_retry_wait',
+            );
+            waitingObserved = true;
+            assert.equal((await w.workspace.listWorkflows(w.owner))[0]?.status, 'running');
+            await assert.rejects(engine.inference(request.capability, body), /provider cooldown/);
+            const payload = z
+              .object({
+                choices: z.array(z.object({ message: z.object({ content: z.string() }) })),
+              })
+              .parse(await pending);
+            return JSON.parse(payload.choices[0]!.message.content) as unknown;
+          },
+        },
+      );
       const id = await w.workspace.create(
         w.owner,
         { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
@@ -2793,6 +2804,27 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     assert.equal(c.uncertainCalls, 0);
     assert.equal(c.committedUsd, 0.02);
     assert.equal((await w.items()).items[0]?.facts.length, 0);
+  });
+  test('research accepts larger authorized campaign envelopes while the database still enforces each ceiling', async () => {
+    const w = await setup('research-capacity', { ...publicProfile, budgetUsd: 3 });
+    w.engine.settings.sessionBudget = 20;
+    w.engine.settings.monthBudget = 100;
+    const claimed = await w.engine.store.claim(w.ctx, w.id);
+    assert.ok(claimed);
+    assert.equal(await w.engine.reserve(w.ctx, claimed.task, 'model', 2.01), null);
+    w.engine.settings.sessionBudget = 20.01;
+    assert.equal(await w.engine.reserve(w.ctx, claimed.task, 'model', 0.01), null);
+    w.engine.settings.sessionBudget = 20;
+    w.engine.settings.monthBudget = 100.01;
+    assert.equal(await w.engine.reserve(w.ctx, claimed.task, 'model', 0.01), null);
+    w.engine.settings.monthBudget = 100;
+    assert.ok(await w.engine.reserve(w.ctx, claimed.task, 'model', 1.5));
+    assert.ok(await w.engine.reserve(w.ctx, claimed.task, 'model', 1.5));
+    assert.equal(await w.engine.reserve(w.ctx, claimed.task, 'model', 0.01), null);
+    const c = await w.current();
+    assert.equal(c.committedUsd, 3);
+    assert.equal(c.uncertainCalls, 2);
+    assert.equal(c.profile.budgetUsd, 3);
   });
   test('uncertain cost survives pause and resume and disabling the policy refuses new reservations', async () => {
     const w = await setup('research-budget', { ...publicProfile, budgetUsd: 0.05 });

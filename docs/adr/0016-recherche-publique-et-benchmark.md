@@ -30,6 +30,8 @@ La première CI a détecté le droit manquant pour `SELECT FOR UPDATE` dans la r
 
 Les réservations de recherche et de modèle utilisent le même verrou financier que les parcours existants, avec un plafond par campagne, par session et par mois. Une réponse perdue conserve son coût supérieur réservé. Les reprises n’effacent ni appels ni dépenses. Les plafonds historiques de 2 USD/session et 10 USD/mois restent en vigueur. Un changement de fournisseur ne réinitialise pas ces compteurs.
 
+Révision ultérieure du 21 octobre, sur demande explicite de Thomas : [capacité de recette](0013-november-workflows.md) portée à 20 USD/session et 100 USD/mois configurables, 2 USD par réservation de modèle maximum; campagne jusqu’à 10 USD, proposition initiale de 3 USD. La migration additive 0016 applique ces bornes aux fonctions actives, sans réécrire l’historique. Les anciennes campagnes ne sont pas relancées ni augmentées automatiquement. La priorité produit devient la fiabilité du résultat avant l’optimisation fine du coût.
+
 ## Limites de cette première implémentation
 
 ### Révision du 21 octobre après la première campagne live

@@ -285,7 +285,7 @@ test('live activation is explicit and fails closed before any network call', () 
       ...hermesEnv,
       ULYSSE_ANALYSIS_MODE: 'hermes-live',
       OPENROUTER_API_KEY: 'test-only-never-transmitted',
-      AGENT_RUN_BUDGET_USD: '1',
+      AGENT_RUN_BUDGET_USD: '2.01',
     }),
   );
   assert.throws(() =>
@@ -296,6 +296,30 @@ test('live activation is explicit and fails closed before any network call', () 
       NODE_ENV: 'production',
     }),
   );
+});
+
+test('authorized operating envelopes accept 2/20/100 USD and reject larger or invalid settings', () => {
+  const env = {
+    ...hermesEnv,
+    ULYSSE_ANALYSIS_MODE: 'hermes-live',
+    OPENROUTER_API_KEY: 'test-only-never-transmitted',
+    AGENT_RUN_BUDGET_USD: '2',
+    AGENT_SESSION_BUDGET_USD: '20',
+    AGENT_MONTH_BUDGET_USD: '100',
+  };
+  const c = agentConfig(env);
+  assert.deepEqual(
+    [c.AGENT_RUN_BUDGET_USD, c.AGENT_SESSION_BUDGET_USD, c.AGENT_MONTH_BUDGET_USD],
+    [2, 20, 100],
+  );
+  assert.equal(c.AGENT_SESSION_ID, hermesEnv.AGENT_SESSION_ID);
+  for (const [name, limit] of [
+    ['AGENT_RUN_BUDGET_USD', 2],
+    ['AGENT_SESSION_BUDGET_USD', 20],
+    ['AGENT_MONTH_BUDGET_USD', 100],
+  ] as const)
+    for (const value of ['0', '-1', 'NaN', 'Infinity', String(limit + 0.01)])
+      assert.throws(() => agentConfig({ ...env, [name]: value }));
 });
 
 test('a simulated model endpoint is reserved to hermes-stub and never labelled live', () => {
