@@ -1,6 +1,6 @@
 # Recherche publique — activation et recette UL-020
 
-État : correctif **`d9ed2dfacfbe3f3490343b9c770d48b57e46bf99`**, tests applicatifs réussis; étapes Hermes terminées, statut global de ce workflow encore en cours au dernier relevé. Il ajoute l’interruption conservant le corpus et sa sélection pour le diagnostic, ainsi qu’une correction bornée des réponses au format invalide. Dernière capture : 36 concurrents qualifiés, puis diagnostic refusé `result_invalid`. [Correctif, résultats et limites](journal/2026-10-21-UL-020-buyer-format-and-pause.md). La qualité du benchmark réel reste à relire. [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
+État : correctif **`d9ed2dfacfbe3f3490343b9c770d48b57e46bf99`**, CI applicative et Hermes/mises à niveau terminées avec succès. Il ajoute l’interruption conservant le corpus et sa sélection pour le diagnostic, ainsi qu’une correction bornée des réponses au format invalide. Après les 36 concurrents qualifiés et le refus `result_invalid`, la capture du diagnostic à 16 h 55 montre maintenant `result_truncated`. Le réglage Mistral décrit ci-dessous reste à appliquer et à tester sur le VPS. [Correctif, résultats et limites](journal/2026-10-21-UL-020-buyer-format-and-pause.md), [limite de sortie](journal/2026-10-21-UL-020-mistral-output-limit.md). La qualité du benchmark réel reste à relire. [ADR-0016](adr/0016-recherche-publique-et-benchmark.md), [critères produit](WEB-RESEARCH-BENCHMARK.md).
 
 Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. La tentative a été arrêtée avant migration et arrêt des services; pas de rollback à effectuer pour ce refus. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
 
@@ -30,6 +30,46 @@ UPDATE
 Pour la démo déjà configurée, ce déploiement conserve la clé Brave, Mistral et les plafonds actifs. Après réussite : recharger la page, ouvrir la campagne existante et cliquer **Interrompre** si elle collecte encore, puis **Préparer le diagnostic acheteur**. Les pages, faits, décisions et dépenses restent conservés; ce bouton sélectionne explicitement cette campagne. Pour le diagnostic en échec déjà visible, **Reprendre ce brief** conserve les champs, sources manuelles et campagne associée. Il suffit de relancer le diagnostic; aucune nouvelle recherche n’est nécessaire pour réutiliser ce corpus. Les résultats provisoires restent à relire avant approbation.
 
 **Reprendre la collecte** reste une action distincte, sans hausse du plafond après une erreur. Un appel déjà transmis lors de l’interruption peut encore être facturé, sans publication tardive de ses données. Les anciennes interruptions manuelles sont également réutilisables si l’autorisation et les versions restent valides. L’étape de branchement ci-dessous concerne une première configuration ou un remplacement de clé.
+
+## Réponse tronquée : ajuster le plafond Mistral
+
+`result_truncated` indique une réponse terminale arrêtée avec `finish_reason=length`. Le dernier diagnostic transmis indiquait Mistral à 3 000 tokens de sortie; la correction de format conserve ce même plafond. La capture seule ne prouve pas le profil actuellement actif ni qu’une correction a été tentée.
+
+Sur cette démo, le bloc suivant vérifie le profil actif puis passe Mistral de 3 000 à 6 000 tokens avec la commande `model` existante. Il conserve les autres paramètres, les tarifs plafonds, le routage Europe/ZDR, les clés, les données et les budgets. Il arrête l’opération si le modèle, le plafond ou le budget ne correspondent pas. Aucun rebuild ni migration; prévoir un bref redémarrage API/worker. Le précontrôle du script vérifie le catalogue fournisseur sans générer de réponse.
+
+```bash
+sudo -Hu ulysse bash <<'TOKENS'
+set -Eeuo pipefail
+set +x
+umask 077
+cd /
+[[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
+ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
+bash -n "$ULYSSE_SCRIPT"
+ULYSSE_PROFILE=$(mktemp /var/lib/ulysse/home/private/ulysse-mistral-6000.XXXXXX)
+trap 'rm -f -- "$ULYSSE_PROFILE"' EXIT
+docker --host unix:///run/user/10002/docker.sock exec --workdir /app ulysse-worker-1 \
+  node --input-type=module -e '
+import { agentProvider } from "./apps/worker/dist/src/agent-provider.js";
+const e = process.env;
+const active = agentProvider(e.AGENT_MODEL_ID, e.AGENT_PROVIDER_ROUTE, e.AGENT_MODEL_PROFILE_JSON);
+const p = structuredClone(active.profile);
+if (p.model !== "mistralai/mistral-small-2603" || p.route !== "openrouter-eu-zdr" || p.generation.maxOutputTokens !== 3000 || p.generation.reasoning !== "disabled")
+  throw new Error("ARRET : profil actif different du Mistral Europe attendu a 3000 tokens.");
+p.id = "mistral-small4-eu-6000";
+p.generation.maxOutputTokens = 6000;
+const next = agentProvider(p.model, p.route, JSON.stringify(p));
+const budget = Number(e.AGENT_RUN_BUDGET_USD);
+if (!Number.isFinite(budget) || budget <= 0 || 8 * next.estimate(p.maxContextBytes + 2048, 6000) > budget)
+  throw new Error("ARRET : reservation maximale incompatible avec le budget existant.");
+console.log(JSON.stringify(next.profile));
+' > "$ULYSSE_PROFILE"
+bash "$ULYSSE_SCRIPT" model "$ULYSSE_PROFILE"
+bash "$ULYSSE_SCRIPT" status
+TOKENS
+```
+
+Après réussite, le statut doit afficher `profil=mistral-small4-eu-6000`, `sortie_max=6000` et `raisonnement=disabled`. Recharger le diagnostic en échec, cliquer **Reprendre ce brief**, puis relancer; la campagne associée et son corpus restent réutilisés, sans reprendre la collecte. Ce réglage affecte les prochains appels du modèle actif, y compris la recherche si elle est reprise. Il autorise des réponses plus longues et peut augmenter leur coût ou leur durée dans les budgets conservés; il ne garantit pas le succès du prochain diagnostic. Les limites de temps, de contexte, de taille finale et de preuves restent contrôlées. En cas de nouvel échec, utiliser `diagnose` ci-dessous pour connaître le code et l’éventuelle correction avant un autre ajustement.
 
 ## Brancher la recherche
 
