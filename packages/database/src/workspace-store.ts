@@ -248,12 +248,19 @@ export class PgWorkspaceStore extends PgAgentStore {
   }
   async create(
     ctx: Context,
-    body: { kind: WorkflowKind; brief: WorkflowBrief; sourceIds: string[]; requestKey: string },
+    body: {
+      kind: WorkflowKind;
+      brief: WorkflowBrief;
+      sourceIds: string[];
+      requestKey: string;
+      researchId?: string;
+    },
     mode: WorkflowRequest['mode'],
   ): Promise<string> {
     const actor = requirePermission(ctx, 'recommendation:revise');
     ensure(new Set(body.sourceIds).size === body.sourceIds.length, 'INVALID_INPUT');
     ensure(body.kind === 'content' || body.brief.buyerRunId === null, 'INVALID_INPUT');
+    ensure(body.kind === 'buyer' || body.researchId === undefined, 'INVALID_INPUT');
     return this.transaction(ctx, async (tx, sql) => {
       await tx.lock('analysis');
       const requestHash = fingerprintOf({ body, mode });
@@ -281,7 +288,7 @@ export class PgWorkspaceStore extends PgAgentStore {
       const researchStore = new PgResearchStore(this.pool);
       const researchId =
         body.kind === 'buyer'
-          ? await researchStore.ensureCampaign(ctx, tx, sql)
+          ? await researchStore.forWorkflow(ctx, tx, sql, body.researchId)
           : body.brief.buyerRunId
             ? (await this.get(sql, ctx.tenantId, body.brief.buyerRunId)).researchId
             : null;

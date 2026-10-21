@@ -50,6 +50,7 @@ export const CreateWorkflowBody = z
     brief: WorkflowBrief,
     sourceIds: z.array(z.uuid()).min(1).max(8),
     requestKey: z.uuid(),
+    researchId: z.uuid().optional(),
   })
   .strict();
 const Finding = z

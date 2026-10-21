@@ -31,6 +31,19 @@ test('public research authorization starts a durable campaign and exposes missin
   await page.getByRole('button', { name: 'Reprendre la collecte', exact: true }).click();
   expect((await resumed).postDataJSON()).not.toHaveProperty('limits');
   await expect(page.locator('.badge').filter({ hasText: 'Collecte partielle' })).toBeVisible();
+  const campaignUrl = page.url();
+  const prepare = page.getByRole('link', { name: 'Préparer le diagnostic acheteur' });
+  const target = await prepare.getAttribute('href');
+  expect(target).toMatch(/^\/buyer\?research=[a-f0-9-]+$/);
+  await prepare.click();
+  await expect(
+    page.getByText('Ce diagnostic utilise les résultats conservés', { exact: false }),
+  ).toBeVisible();
+  const researchId = new URL(page.url()).searchParams.get('research');
+  await expect(
+    page.getByRole('link', { name: 'Recherche et benchmark', exact: true }).last(),
+  ).toHaveAttribute('href', `/research?campaign=${researchId}`);
+  await page.goto(campaignUrl);
   await page.getByText('Profil public et autorisation de recherche', { exact: false }).click();
   await page.getByRole('button', { name: 'Arrêter les recherches automatiques' }).click();
   await expect(page.locator('.badge').filter({ hasText: 'Interrompue' })).toBeVisible();

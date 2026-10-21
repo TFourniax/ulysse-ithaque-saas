@@ -34,6 +34,8 @@ const REVIEW: Record<string, string> = {
   excluded: 'Écarté',
 };
 const REASONS: Record<string, string> = {
+  user_paused:
+    'Collecte interrompue. Les résultats sont conservés et utilisables pour le diagnostic. Vous pouvez reprendre la collecte plus tard.',
   provider_retry_scheduled:
     'Le fournisseur du modèle limite temporairement les appels. La collecte attend avant de réessayer automatiquement, au maximum deux fois pour cette étape.',
   provider_http_429:
@@ -466,7 +468,7 @@ function CampaignView({ id, focused }: { id: string; focused?: string }) {
     await client.invalidateQueries({ queryKey: ['workflows', session.activeTenant.id] });
   };
   const action = useMutation({
-    mutationFn: async (action: 'cancel' | 'resume') => {
+    mutationFn: async (action: 'pause' | 'resume') => {
       if (!detail.data) return;
       const c = detail.data.campaign;
       await api(`/v1/research/${id}/action`, {
@@ -538,12 +540,13 @@ function CampaignView({ id, focused }: { id: string; focused?: string }) {
                   type="button"
                   className="button button-secondary"
                   disabled={action.isPending}
-                  onClick={() => action.mutate('cancel')}
+                  onClick={() => action.mutate('pause')}
                 >
                   Interrompre
                 </button>
               )}
               {(c.status === 'paused' ||
+                (c.status === 'cancelled' && c.stopReason === 'user_cancelled') ||
                 c.status === 'failed' ||
                 (c.status === 'completed' && c.stopReason === 'steps_failed')) && (
                 <button
@@ -559,7 +562,7 @@ function CampaignView({ id, focused }: { id: string; focused?: string }) {
               )}
             </>
           )}
-          <Link to="/buyer" className="button button-primary">
+          <Link to={`/buyer?research=${id}`} className="button button-primary">
             Préparer le diagnostic acheteur
           </Link>
         </div>

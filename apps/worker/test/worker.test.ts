@@ -1491,6 +1491,128 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       mock.mock.restore();
     }
   });
+  test('terminal format gets one budgeted repair, preserves costs and provider errors, and still verifies citations', async (t) => {
+    const workflowInstructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    for (const scenario of ['repaired', 'invalid', 'limited', 'citation']) {
+      const w = await setup(`workflow-repair-${scenario}`);
+      let calls = 0;
+      let reference = '';
+      const mock = t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
+        calls++;
+        if (calls === 2) {
+          const sent = z
+            .object({
+              messages: z.array(z.object({ role: z.string(), content: z.string() })),
+              tools: z.unknown().optional(),
+            })
+            .parse(JSON.parse(z.string().parse(init.body)));
+          assert.equal(sent.tools, undefined);
+          assert.equal(sent.messages.at(-2)?.role, 'assistant');
+          assert.match(sent.messages.at(-1)?.content ?? '', /Une seule correction/);
+          if (scenario === 'limited') return Promise.resolve(new Response('', { status: 429 }));
+        }
+        const result =
+          calls === 1 || scenario === 'invalid'
+            ? { ...pendingWorkflow('buyer', [], 'private-invalid-fixture'), findings: {} }
+            : {
+                ...pendingWorkflow('buyer', [], 'Fixture corrigée'),
+                outcome: 'draft',
+                findings: [
+                  {
+                    topic: 'Offre',
+                    analysis: 'Accompagnement documenté.',
+                    references: [scenario === 'citation' ? 'source:invented:r1' : reference],
+                  },
+                ],
+                uniqueness: {
+                  verdict: 'insufficient_evidence',
+                  reason: 'Pas de comparaison.',
+                  references: [reference],
+                },
+              };
+        return Promise.resolve(
+          Response.json({
+            choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }],
+            usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.0001 },
+          }),
+        );
+      });
+      const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+        execute: async (request) => {
+          await engine.tool(request.capability, 'get_workflow_context', {});
+          await engine.tool(request.capability, 'list_company_sources', {});
+          reference = z.object({ reference: z.string() }).parse(
+            await engine.tool(request.capability, 'read_company_source', {
+              sourceId: w.source.id,
+            }),
+          ).reference;
+          const payload = z
+            .object({
+              choices: z.array(
+                z.object({
+                  message: z.object({
+                    content: z.string(),
+                  }),
+                }),
+              ),
+            })
+            .parse(
+              await engine.inference(request.capability, {
+                messages: [{ role: 'system', content: workflowInstructions }],
+              }),
+            );
+          return JSON.parse(payload.choices[0]!.message.content) as unknown;
+        },
+      });
+      const id = await w.workspace.create(
+        w.owner,
+        { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+        'hermes-live',
+      );
+      await engine.workflows.run(w.ctx, id);
+      const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+      assert.equal(calls, 2);
+      assert.equal(run.status, scenario === 'repaired' ? 'draft' : 'failed', run.errorCode ?? '');
+      assert.equal(
+        run.errorCode,
+        {
+          repaired: null,
+          invalid: 'result_schema_invalid',
+          limited: 'provider_http_429',
+          citation: 'unretrieved_citation',
+        }[scenario],
+      );
+      const trace = await engine.store.transaction(w.ctx, async (_tx, sql) =>
+        sql.query<{
+          snapshot: Record<string, unknown>;
+          model_calls: number;
+          committed_usd: string;
+          uncertain_calls: number;
+          input_tokens: number;
+        }>(
+          'SELECT snapshot,model_calls,committed_usd,uncertain_calls,input_tokens FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+          [w.tenantId, run.agentRunId],
+        ),
+      );
+      const saved = trace.rows[0]!;
+      assert.equal(saved.model_calls, 2);
+      assert.equal(saved.snapshot.formatRepairAttempted, true);
+      assert.ok(!JSON.stringify(saved.snapshot).includes('private-invalid-fixture'));
+      assert.deepEqual(saved.snapshot.initialWorkflowFormat, {
+        code: 'result_schema_invalid',
+        finishReason: 'stop',
+        issues: [{ path: 'findings', code: 'invalid_type' }],
+      });
+      assert.equal(saved.uncertain_calls, scenario === 'limited' ? 1 : 0);
+      assert.equal(saved.input_tokens, scenario === 'limited' ? 100 : 200);
+      if (scenario !== 'limited') assert.equal(Number(saved.committed_usd), 0.0002);
+      else assert.ok(Number(saved.committed_usd) > 0.0001);
+      mock.mock.restore();
+    }
+  });
   test('workflow distinguishes invalid final schema from required unread sources', async () => {
     for (const scenario of ['schema', 'unread']) {
       const w = await setup(`workflow-result-${scenario}`);
@@ -1757,6 +1879,40 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
         ).rows[0]?.n,
     );
     assert.equal(leaked, '0');
+  });
+  test('pause then immediate resume invalidates the old task lease before its late response', async () => {
+    const w = await setup('research-pause-race');
+    let release: () => void = () => {};
+    let entered: () => void = () => {};
+    const started = new Promise<void>((r) => {
+      entered = r;
+    });
+    const barrier = new Promise<void>((r) => {
+      release = r;
+    });
+    const slow = new ResearchRuntime(workerPool, {
+      ...w.engine.settings,
+      reader: {
+        read: async (url) => {
+          entered();
+          await barrier;
+          return reader.read(url);
+        },
+      },
+    });
+    const running = slow.run(w.ctx, w.id);
+    await started;
+    await w.repository.action(w.owner, w.id, (await w.current()).revision, 'pause');
+    await w.repository.action(w.owner, w.id, (await w.current()).revision, 'resume');
+    await w.engine.run(w.ctx, w.id);
+    const afterNewLease = JSON.stringify(await w.items());
+    const revision = (await w.current()).revision;
+    release();
+    await running;
+    assert.equal(JSON.stringify(await w.items()), afterNewLease);
+    assert.equal((await w.current()).revision, revision);
+    await w.drain();
+    assert.equal((await w.current()).qualifiedCount, 10);
   });
   test('cancel in flight prevents publication; foreign tenant and viewer cannot review a collected candidate', async () => {
     const a = await setup('research-cancel');
@@ -2034,7 +2190,7 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     assert.equal(await w.engine.reserve(w.ctx, retry.task, 'model', 0.001), null);
     assert.equal(await w.engine.store.claim(w.ctx, w.id), null);
   });
-  test('buyer automatically reuses the campaign, waits for collection and refuses approval of provisional evidence', async () => {
+  test('buyer reuses paused and legacy interrupted data, supports explicit selection and keeps evidence review mandatory', async () => {
     const w = await setup('research-buyer');
     const workspace = new PgWorkspaceStore(appPool);
     const source = await workspace.saveSource(w.owner, {
@@ -2102,7 +2258,17 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     await engine.workflows.run(w.ctx, buyer);
     assert.equal(executions, 0);
     assert.equal((await workspace.listWorkflows(w.owner))[0]?.status, 'queued');
-    await w.drain();
+    for (let i = 0; i < 150 && (await w.current()).qualifiedCount < 2; i++)
+      await w.engine.run(w.ctx, w.id);
+    const collected = await w.current();
+    assert.ok(collected.qualifiedCount >= 2);
+    assert.equal(collected.status, 'running');
+    const retained = JSON.stringify(await w.items());
+    await w.repository.action(w.owner, w.id, collected.revision, 'pause');
+    await w.engine.run(w.ctx, w.id);
+    assert.equal((await w.current()).stopReason, 'user_paused');
+    assert.equal((await w.current()).committedUsd, collected.committedUsd);
+    assert.equal(JSON.stringify(await w.items()), retained);
     await engine.workflows.run(w.ctx, buyer);
     const draft = (await workspace.listWorkflows(w.owner))[0]!;
     assert.equal(draft.status, 'draft', draft.errorCode ?? '');
@@ -2122,7 +2288,58 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     );
     await engine.workflows.run(w.ctx, second);
     const updated = (await workspace.listWorkflows(w.owner)).find((r) => r.id === second)!;
+    assert.equal(updated.researchId, w.id);
     assert.equal(updated.status, 'draft', updated.errorCode ?? '');
     await workspace.review(w.owner, second, updated.revision, 'approve');
+    await w.repository.action(w.owner, w.id, (await w.current()).revision, 'cancel');
+    const legacy = await workspace.create(
+      w.owner,
+      { ...body, requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    assert.equal(
+      (await workspace.listWorkflows(w.owner)).find((r) => r.id === legacy)?.researchId,
+      w.id,
+    );
+    // A newly queued campaign must not replace the older campaign explicitly selected in the UI.
+    const newer = await w.repository.transaction(w.owner, async (tx, sql) => {
+      await tx.lock('analysis');
+      return w.repository.ensureCampaign(w.owner, tx, sql, crypto.randomUUID());
+    });
+    assert.notEqual(newer, w.id);
+    const selected = await workspace.create(
+      w.owner,
+      { ...body, researchId: w.id, requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    assert.equal(
+      (await workspace.listWorkflows(w.owner)).find((r) => r.id === selected)?.researchId,
+      w.id,
+    );
+    const foreign = await setup('research-selected-foreign');
+    await assert.rejects(
+      workspace.create(
+        w.owner,
+        { ...body, researchId: foreign.id, requestKey: crypto.randomUUID() },
+        'hermes-live',
+      ),
+      /NOT_FOUND/,
+    );
+    await w.repository.action(w.owner, w.id, (await w.current()).revision, 'resume');
+    assert.equal((await w.current()).status, 'queued');
+    assert.equal((await w.current()).committedUsd, collected.committedUsd);
+    const policy = await w.repository.transaction(w.owner, (_tx, sql) =>
+      w.repository.policy(sql, w.tenantId),
+    );
+    assert.ok(policy);
+    await w.repository.savePolicy(w.owner, { ...publicProfile, enabled: false }, policy.revision);
+    await assert.rejects(
+      workspace.create(
+        w.owner,
+        { ...body, researchId: w.id, requestKey: crypto.randomUUID() },
+        'hermes-live',
+      ),
+      /STALE_EVIDENCE/,
+    );
   });
 });

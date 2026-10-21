@@ -33,6 +33,7 @@ import { z } from 'zod';
 import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
 import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts';
 import { fetchAgentCompletion, ProviderCallError } from './agent-errors.ts';
+import { inspectWorkflowCompletion, workflowRepairPrompt } from './workflow-response.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
 export const EXECUTION_CONTRACT = 'ulysse-execution-v2';
@@ -40,7 +41,7 @@ export const EXECUTION_CONTRACT = 'ulysse-execution-v2';
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
 export const WORKFLOW_INSTRUCTIONS_SHA256 =
-  '269391c540944db9265b9e615050b4c20c3b51f40e6a485610fb56913cf9b02c';
+  'b09fbbb7db15ee97513deb10502be9fc9d6b5d2a0e42b71e72d5ed77d5779e81';
 export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
 /** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
 export const MAX_ATTEMPTS = 2;
@@ -882,7 +883,7 @@ export class AgentRuntime {
     // byte count is a conservative upper bound on text tokens; schema/role overhead is included.
     // Fixed model, no provider/model fallback, maximum prices pinned in request routing.
     const upperCost = provider.estimate(bytes + 2048, provider.profile.generation.maxOutputTokens);
-    const { runId, mode } = await this.store.transaction(ctx, async (tx, sql) => {
+    const { runId, mode, workflowKind } = await this.store.transaction(ctx, async (tx, sql) => {
       const query = await sql.query(
         'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
         [ctx.tenantId, hash(capability)],
@@ -941,7 +942,7 @@ export class AgentRuntime {
           ? `Appel modèle réservé : ${this.config.AGENT_MODEL_ID}, ${this.config.AGENT_PROVIDER_ROUTE}`
           : 'Appel au modèle simulé (aucun fournisseur)',
       );
-      return { runId: run.id, mode: run.mode };
+      return { runId: run.id, mode: run.mode, workflowKind: run.workflow_kind };
     });
     const live = mode === 'hermes-live';
     // The provider key only ever leaves for OpenRouter; the stub endpoint receives none.
@@ -1008,6 +1009,56 @@ export class AgentRuntime {
         );
       });
       ensure(actual <= upperCost, 'INVALID_INPUT', 'provider exceeded reservation');
+    }
+    if (workflowKind !== 'deal') {
+      const inspected = inspectWorkflowCompletion(payload, workflowKind);
+      if (inspected) {
+        const d = inspected.diagnostics;
+        await this.store.transaction(ctx, async (_tx, sql) => {
+          await sql.query(
+            "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{workflowFormat}',$3::jsonb) WHERE tenant_id=$1 AND id=$2",
+            [ctx.tenantId, runId, JSON.stringify(d)],
+          );
+        });
+        if (d.code !== 'validated') {
+          const repairBody = {
+            messages: [
+              ...messages,
+              inspected.assistant,
+              { role: 'user', content: workflowRepairPrompt(d, workflowKind) },
+            ],
+          };
+          const repairBytes = Buffer.byteLength(JSON.stringify(repairBody));
+          const repairCost = provider.estimate(
+            repairBytes + 2048,
+            provider.profile.generation.maxOutputTokens,
+          );
+          const eligible =
+            inspected.repairable &&
+            repairBody.messages.length <= 32 &&
+            repairBytes <= provider.profile.maxContextBytes;
+          const retry =
+            eligible &&
+            (await this.store.transaction(ctx, async (_tx, sql) => {
+              const reserved = await sql.query(
+                "UPDATE agent_runs SET snapshot=snapshot || jsonb_build_object('formatRepairAttempted',true,'initialWorkflowFormat',$4::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running' AND model_calls<8 AND expires_at>clock_timestamp()+interval '5 seconds' AND committed_usd+$3<=reserved_usd AND (snapshot->>'formatRepairAttempted') IS DISTINCT FROM 'true' RETURNING id",
+                [ctx.tenantId, runId, repairCost, JSON.stringify(d)],
+              );
+              return reserved.rowCount === 1;
+            }));
+          // The normal gateway rechecks authorization, versions, lease, route and reservation.
+          // The persistent marker prevents another repair even across concurrent/replayed requests.
+          if (retry) return this.inference(capability, repairBody);
+          await this.store.transaction(ctx, async (_tx, sql) => {
+            await sql.query(
+              "UPDATE agent_runs SET error_code=coalesce(error_code,$3) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+              [ctx.tenantId, runId, d.code],
+            );
+            await this.store.event(sql, ctx.tenantId, runId, 'error', d.code);
+          });
+          throw new ProviderCallError(d.code, null);
+        }
+      }
     }
     // Internal reasoning is never persisted; only structured tool events and final result are kept.
     return payload;

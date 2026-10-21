@@ -55,6 +55,13 @@ const WORKFLOW_ERRORS: Record<string, string> = {
   hermes_timeout: 'Le moteur d’analyse n’a pas répondu dans le délai prévu.',
   hermes_http_422: 'Le moteur d’analyse n’a pas pu retourner une réponse exploitable.',
   result_invalid: 'La réponse produite ne respecte pas le format attendu.',
+  result_schema_invalid: 'Les champs de la réponse ne respectent pas le format attendu.',
+  result_json_invalid: 'Le modèle n’a pas fourni un résultat JSON lisible.',
+  result_truncated: 'La réponse du modèle est incomplète. Aucun diagnostic n’a été publié.',
+  result_too_large: 'La réponse du modèle dépasse la taille autorisée.',
+  result_kind_invalid: 'Le modèle a répondu pour un autre parcours.',
+  result_semantics_invalid: 'Le résultat structuré est incohérent avec les règles du diagnostic.',
+  result_refused: 'Le fournisseur n’a pas terminé normalement la réponse.',
   required_source_unread: 'L’analyse n’a pas consulté toutes les sources requises.',
   unretrieved_citation: 'L’analyse cite une référence qu’elle n’a pas consultée.',
   offer_evidence_missing: 'L’analyse ne cite pas de source décrivant l’offre.',
@@ -326,15 +333,18 @@ function WorkflowForm({
   sources,
   buyer,
   runs,
+  initialResearchId,
 }: {
   kind: 'buyer' | 'content';
   sources: WorkspaceSourceDto[];
   buyer: WorkflowRunDto | undefined;
   runs: WorkflowRunDto[];
+  initialResearchId: string | undefined;
 }) {
   const session = useSession();
   const client = useQueryClient();
   const researchPolicy = useResearchPolicy();
+  const [researchId, setResearchId] = useState(initialResearchId);
   const [brief, setBrief] = useState<WorkflowBriefDto>(
     buyer
       ? { ...buyer.brief, buyerRunId: buyer.id, objective: '', channel: '', phase: 'unknown' }
@@ -348,7 +358,13 @@ function WorkflowForm({
     mutationFn: () =>
       api<{ id: string }>('/v1/workflows', {
         method: 'POST',
-        body: { kind, brief, sourceIds: selected, requestKey },
+        body: {
+          kind,
+          brief,
+          sourceIds: selected,
+          requestKey,
+          ...(kind === 'buyer' && researchId ? { researchId } : {}),
+        },
       }),
     onSuccess: async () => {
       setRequestKey(crypto.randomUUID());
@@ -360,6 +376,7 @@ function WorkflowForm({
     setRequestKey(crypto.randomUUID());
   };
   const resume = (r: WorkflowRunDto) => {
+    setResearchId(r.researchId ?? undefined);
     setBrief(r.brief);
     setSelected(r.sourceIds.filter((id) => sources.some((s) => s.id === id)));
     setRequestKey(crypto.randomUUID());
@@ -379,10 +396,14 @@ function WorkflowForm({
           <h2>{kind === 'buyer' ? 'Cadrer le regard de l’acheteur' : 'Cadrer le contenu'}</h2>
           {kind === 'buyer' && (
             <Banner kind="info">
-              {researchPolicy.data?.profile.enabled
-                ? 'La recherche publique est activée : Ulysse collecte les informations de marché nécessaires avant le diagnostic.'
-                : 'Activez la recherche publique pour qu’Ulysse trouve et documente les concurrents.'}{' '}
-              <Link to="/research">Recherche et benchmark</Link>
+              {researchId
+                ? 'Ce diagnostic utilise les résultats conservés de la campagne sélectionnée. Si la collecte est en cours, interrompez-la pour analyser les résultats déjà disponibles.'
+                : researchPolicy.data?.profile.enabled
+                  ? 'La recherche publique est activée : Ulysse collecte les informations de marché nécessaires avant le diagnostic.'
+                  : 'Activez la recherche publique pour qu’Ulysse trouve et documente les concurrents.'}{' '}
+              <Link to={researchId ? `/research?campaign=${researchId}` : '/research'}>
+                Recherche et benchmark
+              </Link>
             </Banner>
           )}
           <p>
@@ -554,11 +575,12 @@ export function WorkflowsPage({ kind }: { kind: 'buyer' | 'content' }) {
         </Banner>
       )}
       <WorkflowForm
-        key={`${kind}-${buyer?.id ?? ''}`}
+        key={`${kind}-${buyer?.id ?? ''}-${params.get('research') ?? ''}`}
         kind={kind}
         sources={sources.data}
         runs={runs.data}
         buyer={buyer}
+        initialResearchId={params.get('research') ?? undefined}
       />
     </>
   );

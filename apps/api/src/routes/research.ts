@@ -139,7 +139,7 @@ export function registerResearchRoutes(
         body: z
           .object({
             revision: z.number().int().positive(),
-            action: z.enum(['cancel', 'resume']),
+            action: z.enum(['cancel', 'pause', 'resume']),
             limits: ResearchProfile.pick({
               budgetUsd: true,
               maxPages: true,

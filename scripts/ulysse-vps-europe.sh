@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-21.research3-extraction
+ULYSSE_SCRIPT_VERSION=2026-10-21.research4-buyer-pause
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -98,6 +98,10 @@ SELECT r.id,r.workflow_kind,r.model,r.status,r.error_code,r.started_at,
        round(extract(epoch FROM (r.completed_at-r.started_at))::numeric,1) AS duration_seconds,
        r.model_calls,r.tool_calls,r.input_tokens,r.output_tokens,r.uncertain_calls,
        r.cost_state,r.committed_usd,
+       r.snapshot->>'formatRepairAttempted' AS format_repair_attempted,
+       r.snapshot->'workflowFormat'->>'code' AS format_code,
+       r.snapshot->'workflowFormat'->>'finishReason' AS finish_reason,
+       r.snapshot->'workflowFormat'->'issues' AS format_issues,
        ARRAY(SELECT e.label FROM agent_events e
              WHERE e.tenant_id=r.tenant_id AND e.run_id=r.id AND e.kind='tool'
              ORDER BY e.sequence) AS tools_used

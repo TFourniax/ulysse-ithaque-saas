@@ -108,7 +108,7 @@ export class PgResearchStore extends PgAgentStore {
       await sql.query<Row>(
         requestKey
           ? 'SELECT id,input_hash FROM research_campaigns WHERE tenant_id=$1 AND request_key=$2'
-          : "SELECT id,input_hash FROM research_campaigns WHERE tenant_id=$1 AND input_hash=$2 AND profile_revision=$3 AND status NOT IN ('cancelled','failed') AND created_at>clock_timestamp()-($4::numeric*interval '1 hour') ORDER BY created_at DESC LIMIT 1",
+          : "SELECT id,input_hash FROM research_campaigns WHERE tenant_id=$1 AND input_hash=$2 AND profile_revision=$3 AND (status NOT IN ('cancelled','failed') OR (status='cancelled' AND stop_reason='user_cancelled')) AND created_at>clock_timestamp()-($4::numeric*interval '1 hour') ORDER BY created_at DESC LIMIT 1",
         requestKey
           ? [ctx.tenantId, requestKey]
           : [ctx.tenantId, inputHash, policy.revision, maxAgeHours],
@@ -148,6 +148,21 @@ export class PgResearchStore extends PgAgentStore {
       await this.addTask(sql, ctx.tenantId, id, { kind: 'search', search }, 10);
     await this.enqueue(tx, ctx, id);
     await this.audit(tx, ctx, 'research.requested', id);
+    return id;
+  }
+  async forWorkflow(
+    ctx: Context,
+    tx: TenantTx,
+    sql: PoolClient,
+    id?: string,
+  ): Promise<string | null> {
+    if (!id) return this.ensureCampaign(ctx, tx, sql);
+    const campaign = await this.campaign(sql, ctx.tenantId, id);
+    ensure(await this.isCurrent(tx, sql, campaign), 'STALE_EVIDENCE');
+    ensure(
+      campaign.status !== 'cancelled' || campaign.stopReason === 'user_cancelled',
+      'STALE_EVIDENCE',
+    );
     return id;
   }
   async enqueue(tx: TenantTx, ctx: Context, id: string, notBefore?: string): Promise<void> {
@@ -507,7 +522,7 @@ export class PgResearchStore extends PgAgentStore {
     ctx: Context,
     id: string,
     revision: number,
-    action: 'cancel' | 'resume',
+    action: 'cancel' | 'pause' | 'resume',
     limits?: Pick<ResearchProfile, 'budgetUsd' | 'maxSearches' | 'maxPages'>,
   ): Promise<void> {
     requirePermission(ctx, 'context:manage');
@@ -515,12 +530,28 @@ export class PgResearchStore extends PgAgentStore {
       await tx.lock('analysis');
       const c = await this.campaign(sql, ctx.tenantId, id);
       ensure(c.revision === revision, 'REVISION_CONFLICT');
-      if (action === 'cancel') {
-        await this.setStatus(sql, ctx.tenantId, id, 'cancelled', 'user_cancelled');
+      if (action === 'cancel' || action === 'pause') {
+        if (action === 'pause') {
+          ensure(['queued', 'running'].includes(c.status), 'INVALID_TRANSITION');
+          ensure(await this.isCurrent(tx, sql, c), 'STALE_EVIDENCE');
+        }
+        // Invalidate in-flight publication even if the user resumes before its response arrives.
+        await sql.query(
+          "UPDATE research_tasks SET status='pending',lease=NULL,expires_at=NULL WHERE tenant_id=$1 AND campaign_id=$2 AND status='running'",
+          [ctx.tenantId, id],
+        );
+        await this.setStatus(
+          sql,
+          ctx.tenantId,
+          id,
+          action === 'pause' ? 'paused' : 'cancelled',
+          action === 'pause' ? 'user_paused' : 'user_cancelled',
+        );
         await this.wakeWorkflows(tx, sql, ctx, id);
       } else {
         ensure(
           c.status === 'paused' ||
+            (c.status === 'cancelled' && c.stopReason === 'user_cancelled') ||
             c.status === 'failed' ||
             (c.status === 'completed' && c.stopReason === 'steps_failed'),
           'INVALID_TRANSITION',
