@@ -1693,6 +1693,71 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       mock.mock.restore();
     }
   });
+  test('an optional research catalog cannot block a model call whose mandatory evidence fits', async (t) => {
+    const w = await setup('workflow-catalog-overflow');
+    const instructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    const answer = pendingWorkflow('buyer', [], 'Fixture de contexte borné.');
+    let calls = 0;
+    t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
+      const body = z.string().parse(init.body);
+      assert.ok(Buffer.byteLength(body) < 80000);
+      assert.ok(body.includes(w.source.text));
+      assert.ok(!body.includes('catalog-overflow-fixture'));
+      calls++;
+      return Promise.resolve(
+        Response.json({
+          choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(answer) } }],
+          usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.0001 },
+        }),
+      );
+    });
+    const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        await engine.inference(request.capability, {
+          messages: [{ role: 'system', content: instructions }],
+        });
+        return answer;
+      },
+    });
+    const prepare = engine.workflows.prepareEvidence.bind(engine.workflows);
+    t.mock.method(
+      engine.workflows,
+      'prepareEvidence',
+      async (...args: Parameters<typeof prepare>) => {
+        const evidence = await prepare(...args);
+        const payload = z
+          .record(z.string(), z.unknown())
+          .parse(JSON.parse(evidence.message.content.slice(WORKFLOW_EVIDENCE_PREFIX.length)));
+        return {
+          ...evidence,
+          catalogCount: 1,
+          message: {
+            role: 'user',
+            content:
+              WORKFLOW_EVIDENCE_PREFIX +
+              JSON.stringify({
+                ...payload,
+                researchCatalog: {
+                  items: [{ name: 'catalog-overflow-fixture', qualification: 'x'.repeat(80000) }],
+                },
+              }),
+          },
+        };
+      },
+    );
+    const id = await w.workspace.create(
+      w.owner,
+      { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    await engine.workflows.run(w.ctx, id);
+    const result = (await w.workspace.listWorkflows(w.owner))[0]!;
+    assert.equal(result.status, 'abstained', result.errorCode ?? '');
+    assert.equal(calls, 1);
+  });
   test('buyer and linked content receive all eight required texts without model-selected reads; other sources remain unread', async (t) => {
     const w = await setup('workflow-prepared');
     const foreign = await setup('workflow-prepared-foreign');

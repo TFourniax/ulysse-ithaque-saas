@@ -11,7 +11,7 @@ Le code confirme une liste de concurrents ordonnée alphabétiquement, sans rés
 ## Changements
 
 - Priorité de lecture selon les faits et le brief, sans exclure les prestataires distants ni modifier les décisions humaines. Pas de score de confiance.
-- Catalogue compact de recherche fourni avant le premier choix d’outil, avec pagination explicite si le contexte ne permet pas tout. Les aperçus ne sont pas citables : lecture réelle toujours exigée. Lots jusqu’à six sources.
+- Catalogue compact de recherche fourni avant le premier choix d’outil, avec pagination explicite si le contexte ne permet pas tout. Les aperçus ne sont pas citables : lecture réelle toujours exigée. Lots de quatre sources.
 - Diversité des dimensions dans les digests et dates de collecte dans les preuves; pas de réécriture des citations.
 - Instructions pour comparer plusieurs entreprises/offres nommées selon les mêmes critères, expliquer la pertinence géographique, distinguer catégories/articles, inconnues et défauts prouvés. Pas de remplissage pour atteindre un nombre minimal.
 - Couverture du benchmark calculée depuis les citations et affichée parmi les limites, désormais visibles sans déplier une rubrique.
@@ -20,7 +20,7 @@ Fichiers : domaine de sélection et workflows, magasins de recherche/workspace, 
 
 ## Vérification
 
-Vérifications locales et CI à compléter avant publication. Les tests visent un acteur pertinent après trente domaines alphabétiques, la conservation d’une alternative distante, un catalogue de 36 fiches, une pagination bornée en octets, la diversité des preuves et le comptage exact des citations. Le scénario PostgreSQL existant vérifie la transmission du catalogue sans autoriser une citation avant lecture; la recette navigateur vérifie la visibilité des limites.
+Premier code `1e03428a` : `npm run verify` réussi (128 tests unitaires) et six tests Python ciblés. CI applicative réussie (PostgreSQL et navigateur compris); contrôles Hermes/mises à niveau en cours. Complément avant livraison : métadonnées de lecture bornées, lots conservés à quatre sources et retrait du catalogue optionnel s’il dépasse la taille du contexte, sans retirer les preuves obligatoires. Un test PostgreSQL reproduit ce cas. Vérifications du complément en cours. Les tests visent un acteur pertinent après trente domaines alphabétiques, la conservation d’une alternative distante, un catalogue de 36 fiches, une pagination bornée en octets, la diversité des preuves et le comptage exact des citations. Le scénario PostgreSQL existant vérifie la transmission du catalogue sans autoriser une citation avant lecture; la recette navigateur vérifie la visibilité des limites.
 
 ## Limites et recette
 

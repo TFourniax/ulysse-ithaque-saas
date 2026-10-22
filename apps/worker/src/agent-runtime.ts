@@ -47,7 +47,7 @@ export const EXECUTION_CONTRACT = 'ulysse-execution-v3';
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
 export const WORKFLOW_INSTRUCTIONS_SHA256 =
-  'b8f2d2d97374dbbe783cde7ef8af2432808b957249741b6c344259e1dba99562';
+  'cf7db9272ba6297db84b8a562b418d38c7d61555275081f382ffbeaeb2516a8a';
 export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
 /** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
 export const MAX_ATTEMPTS = 2;
@@ -1009,16 +1009,30 @@ export class AgentRuntime {
               );
         // Mandatory evidence is supplied as untrusted data, never as a system instruction
         // or an invented model/tool message (which could break signed reasoning replay).
-        const preparedMessages = evidence
+        let preparedMessages = evidence
           ? [messages[0], evidence.message, ...messages.slice(1)]
           : messages;
         const responseFormat =
           run.workflow_kind !== 'deal' && evidence && provider.profile.capabilities.structuredOutput
             ? workflowResponseFormat(run.workflow_kind, [...run.retrieved, ...evidence.references])
             : undefined;
-        const preparedBytes = Buffer.byteLength(
+        let preparedBytes = Buffer.byteLength(
           JSON.stringify({ ...body, messages: preparedMessages, response_format: responseFormat }),
         );
+        let catalogCount = evidence?.catalogCount ?? 0;
+        // Discovery metadata is optional: never reject an otherwise valid analysis
+        // merely because its catalog does not fit beside the transcript/schema.
+        if (evidence && preparedBytes > provider.profile.maxContextBytes) {
+          preparedMessages = [messages[0], evidence.messageWithoutCatalog, ...messages.slice(1)];
+          preparedBytes = Buffer.byteLength(
+            JSON.stringify({
+              ...body,
+              messages: preparedMessages,
+              response_format: responseFormat,
+            }),
+          );
+          catalogCount = 0;
+        }
         ensure(
           preparedMessages.length <= 32 && preparedBytes <= provider.profile.maxContextBytes,
           'INVALID_INPUT',
@@ -1043,7 +1057,7 @@ export class AgentRuntime {
               evidence.references,
               JSON.stringify({
                 sourceCount: evidence.sourceCount,
-                catalogCount: evidence.catalogCount,
+                catalogCount,
                 referenceCount: evidence.references.length,
                 structuredOutput: responseFormat !== undefined,
               }),

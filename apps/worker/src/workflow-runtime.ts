@@ -126,6 +126,10 @@ export class WorkflowRuntime {
       references: [...context.references, ...sources.map((s) => s.reference)],
       sourceCount: sources.length,
       catalogCount: researchCatalog?.items.length ?? 0,
+      messageWithoutCatalog: {
+        role: 'user',
+        content: WORKFLOW_EVIDENCE_PREFIX + JSON.stringify(payload),
+      },
       message: {
         role: 'user',
         content: WORKFLOW_EVIDENCE_PREFIX + JSON.stringify({ ...payload, researchCatalog }),
@@ -382,7 +386,7 @@ export class WorkflowRuntime {
     const params = z
       .object({
         sourceId: z.uuid().optional(),
-        sourceIds: z.array(z.uuid()).min(1).max(6).optional(),
+        sourceIds: z.array(z.uuid()).min(1).max(4).optional(),
         offset: z.number().int().min(0).optional(),
       })
       .strict()
@@ -443,7 +447,13 @@ export class WorkflowRuntime {
         const items = ids.map((id) => {
           const source = input.sources.find((s) => s.id === id);
           ensure(source, 'NOT_FOUND');
-          return { ...source, reference: sourceReference(source), untrusted: true };
+          const { research, ...versioned } = source;
+          return {
+            ...versioned,
+            ...(research ? { research: researchPreview(source) } : {}),
+            reference: sourceReference(source),
+            untrusted: true,
+          };
         });
         refs = items.map((item) => item.reference);
         value = params.sourceIds ? { items } : items[0];
