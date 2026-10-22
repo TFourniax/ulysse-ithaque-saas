@@ -1,6 +1,6 @@
 # Recherche publique — activation et recette UL-020
 
-État : code **`fbb44c480ac0a72ff1f7dded7c093d4ea1dac48e`** publié, 11 contrôles CI réussis. Le diagnostic transmis le 22 octobre à 13 h 10 compare quatre acteurs et affiche ses limites, mais conserve des conclusions non étayées. Ce correctif ajoute une relecture obligatoire du brouillon sur les extraits réellement consultés et exige les citations des deux offres dans chaque comparaison. Les exemples tarifaires, inconnues, déclarations et résultats mesurés doivent être distingués dans le texte corrigé. [Preuves et limites](journal/2026-10-22-UL-020-buyer-evidence-review.md). Une nouvelle analyse sur la campagne existante permet de tester le changement; la qualité sémantique reste à relire. La collecte et ses faits ne sont pas effacés.
+État : stabilisation **`c5618617c51a9bfc67669fa408a8720d8509b676`**, 11 contrôles CI réussis. Les captures du 22 octobre montrent un refus fournisseur puis un refus de références. La nouvelle version transmet les vrais statuts à Hermes et permet son secours natif, sépare les corrections de génération et relecture, et conserve un diagnostic partiel uniquement si des sections déjà relues restent correctement sourcées. [Preuves et limites](journal/2026-10-22-UL-020-hermes-recovery.md). La collecte et les faits sont conservés; les nouveaux diagnostics restent à relire.
 
 Les correctifs précédents de reprise 429/503, schéma natif, preuves obligatoires, réservations et pause restent inclus. La configuration autorisée conserve **2 USD/analyse, 20 USD/session et 100 USD/entreprise/mois**; nouvelles campagnes proposées à 3 USD (maximum configurable 10 USD). Ce sont des plafonds, pas des coûts attendus. Le modèle, son profil et le corpus restent conservés.
 
@@ -8,7 +8,7 @@ Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue
 
 ## Préparer et déployer
 
-La branche est `codex/ul-020-web-research`, issue d’UL-019, [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). La commande ci-dessous épingle le code vérifié par les tests cités dans le journal; les commits documentaires suivants ne changent pas ce code. Les migrations additives 0014 à 0016 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : le contrat v3 accepte une exécution Hermes de trois minutes avec reprise du même appel, puis le worker dispose d’une marge supplémentaire pour la relecture acheteur (bail total quatre minutes). Le script conserve le modèle européen, les clés, la session et le corpus. L’option `--budgets` applique explicitement les nouvelles enveloppes; sans cette option, les plafonds actifs sont conservés. Il vérifie une sauvegarde chiffrée avant migration. Prévoir une brève interruption pendant le remplacement des services.
+La branche est `codex/ul-020-web-research`, issue d’UL-019, [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). La commande ci-dessous épingle le code vérifié par les tests cités dans le journal; les commits documentaires suivants ne changent pas ce code. Les migrations additives 0014 à 0017 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : le contrat v4 accepte cinq minutes pour Hermes, puis deux minutes supplémentaires pour la relecture acheteur. La file expire après huit minutes; les plafonds financiers restent inchangés. Le script conserve le modèle européen, les clés, la session et le corpus. L’option `--budgets` applique explicitement les nouvelles enveloppes; sans cette option, les plafonds actifs sont conservés. Il vérifie une sauvegarde chiffrée avant migration. Prévoir une brève interruption pendant le remplacement des services.
 
 Sur le VPS, depuis le terminal `hermesadmin`, exécuter ce bloc qui utilise le compte `ulysse`, selon la procédure [modèles Europe](MODEL-EU.md). Le script vérifie l’hôte, l’UID, le Docker rootless, la configuration active et l’absence de dérive. Il n’est pas destiné à un autre Docker ou serveur. En cas d’arrêt sur erreur, conserver le message et ne pas passer à l’activation.
 
@@ -20,13 +20,14 @@ umask 077
 cd /
 [[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
 ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-ULYSSE_REVISION=fbb44c480ac0a72ff1f7dded7c093d4ea1dac48e
+ULYSSE_REVISION=c5618617c51a9bfc67669fa408a8720d8509b676
 ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
 git -C "$ULYSSE_REPO" show "$ULYSSE_REVISION:scripts/ulysse-vps-europe.sh" > "$ULYSSE_SCRIPT"
 bash -n "$ULYSSE_SCRIPT"
 bash "$ULYSSE_SCRIPT" deploy "$ULYSSE_REVISION" --budgets 2 20 100
+bash "$ULYSSE_SCRIPT" fallback auto
 UPDATE
 ```
 
@@ -36,9 +37,19 @@ Pour la démo déjà configurée, ce déploiement conserve la clé Brave, le mod
 
 Le diagnostic `diagnose` affiche désormais `automatically_supplied_sources` et `automatically_supplied_references` pour les nouveaux appels. Un nombre d’outils nul ne signifie plus que les sources obligatoires ont été omises : leurs textes sont fournis par la passerelle. Les lectures supplémentaires de concurrents restent tracées comme outils. Ces compteurs ne prouvent pas la justesse de la comparaison. Le champ `buyer_evidence_review` affiche la version et l’état de la nouvelle relecture. Il indique son exécution, pas une validation indépendante de la véracité des conclusions.
 
+## Secours natif Hermes
+
+`fallback auto` conserve le principal et configure GLM Europe en secours, ou Mistral Europe si GLM est déjà principal. Le profil de secours est contrôlé avant tout remplacement : modèle autorisé pour la clé, endpoint ZDR actif, paramètres et plafonds de prix compatibles. Ce contrôle ne transmet aucun texte client et ne lance aucune inférence. La clé OpenRouter existante est réutilisée uniquement par le worker. Un refus de catalogue arrête cette configuration sans appliquer le secours; la version déployée reste en place.
+
+`fallback mistral`, `fallback glm` ou `fallback /chemin/profil.json` choisit explicitement un autre profil; `fallback off` désactive le secours. Deux modèles distincts et la même route Europe/ZDR sont exigés. Le mode auto donne au secours au moins 6 000 tokens de sortie; le principal et ses paramètres sont conservés. Les changements passent par le même contrôle de dérive et le même retour de configuration que `model`.
+
+Pour buyer/content, Hermes garde les outils déjà lus et utilise son mécanisme natif de bascule après une défaillance transitoire du principal. La passerelle refuse les modèles non configurés, tout changement arbitraire de destination et toute publication sur des sources modifiées ou retirées. Le diagnostic technique expose `primary_model`, `fallback_model`, `fallback_used`, `fallback_reason`, `review_repair_attempted` et `buyer_evidence_review`. Un diagnostic partiel affiche les sections retirées et ne reprend pas les conclusions globales du texte incomplet.
+
+La collecte/extraction de recherche garde son mécanisme de pause/reprise existant. Un problème de compte ou l'indisponibilité des deux modèles peut toujours empêcher l'analyse; le secours ne garantit pas la disponibilité fournisseur ni la justesse sémantique.
+
 ## Refus temporaire : reprise automatique
 
-Pour `provider_http_429` ou `provider_http_503`, le correctif de reprise décrit dans le [journal dédié](journal/2026-10-21-UL-020-provider-retry.md) reprend le même appel buyer/content au plus deux fois, avec attente affichée. Il respecte le délai fournisseur, ou attend 30 puis 60 secondes en son absence. Les reprises partagent le plafond de huit appels et les budgets actifs; les transmissions refusées gardent leur provision. Un délai supérieur à deux minutes ou incompatible avec le temps restant arrête le diagnostic. Le bail total est de quatre minutes pour buyer, trois pour content; une limite durable de compte ou de fournisseur peut toujours provoquer un échec. `diagnose` ajoute le compteur `provider_retries` et les métadonnées techniques `provider_retry`, sans texte fournisseur. L’application et Hermes doivent être mis à jour ensemble.
+Sans secours configuré, pour `provider_http_429` ou `provider_http_503`, le correctif de reprise décrit dans le [journal dédié](journal/2026-10-21-UL-020-provider-retry.md) reprend le même appel buyer/content au plus deux fois, avec attente affichée. Il respecte le délai fournisseur, ou attend 30 puis 60 secondes en son absence. Les reprises partagent le plafond de douze appels et les budgets actifs; les transmissions refusées gardent leur provision. Un délai supérieur à deux minutes ou incompatible avec le temps restant arrête le diagnostic. Le bail total est de sept minutes pour buyer, cinq pour content; une limite durable de compte ou de fournisseur peut toujours provoquer un échec. `diagnose` ajoute le compteur `provider_retries` et les métadonnées techniques `provider_retry`, sans texte fournisseur. L’application et Hermes doivent être mis à jour ensemble.
 
 ## Réponse tronquée : ajuster le plafond Mistral
 
@@ -123,7 +134,7 @@ Consigner les résultats dans un journal de recette, en distinguant qualité mé
 
 ## Diagnostiquer une collecte sans appel payant
 
-Depuis `2026-10-21.research2-diagnostic`, le script propose `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. La version publiée ci-dessus, `2026-10-21.research9-capacity`, conserve les résultats techniques par tentative, le relevé budgétaire et indique si le schéma natif a été envoyé. Pour diagnostiquer sans déployer, extraire le script publié dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n` : il fonctionne avec les images UL-020 déjà en service, sans rebuild, redémarrage, migration ou changement de configuration.
+Depuis `2026-10-21.research2-diagnostic`, le script propose `diagnose-research [tenant-slug]`, avec `acme-demo` par défaut comme pour `diagnose`. La version publiée ci-dessus, `2026-10-22.research10-recovery`, conserve les résultats techniques par tentative, le relevé budgétaire et indique si le schéma natif a été envoyé. Pour diagnostiquer sans déployer, extraire le script publié dans un fichier privé distinct et vérifier sa syntaxe avec `bash -n` : il fonctionne avec les images UL-020 déjà en service, sans rebuild, redémarrage, migration ou changement de configuration.
 
 ```bash
 sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose-research
@@ -143,7 +154,7 @@ Pour un échec du **diagnostic acheteur**, utiliser `diagnose` (et non `diagnose
 sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose
 ```
 
-La sortie ajoute `provider_retries` (reprises programmées), `provider_retry` (dernier code, délai et phase techniques), `native_response_schema` (pour les nouveaux appels), `format_repair_attempted`, `format_code`, `finish_reason` et `format_issues` pour les nouveaux appels. Ces champs techniques décrivent le refus sans exposer la réponse. Les anciens échecs `result_invalid` ne sont pas reconstitués. Une correction n’est tentée qu’une fois, si les plafonds et le temps restant le permettent.
+La sortie ajoute `provider_retries` (reprises programmées), `provider_retry` (dernier code, délai et phase techniques), `native_response_schema` (pour les nouveaux appels), `format_repair_attempted`, `format_code`, `finish_reason` et `format_issues` pour les nouveaux appels. Ces champs techniques décrivent le refus sans exposer la réponse. Les anciens échecs `result_invalid` ne sont pas reconstitués. Une correction est tentée au plus une fois par phase (génération puis relecture buyer), si les plafonds et le temps restant le permettent. `review_repair_attempted` distingue la seconde phase; `buyer_evidence_review.partial` signale la conservation de sections valides après retrait de comparaisons mal référencées.
 
 ## Diagnostiquer le budget
 

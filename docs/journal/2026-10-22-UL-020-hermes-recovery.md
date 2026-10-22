@@ -22,11 +22,23 @@ La documentation officielle [Hermes fallback](https://hermes-agent.nousresearch.
 
 ## Vérification
 
-`npm run verify` exécuté avec succès localement (format, lint strict, types, cycles, OpenAPI, tests unitaires et liens documentaires). Huit tests Python locaux sans moteur installé et douze tests des transformations du script VPS réussis. Les gates PostgreSQL, API, worker, navigateur, vraie image Hermes et stacks neuves/mises à niveau sont requis avant de recommander le déploiement. Les résultats et liens de CI seront inscrits après leur exécution.
+`npm run verify` exécuté avec succès localement (format, lint strict, types, cycles, OpenAPI, tests unitaires et liens documentaires). Huit tests Python locaux sans moteur installé et douze tests des transformations du script VPS réussis. Code final **`c5618617c51a9bfc67669fa408a8720d8509b676`** : [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39793544261) et [Hermes/mises à niveau 6/6](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39793544363) réussies.
+
+| Contrôle | Résultat |
+| --- | --- |
+| Vérifications locales, Linux et Windows | 135 tests unitaires; format, lint strict, types, cycles, OpenAPI et documentation réussis |
+| PostgreSQL et API réels | 50/50 et 18/18 |
+| Worker sous les rôles PostgreSQL réels | 52/52, dont bascule autorisée, retrait de source, double réparation et publication partielle |
+| Navigateur | 15/15 |
+| Image Hermes épinglée | 11/11, dont secours natif après outil et isolation des processus |
+| Stack neuve et mise à niveau UL-016 | `UL017_BUYER_HERMES_STUB=passed`, `UL017_CONTENT_HERMES_STUB=passed`, persistance après redémarrage |
+| Transformation du script VPS | 12/12, conservation des clés, du principal, de la session, des budgets et du rollback |
+
+Les modèles et fournisseurs sont scriptés dans ces preuves. La recette vérifie la chaîne réelle et ses erreurs injectées; elle ne mesure pas la justesse du benchmark Paitite ni la disponibilité des fournisseurs réels.
 
 ## Limites et clôture
 
-Première CI du code `476a75a4` : vraie boucle Hermes réussie (onze tests, dont bascule native après outil), contrôle applicatif local et conteneur, navigateur, stacks simulées réussis. Deux anciennes assertions worker attendaient l'ignorance d'un modèle arbitraire ou le précédent libellé d'erreur de profil; elles sont adaptées au refus explicite des modèles non autorisés. Les vérifications d'absence d'appel sortant, des paramètres Europe/ZDR et des coûts sont conservées. Aucun assouplissement du contrôle pour faire passer les tests. Les scénarios natif/DB et double réparation ajoutés passent dans cette première CI; un nouveau passage complet est requis.
+Première CI du code `476a75a4` : vraie boucle Hermes réussie (onze tests, dont bascule native après outil), contrôle applicatif local et conteneur, navigateur, stacks simulées réussis. Deux anciennes assertions worker attendaient l'ignorance d'un modèle arbitraire ou le précédent libellé d'erreur de profil; elles sont adaptées au refus explicite des modèles non autorisés. Les vérifications d'absence d'appel sortant, des paramètres Europe/ZDR et des coûts sont conservées. Aucun assouplissement du contrôle pour faire passer les tests. Les scénarios natif/DB et double réparation ajoutés passent dans cette première CI; le nouveau passage complet ci-dessus réussit après cette correction.
 
 Pas de clé fournisseur ni d'accès SSH dans cet environnement. Une panne généralisée d'OpenRouter, un problème de compte ou l'indisponibilité des deux routes restent possibles. Les profils doivent être compatibles avec le catalogue du compte au moment de l'activation. Le secours couvre buyer/content; la collecte/extraction de recherche garde sa reprise existante et reste hors de cette bascule.
 
