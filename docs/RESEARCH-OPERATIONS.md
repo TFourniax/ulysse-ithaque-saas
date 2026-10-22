@@ -1,6 +1,6 @@
 # Recherche publique — activation et recette UL-020
 
-État : stabilisation **`c5618617c51a9bfc67669fa408a8720d8509b676`**, 11 contrôles CI réussis. Les captures du 22 octobre montrent un refus fournisseur puis un refus de références. La nouvelle version transmet les vrais statuts à Hermes et permet son secours natif, sépare les corrections de génération et relecture, et conserve un diagnostic partiel uniquement si des sections déjà relues restent correctement sourcées. [Preuves et limites](journal/2026-10-22-UL-020-hermes-recovery.md). La collecte et les faits sont conservés; les nouveaux diagnostics restent à relire.
+État : correction de relecture **`1d1836ca0ef00d2e4fa2050608b5fe16917a63b6`**, 11 contrôles CI réussis. Le diagnostic VPS du 22 octobre confirme que la version précédente était déployée, mais que cinq comparaisons étaient refusées sans correction. La nouvelle version remplace le brouillon précédent lors de cette correction pour éviter son accumulation dans le contexte, fournit explicitement les rôles des citations et trace les motifs de refus. [Preuves et limites](journal/2026-10-22-UL-020-review-context.md). Le secours natif Hermes et les corrections indépendantes restent inclus. La collecte et les faits sont conservés; les nouveaux diagnostics restent à relire.
 
 Les correctifs précédents de reprise 429/503, schéma natif, preuves obligatoires, réservations et pause restent inclus. La configuration autorisée conserve **2 USD/analyse, 20 USD/session et 100 USD/entreprise/mois**; nouvelles campagnes proposées à 3 USD (maximum configurable 10 USD). Ce sont des plafonds, pas des coûts attendus. Le modèle, son profil et le corpus restent conservés.
 
@@ -20,7 +20,7 @@ umask 077
 cd /
 [[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
 ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-ULYSSE_REVISION=c5618617c51a9bfc67669fa408a8720d8509b676
+ULYSSE_REVISION=1d1836ca0ef00d2e4fa2050608b5fe16917a63b6
 ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
@@ -155,6 +155,8 @@ sudo -Hu ulysse bash /var/lib/ulysse/home/private/ulysse-research.sh diagnose
 ```
 
 La sortie ajoute `provider_retries` (reprises programmées), `provider_retry` (dernier code, délai et phase techniques), `native_response_schema` (pour les nouveaux appels), `format_repair_attempted`, `format_code`, `finish_reason` et `format_issues` pour les nouveaux appels. Ces champs techniques décrivent le refus sans exposer la réponse. Les anciens échecs `result_invalid` ne sont pas reconstitués. Une correction est tentée au plus une fois par phase (génération puis relecture buyer), si les plafonds et le temps restant le permettent. `review_repair_attempted` distingue la seconde phase; `buyer_evidence_review.partial` signale la conservation de sections valides après retrait de comparaisons mal référencées.
+
+Pour les appels avec la correction de relecture v2, `input_bytes` et `max_context_bytes` décrivent la taille contrôlée. `offer_reference_count` et `competitor_reference_count` distinguent les deux côtés fournis. `repair_decision` indique la phase, la stratégie et le motif fixe : `requested`, `already_attempted`, `context_limit`, `message_limit`, `provider_refused`, `run_inactive`, `call_limit`, `deadline` ou `budget_limit`. Un `review_repair_attempted` vide ne suffit donc plus à attribuer l’échec au modèle. Ces nouvelles métadonnées ne reconstituent pas les anciens runs et ne contiennent aucun texte de source ou de réponse.
 
 ## Diagnostiquer le budget
 
