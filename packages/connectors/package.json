@@ -17,7 +17,11 @@
     }
   },
   "dependencies": {
-    "@ulysse/domain": "0.1.0"
+    "@ulysse/domain": "0.1.0",
+    "ipaddr.js": "2.5.0",
+    "parse5": "8.0.1",
+    "robots-parser": "3.0.1",
+    "zod": "4.6.5"
   },
   "scripts": {
     "test": "node --conditions=ulysse-source --test \"test/**/*.test.ts\""

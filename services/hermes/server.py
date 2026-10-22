@@ -15,7 +15,15 @@ from uuid import UUID
 
 SLOTS = threading.BoundedSemaphore(2)
 MODES = {"hermes-live", "hermes-stub"}
-EXECUTION_CONTRACT = "ulysse-execution-v2"
+EXECUTION_CONTRACT = "ulysse-execution-v4"
+
+
+def execution_timeout_ms(request):
+    maximum = 300000 if request.get("workflow", "deal") in ("buyer", "content") else 90000
+    requested = request.get("timeoutMs", maximum)
+    if type(requested) is not int or requested < 5000:
+        raise ValueError("invalid_execution_timeout")
+    return min(requested, maximum)
 
 
 def model_settings(request):
@@ -23,6 +31,11 @@ def model_settings(request):
     model = request.get("model")
     if not isinstance(model, str) or len(model) > 160 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*", model):
         raise ValueError("invalid_model_id")
+    fallback = request.get("fallbackModel")
+    if fallback is not None and (request.get("workflow") not in ("buyer", "content") or
+                                not isinstance(fallback, str) or fallback == model or len(fallback) > 160 or
+                                not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*", fallback)):
+        raise ValueError("invalid_fallback_model")
     settings = request.get("modelSettings", {"maxOutputTokens": 3000, "reasoning": "disabled"})
     if not isinstance(settings, dict) or set(settings) != {"maxOutputTokens", "reasoning"}:
         raise ValueError("invalid_model_settings")
@@ -92,7 +105,7 @@ def isolated_run(request):
         completed = subprocess.run(
             [sys.executable, str(Path(__file__).with_name("runner.py"))],
             input=json.dumps(request), capture_output=True, text=True, env=env, cwd=home,
-            timeout=min(int(request.get("timeoutMs", 90000)), 90000) / 1000, check=False,
+            timeout=execution_timeout_ms(request) / 1000, check=False,
         )
         if completed.returncode:
             # Runner diagnostics contain class names and source locations only.

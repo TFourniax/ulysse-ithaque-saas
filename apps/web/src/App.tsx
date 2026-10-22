@@ -1,3 +1,4 @@
+import { ResearchPage } from './pages/Research.tsx';
 import type { Me } from '@ulysse/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
@@ -186,6 +187,7 @@ function Layout() {
   const session = { ...me.data, activeTenant: me.data.activeTenant };
   const nav = [
     { to: '/buyer', label: 'Client synthétique' },
+    { to: '/research', label: 'Recherche et benchmark' },
     { to: '/content', label: 'Contenus' },
     { to: '/recommendations', label: 'Prochaine interaction' },
     { to: '/workspace', label: 'Sources métier' },
@@ -252,6 +254,7 @@ const router = createBrowserRouter([
   {
     element: <Layout />,
     children: [
+      { path: '/research', element: <ResearchPage /> },
       { path: '/buyer', element: <WorkflowsPage kind="buyer" /> },
       { path: '/content', element: <WorkflowsPage kind="content" /> },
       { path: '/workspace', element: <WorkspacePage /> },

@@ -1,7 +1,60 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DomainError } from '@ulysse/domain';
-import { fetchAgentCompletion, ProviderCallError, workflowFailure } from '../src/agent-errors.ts';
+import {
+  fetchAgentCompletion,
+  ProviderCallError,
+  workflowFailure,
+  providerGatewayFailure,
+} from '../src/agent-errors.ts';
+
+test('Hermes receives real transient statuses and sanitized Retry-After; permission failures stay closed', () => {
+  for (const status of [429, 500, 502, 503, 504]) {
+    const failure = providerGatewayFailure(
+      new ProviderCallError(`provider_http_${status}`, status, 30),
+    );
+    assert.equal(failure.status, status);
+    assert.equal(failure.body.error.code, status);
+    if (status === 429) assert.equal(failure.headers['retry-after'], '30');
+  }
+  assert.equal(providerGatewayFailure(new ProviderCallError('provider_http_429', 200)).status, 429);
+  assert.equal(providerGatewayFailure(new ProviderCallError('provider_timeout', null)).status, 504);
+  const refused = providerGatewayFailure(new Error('private-client-value'));
+  assert.equal(refused.status, 403);
+  assert.ok(!JSON.stringify(refused).includes('private-client-value'));
+});
+
+test('an oversized HTTP 200 stream is cancelled before unbounded allocation or JSON parsing', async () => {
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(512001));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  await assert.rejects(
+    fetchAgentCompletion('https://example.invalid', {}, async () => new Response(stream)),
+    /provider_response_too_large/,
+  );
+  assert.equal(cancelled, true);
+});
+
+test('a timeout while reading an HTTP 200 body remains recoverable and never exposes the exception text', async () => {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.error(new DOMException('private-provider-detail', 'TimeoutError'));
+    },
+  });
+  await assert.rejects(
+    fetchAgentCompletion('https://example.invalid', {}, async () => new Response(stream)),
+    (error: unknown) =>
+      error instanceof ProviderCallError &&
+      error.code === 'provider_timeout' &&
+      !String(error).includes('private'),
+  );
+});
 
 test('provider refusals retain a safe status and never the response message or metadata', async () => {
   for (const status of [400, 401, 402, 403, 429, 502, 503]) {
@@ -43,6 +96,46 @@ test('the regional plan refusal is recognized without returning the upstream tex
   await assert.rejects(
     fetchAgentCompletion('https://example.invalid', {}, request),
     /provider_region_plan_required/,
+  );
+});
+test('rate limits preserve a numeric Retry-After without exposing provider data', async () => {
+  for (const [header, expected] of [
+    ['120', 120],
+    ['-1', null],
+    ['private-header', null],
+    ['999999', 999999],
+  ] as const) {
+    await assert.rejects(
+      fetchAgentCompletion('https://example.invalid', {}, async () =>
+        Response.json(
+          { error: { message: 'private' } },
+          { status: 429, headers: { 'retry-after': header } },
+        ),
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.retryAfterSeconds, expected);
+        assert.ok(!JSON.stringify(error).includes('private'));
+        return true;
+      },
+    );
+  }
+  const future = new Date(Date.now() + 120000).toUTCString();
+  await assert.rejects(
+    fetchAgentCompletion(
+      'https://example.invalid',
+      {},
+      async () => new Response('', { status: 503, headers: { 'retry-after': future } }),
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ProviderCallError);
+      assert.ok(
+        error.retryAfterSeconds !== null &&
+          error.retryAfterSeconds >= 119 &&
+          error.retryAfterSeconds <= 120,
+      );
+      return true;
+    },
   );
 });
 test('HTML and oversized error bodies retain HTTP status; error reads are bounded', async () => {

@@ -1,3 +1,4 @@
+import { researchRuntime } from './research-runtime.ts';
 import http from 'node:http';
 import { modelSettingsFromEnv } from '@ulysse/ai';
 import type { Connector } from '@ulysse/connectors';
@@ -43,6 +44,7 @@ const runtime = new WorkerRuntime({
   metrics,
   model: agentSettings.ULYSSE_ANALYSIS_MODE === 'rules' ? modelSettingsFromEnv() : undefined,
   agent,
+  research: researchRuntime(pool, agentSettings),
 });
 
 let ready = false;

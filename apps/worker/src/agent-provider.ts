@@ -91,6 +91,8 @@ export function agentProvider(model: string, route: AgentRoute, profileJson?: st
   const g = profile.generation;
   const parameters: Record<string, unknown> = { [g.tokenParameter]: g.maxOutputTokens };
   const requiredParameters = ['tools', 'tool_choice', g.tokenParameter];
+  if (profile.capabilities.structuredOutput)
+    requiredParameters.push('response_format', 'structured_outputs');
   if (g.temperature !== undefined) {
     parameters.temperature = g.temperature;
     requiredParameters.push('temperature');

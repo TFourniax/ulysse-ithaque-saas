@@ -9,6 +9,7 @@ import {
   HERMES_COMMIT,
   HermesExecutor,
   agentConfig,
+  fallbackProvider,
 } from '../src/agent-runtime.ts';
 import {
   agentProvider,
@@ -28,6 +29,32 @@ const hermesEnv = {
   AGENT_SESSION_ID: 'unit-test-session',
 };
 
+test('fallback configuration is a distinct approved European profile, never a caller-selected URL or global route', () => {
+  const env = {
+    ...hermesEnv,
+    AGENT_PROVIDER_ROUTE: 'openrouter-eu-zdr',
+    AGENT_FALLBACK_MODEL_ID: 'mistralai/mistral-small-2603',
+  };
+  const config = agentConfig(env);
+  const backup = fallbackProvider(config);
+  assert.ok(backup);
+  assert.equal(backup.url, 'https://eu.openrouter.ai/api/v1/chat/completions');
+  assert.equal(backup.provider.zdr, true);
+  assert.equal(backup.provider.data_collection, 'deny');
+  assert.deepEqual(backup.provider.only, ['mistral/eu']);
+  for (const invalid of [
+    { ...env, AGENT_PROVIDER_ROUTE: 'openrouter' },
+    { ...env, AGENT_FALLBACK_MODEL_ID: env.AGENT_MODEL_ID },
+    { ...env, AGENT_FALLBACK_MODEL_ID: 'https://foreign/model' },
+    { ...env, AGENT_FALLBACK_MODEL_ID: '', AGENT_FALLBACK_MODEL_PROFILE_JSON: '{}' },
+    {
+      ...env,
+      AGENT_FALLBACK_MODEL_PROFILE_JSON: JSON.stringify({ ...backup.profile, route: 'openrouter' }),
+    },
+  ])
+    assert.throws(() => agentConfig(invalid));
+});
+
 test('GLM keeps reasoning enabled, reserves its full output allowance and has a stable profile', () => {
   const route = agentProvider('z-ai/glm-5.3-flash', 'openrouter-eu-zdr');
   assert.deepEqual(route.parameters, {
@@ -37,7 +64,7 @@ test('GLM keeps reasoning enabled, reserves its full output allowance and has a 
     reasoning: { enabled: true, effort: 'low' },
   });
   assert.deepEqual(route.provider.only, ['inceptron/fp8']);
-  assert.equal(route.estimate(10000, 2000), 0.00238);
+  assert.equal(route.estimate(10000, 2000), 0.0036);
   assert.ok(route.estimate(MAX_AGENT_CONTEXT_BYTES + 2048, 8192) * 8 < 0.25);
   const profile = structuredClone(route.profile);
   // A model unknown to this release needs configuration only, not another code allowlist.
@@ -63,6 +90,10 @@ test('GLM keeps reasoning enabled, reserves its full output allowance and has a 
     route.profileHash,
   );
   assert.ok(modelProfiles().every((p) => p.route === 'openrouter-eu-zdr'));
+  profile.capabilities.structuredOutput = false;
+  const unstructured = agentProvider(profile.model, profile.route, JSON.stringify(profile));
+  assert.ok(!unstructured.requiredParameters.includes('response_format'));
+  assert.ok(!unstructured.requiredParameters.includes('structured_outputs'));
 });
 
 test('administrator profiles cannot smuggle secrets, URLs, plugins, fallbacks or unbounded settings', () => {
@@ -126,7 +157,7 @@ test('GLM preflight checks reasoning support, ZDR, parameters and pinned prices 
     model_id: p.profile.model,
     tag: 'inceptron/fp8',
     status: 0,
-    pricing: { prompt: '0.0000001', completion: '0.00000069' },
+    pricing: { prompt: '0.00000018', completion: '0.00000069' },
     supported_parameters: [...p.requiredParameters],
   };
   const request: typeof fetch = async (url, init) => {
@@ -142,8 +173,36 @@ test('GLM preflight checks reasoning support, ZDR, parameters and pinned prices 
     (await checkEuropeanProvider(p.profile.model, 'fake-key', request)).profileHash,
     p.profileHash,
   );
-  endpoint.supported_parameters = endpoint.supported_parameters.filter((x) => x !== 'tools');
-  await assert.rejects(checkEuropeanProvider(p.profile.model, 'fake-key', request), /parametres/);
+  // Reproduce the VPS refusal with the previous administrator profile. A deployed override
+  // must stay explicit, even when the bundled profile has been given a price margin.
+  const oldProfile = JSON.stringify({
+    ...p.profile,
+    prices: { prompt: 0.175, completion: 0.69 },
+  });
+  await assert.rejects(
+    checkEuropeanProvider(p.profile.model, 'fake-key', request, oldProfile),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /entree 0\.18 \(plafond 0\.175\)/);
+      assert.match(error.message, /sortie 0\.69 \(plafond 0\.69\)/);
+      assert.ok(!error.message.includes('fake-key'));
+      return true;
+    },
+  );
+  // Both price dimensions remain hard routing limits, rather than being raised automatically.
+  for (const field of ['prompt', 'completion'] as const) {
+    const previous = endpoint.pricing[field];
+    endpoint.pricing[field] = String(p.prices[field] / 1_000_000);
+    await checkEuropeanProvider(p.profile.model, 'fake-key', request);
+    endpoint.pricing[field] = String((p.prices[field] + 0.001) / 1_000_000);
+    await assert.rejects(checkEuropeanProvider(p.profile.model, 'fake-key', request), /Tarif/);
+    endpoint.pricing[field] = previous;
+  }
+  assert.deepEqual(p.provider.max_price, { prompt: 0.2, completion: 0.8 });
+  for (const missing of ['tools', 'response_format', 'structured_outputs']) {
+    endpoint.supported_parameters = p.requiredParameters.filter((x) => x !== missing);
+    await assert.rejects(checkEuropeanProvider(p.profile.model, 'fake-key', request), /parametres/);
+  }
   endpoint.supported_parameters = [...p.requiredParameters];
   const disabled = JSON.stringify({
     ...p.profile,
@@ -197,7 +256,14 @@ test('European preflight sends no inference, fails closed, and keeps credentials
     tag: 'amazon-bedrock/eu-west-1',
     status: 0,
     pricing: { prompt: '0.00000011', completion: '0.00000055' },
-    supported_parameters: ['tools', 'tool_choice', 'max_tokens', 'reasoning'],
+    supported_parameters: [
+      'tools',
+      'tool_choice',
+      'max_tokens',
+      'reasoning',
+      'response_format',
+      'structured_outputs',
+    ],
   };
   let calls = 0;
   let status = 200;
@@ -248,7 +314,7 @@ test('live activation is explicit and fails closed before any network call', () 
       ...hermesEnv,
       ULYSSE_ANALYSIS_MODE: 'hermes-live',
       OPENROUTER_API_KEY: 'test-only-never-transmitted',
-      AGENT_RUN_BUDGET_USD: '1',
+      AGENT_RUN_BUDGET_USD: '2.01',
     }),
   );
   assert.throws(() =>
@@ -259,6 +325,30 @@ test('live activation is explicit and fails closed before any network call', () 
       NODE_ENV: 'production',
     }),
   );
+});
+
+test('authorized operating envelopes accept 2/20/100 USD and reject larger or invalid settings', () => {
+  const env = {
+    ...hermesEnv,
+    ULYSSE_ANALYSIS_MODE: 'hermes-live',
+    OPENROUTER_API_KEY: 'test-only-never-transmitted',
+    AGENT_RUN_BUDGET_USD: '2',
+    AGENT_SESSION_BUDGET_USD: '20',
+    AGENT_MONTH_BUDGET_USD: '100',
+  };
+  const c = agentConfig(env);
+  assert.deepEqual(
+    [c.AGENT_RUN_BUDGET_USD, c.AGENT_SESSION_BUDGET_USD, c.AGENT_MONTH_BUDGET_USD],
+    [2, 20, 100],
+  );
+  assert.equal(c.AGENT_SESSION_ID, hermesEnv.AGENT_SESSION_ID);
+  for (const [name, limit] of [
+    ['AGENT_RUN_BUDGET_USD', 2],
+    ['AGENT_SESSION_BUDGET_USD', 20],
+    ['AGENT_MONTH_BUDGET_USD', 100],
+  ] as const)
+    for (const value of ['0', '-1', 'NaN', 'Infinity', String(limit + 0.01)])
+      assert.throws(() => agentConfig({ ...env, [name]: value }));
 });
 
 test('a simulated model endpoint is reserved to hermes-stub and never labelled live', () => {

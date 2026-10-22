@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { setTimeout as wait } from 'node:timers/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DomainError } from '@ulysse/domain';
 import type {
@@ -9,6 +10,7 @@ import type {
   Opportunity,
   Recommendation,
   TenantTx,
+  WorkflowResult,
 } from '@ulysse/domain';
 import {
   AGENT_RULE_ID,
@@ -32,15 +34,29 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
 import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts';
-import { fetchAgentCompletion, ProviderCallError } from './agent-errors.ts';
+import { fetchAgentCompletion, ProviderCallError, providerGatewayFailure } from './agent-errors.ts';
+import { workflowRetryDelay, WORKFLOW_MODEL_CALLS } from './workflow-retry.ts';
+import {
+  inspectBuyerCitations,
+  inspectWorkflowCompletion,
+  workflowRepairPrompt,
+  workflowResponseFormat,
+  retainSupportedBuyerSections,
+} from './workflow-response.ts';
+import {
+  BUYER_REVIEW_INSTRUCTIONS,
+  BUYER_REVIEW_VERSION,
+  buyerReviewMessages,
+  workflowCitations,
+} from './buyer-review.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
-export const EXECUTION_CONTRACT = 'ulysse-execution-v2';
+export const EXECUTION_CONTRACT = 'ulysse-execution-v4';
 /** sha256 of services/hermes/instructions.txt (LF); a unit test keeps both identical. */
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
 export const WORKFLOW_INSTRUCTIONS_SHA256 =
-  '22f1a1ef4c4fdd91aa8915af0b5dd12702d8c3e104d19ad44f0c5848cd18b410';
+  'cf7db9272ba6297db84b8a562b418d38c7d61555275081f382ffbeaeb2516a8a';
 export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
 /** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
 export const MAX_ATTEMPTS = 2;
@@ -62,10 +78,12 @@ const Config = z.object({
   OPENROUTER_API_KEY: z.string().min(16).optional(),
   AGENT_MODEL_ID: ModelId.optional(),
   AGENT_MODEL_PROFILE_JSON: z.string().optional(),
+  AGENT_FALLBACK_MODEL_ID: ModelId.optional(),
+  AGENT_FALLBACK_MODEL_PROFILE_JSON: z.string().optional(),
   AGENT_PROVIDER_ROUTE: z.enum(['openrouter', 'openrouter-eu-zdr']).default('openrouter'),
-  AGENT_RUN_BUDGET_USD: z.coerce.number().positive().max(0.25).optional(),
-  AGENT_SESSION_BUDGET_USD: z.coerce.number().positive().max(2).optional(),
-  AGENT_MONTH_BUDGET_USD: z.coerce.number().positive().max(10).optional(),
+  AGENT_RUN_BUDGET_USD: z.coerce.number().positive().max(2).optional(),
+  AGENT_SESSION_BUDGET_USD: z.coerce.number().positive().max(20).optional(),
+  AGENT_MONTH_BUDGET_USD: z.coerce.number().positive().max(100).optional(),
   AGENT_SESSION_ID: z.string().min(8).max(100).optional(),
   /** hermes-stub only: OpenAI-compatible simulated model endpoint of the local stack or CI. */
   AGENT_STUB_PROVIDER_URL: z.url().optional(),
@@ -79,6 +97,7 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
     throw new Error('Un profil exige AGENT_MODEL_ID');
   if (c.AGENT_MODEL_ID)
     agentProvider(c.AGENT_MODEL_ID, c.AGENT_PROVIDER_ROUTE, c.AGENT_MODEL_PROFILE_JSON);
+  fallbackProvider(c);
   if (c.ULYSSE_ANALYSIS_MODE === 'hermes-live' || c.ULYSSE_ANALYSIS_MODE === 'hermes-stub') {
     const live = c.ULYSSE_ANALYSIS_MODE === 'hermes-live';
     if (
@@ -112,6 +131,23 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
   }
   return c;
 }
+export function fallbackProvider(config: AgentConfig) {
+  if (!config.AGENT_FALLBACK_MODEL_ID) {
+    if (config.AGENT_FALLBACK_MODEL_PROFILE_JSON) throw new Error('Profil de secours sans modele');
+    return undefined;
+  }
+  if (
+    config.AGENT_PROVIDER_ROUTE !== 'openrouter-eu-zdr' ||
+    config.AGENT_FALLBACK_MODEL_ID === config.AGENT_MODEL_ID ||
+    !config.AGENT_MODEL_ID
+  )
+    throw new Error('Le secours exige deux modeles distincts sur la route Europe/ZDR');
+  return agentProvider(
+    config.AGENT_FALLBACK_MODEL_ID,
+    config.AGENT_PROVIDER_ROUTE,
+    config.AGENT_FALLBACK_MODEL_PROFILE_JSON,
+  );
+}
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 const Run = z.object({
   id: z.uuid(),
@@ -119,7 +155,18 @@ const Run = z.object({
   subject_id: z.uuid(),
   input_hash: z.string(),
   model: z.string(),
-  snapshot: z.object({ modelProfileHash: z.string().nullable().optional() }),
+  snapshot: z.object({
+    modelProfileHash: z.string().nullable().optional(),
+    fallbackModel: z.string().nullable().optional(),
+    fallbackProfileHash: z.string().nullable().optional(),
+    fallbackEligible: z.boolean().optional(),
+    formatRepairAttempted: z.boolean().optional(),
+    reviewRepairAttempted: z.boolean().optional(),
+    providerRetryCount: z.number().int().min(0).max(2).optional(),
+    providerRetry: z
+      .object({ notBefore: z.iso.datetime().nullable(), phase: z.string().optional() })
+      .optional(),
+  }),
   mode: z.enum(['simulated', 'hermes-live', 'hermes-stub']),
   status: z.string(),
   expires_at: z.string(),
@@ -199,7 +246,9 @@ export class HermesExecutor implements AgentExecutor {
         'content-type': 'application/json',
       },
       body: JSON.stringify(request),
-      signal: signal ?? AbortSignal.timeout(request.timeoutMs + 5000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(request.timeoutMs + 5000)])
+        : AbortSignal.timeout(request.timeoutMs + 5000),
     });
     if (!response.ok) throw new Error(`hermes_http_${String(response.status)}`);
     return response.json();
@@ -214,6 +263,7 @@ export class AgentRuntime {
   readonly workflows: WorkflowRuntime;
   readonly log: AgentLog | undefined;
   readonly provider: ReturnType<typeof agentProvider> | undefined;
+  readonly fallback: ReturnType<typeof agentProvider> | undefined;
   constructor(
     pool: Pool,
     config: AgentConfig,
@@ -229,6 +279,7 @@ export class AgentRuntime {
           config.AGENT_MODEL_PROFILE_JSON,
         )
       : undefined;
+    this.fallback = fallbackProvider(config);
     this.executor = executor;
     this.workflows = new WorkflowRuntime(
       pool,
@@ -239,6 +290,8 @@ export class AgentRuntime {
         modelProfile: this.provider?.profile,
         modelProfileHash: this.provider?.profileHash,
         modelSettings: this.provider?.executionSettings,
+        fallbackModel: this.fallback?.profile.model,
+        fallbackProfileHash: this.fallback?.profileHash,
         session: config.AGENT_SESSION_ID ?? 'simulation',
         hermesVersion: HERMES_COMMIT,
         budgets: {
@@ -248,6 +301,7 @@ export class AgentRuntime {
         },
       },
       executor,
+      (capability, draft, signal) => this.reviewBuyer(capability, draft, signal),
     );
     this.log = log;
   }
@@ -863,7 +917,109 @@ export class AgentRuntime {
     });
   }
 
-  async inference(capability: string, input: unknown): Promise<unknown> {
+  private async deferWorkflowProvider(
+    ctx: Context,
+    runId: string,
+    error: ProviderCallError,
+    nextCost: number,
+  ): Promise<number | null> {
+    return this.store.transaction(ctx, async (_tx, sql) => {
+      const row = await sql.query(
+        'SELECT * FROM agent_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE',
+        [ctx.tenantId, runId],
+      );
+      const run = Run.parse(row.rows[0]);
+      if (run.status !== 'running') return null;
+      const retries = run.snapshot.providerRetryCount ?? 0;
+      const delay = workflowRetryDelay(error, retries, Date.parse(run.expires_at) - Date.now());
+      const allowed =
+        delay !== null &&
+        run.model_calls < WORKFLOW_MODEL_CALLS &&
+        run.committed_usd + nextCost <= run.reserved_usd;
+      const metadata = {
+        code: error.code,
+        httpStatus: error.httpStatus,
+        retryAfterSeconds: error.retryAfterSeconds,
+        attempts: retries + (allowed ? 1 : 0),
+        phase: allowed ? 'waiting' : 'stopped',
+        delaySeconds: allowed ? delay / 1000 : null,
+        notBefore: allowed ? new Date(Date.now() + delay).toISOString() : null,
+      };
+      await sql.query(
+        "UPDATE agent_runs SET snapshot=snapshot || jsonb_build_object('providerRetryCount',$3::integer,'providerRetry',$4::jsonb) WHERE tenant_id=$1 AND id=$2",
+        [ctx.tenantId, runId, metadata.attempts, JSON.stringify(metadata)],
+      );
+      if (!allowed) return null;
+      await sql.query(
+        "UPDATE workflow_requests SET error_code='provider_retry_wait',revision=revision+1 WHERE tenant_id=$1 AND agent_run_id=$2 AND status='running'",
+        [ctx.tenantId, runId],
+      );
+      await this.store.event(
+        sql,
+        ctx.tenantId,
+        runId,
+        'error',
+        `Reprise fournisseur ${metadata.attempts}/2 dans ${Math.ceil(delay / 1000)} s (${error.code})`,
+      );
+      return delay;
+    });
+  }
+
+  private async reviewBuyer(
+    capability: string,
+    draft: WorkflowResult,
+    signal?: AbortSignal,
+  ): Promise<WorkflowResult> {
+    const ctx = await this.store.resolve(hash(capability));
+    ensure(ctx, 'FORBIDDEN', 'inactive capability');
+    const active = await this.store.transaction(ctx, async (_tx, sql) => {
+      const claimed = await sql.query<{ id: string; model: string }>(
+        "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{buyerReview}',$3::jsonb) WHERE tenant_id=$1 AND capability_hash=$2 AND workflow_kind='buyer' AND status='running' AND expires_at>clock_timestamp() AND NOT (snapshot ? 'buyerReview') RETURNING id,model",
+        [
+          ctx.tenantId,
+          hash(capability),
+          JSON.stringify({ version: BUYER_REVIEW_VERSION, status: 'running' }),
+        ],
+      );
+      ensure(claimed.rows[0], 'FORBIDDEN', 'review already attempted');
+      await this.store.event(
+        sql,
+        ctx.tenantId,
+        claimed.rows[0].id,
+        'validating',
+        'Relecture du diagnostic à partir des preuves consultées',
+      );
+      return claimed.rows[0];
+    });
+    const payload = await this.infer(
+      capability,
+      { model: active.model, messages: buyerReviewMessages(draft) },
+      signal,
+      workflowCitations(draft),
+    );
+    const inspected = inspectWorkflowCompletion(payload, 'buyer');
+    if (!inspected?.result || inspected.diagnostics.code !== 'validated')
+      throw new ProviderCallError('result_evidence_invalid', null);
+    await this.store.transaction(ctx, async (_tx, sql) => {
+      await sql.query(
+        "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{buyerReview,status}','\"completed\"'::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+        [ctx.tenantId, active.id],
+      );
+    });
+    return inspected.result;
+  }
+
+  async inference(capability: string, input: unknown, signal?: AbortSignal): Promise<unknown> {
+    return this.infer(capability, input, signal, null);
+  }
+
+  private async infer(
+    capability: string,
+    input: unknown,
+    signal: AbortSignal | undefined,
+    review: readonly string[] | null,
+  ): Promise<unknown> {
+    signal?.throwIfAborted();
     const ctx = await this.store.resolve(hash(capability));
     ensure(ctx, 'FORBIDDEN', 'inactive capability');
     const body = record(input);
@@ -876,33 +1032,70 @@ export class AgentRuntime {
     const messages = body.messages.map((m: unknown) => record(m));
     assertTextMessages(messages);
     const bytes = Buffer.byteLength(JSON.stringify(body));
-    const provider = this.provider;
+    const requestedModel = body.model ?? this.config.AGENT_MODEL_ID;
+    const provider =
+      requestedModel === this.config.AGENT_MODEL_ID
+        ? this.provider
+        : requestedModel === this.fallback?.profile.model
+          ? this.fallback
+          : undefined;
     ensure(provider && this.config.AGENT_MODEL_ID, 'INVALID_INPUT', 'model absent');
     ensure(bytes <= provider.profile.maxContextBytes, 'INVALID_INPUT', 'context limit');
-    // byte count is a conservative upper bound on text tokens; schema/role overhead is included.
-    // Fixed model, no provider/model fallback, maximum prices pinned in request routing.
-    const upperCost = provider.estimate(bytes + 2048, provider.profile.generation.maxOutputTokens);
-    const { runId, mode } = await this.store.transaction(ctx, async (tx, sql) => {
+    const {
+      runId,
+      mode,
+      workflowKind,
+      evidence,
+      continuationMessages,
+      preparedMessages,
+      responseFormat,
+      upperCost,
+      remainingMs,
+    } = await this.store.transaction(ctx, async (tx, sql) => {
       const query = await sql.query(
         'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
         [ctx.tenantId, hash(capability)],
       );
       const run = Run.parse(query.rows[0]);
+      const retry = run.snapshot.providerRetry;
+      ensure(retry?.phase !== 'stopped', 'FORBIDDEN', 'provider retries exhausted');
+      ensure(
+        !retry?.notBefore || Date.parse(retry.notBefore) <= Date.now(),
+        'FORBIDDEN',
+        'provider cooldown',
+      );
       ensure(
         run.mode !== 'simulated' &&
           run.mode === this.config.ULYSSE_ANALYSIS_MODE &&
-          run.model === this.config.AGENT_MODEL_ID &&
-          run.snapshot.modelProfileHash === provider.profileHash &&
           run.status === 'running' &&
-          run.model_calls < 8 &&
+          run.model_calls < (run.workflow_kind === 'deal' ? 8 : WORKFLOW_MODEL_CALLS) &&
           Date.parse(run.expires_at) > Date.now(),
         'FORBIDDEN',
         'model limit',
       );
+      const switching = run.model !== provider.profile.model;
+      if (switching) {
+        ensure(
+          run.workflow_kind !== 'deal' &&
+            provider === this.fallback &&
+            run.model === this.provider?.profile.model &&
+            run.snapshot.modelProfileHash === this.provider.profileHash &&
+            run.snapshot.fallbackModel === provider.profile.model &&
+            run.snapshot.fallbackProfileHash === provider.profileHash &&
+            run.snapshot.fallbackEligible === true,
+          'FORBIDDEN',
+          'unauthorized model switch',
+        );
+      } else
+        ensure(
+          run.snapshot.modelProfileHash === provider.profileHash,
+          'FORBIDDEN',
+          'model profile changed',
+        );
       if (run.workflow_kind === 'deal') {
         const { opportunity: o, doctrine: d, context: c } = await this.current(tx, run.subject_id);
         ensure(agentInputHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
-      } else await this.workflows.assertCurrent(ctx, tx, sql, run.subject_id, run.input_hash);
+      }
       // Deterministic authority over what reaches the provider: the versioned Ulysse
       // instructions as the only system message, and only the Ulysse tools.
       const system = messages.filter((m) => m.role === 'system' || m.role === 'developer');
@@ -911,12 +1104,22 @@ export class AgentRuntime {
           messages[0] === system[0] &&
           typeof system[0]?.content === 'string' &&
           sha256(system[0].content) ===
-            (run.workflow_kind === 'deal'
-              ? AGENT_INSTRUCTIONS_SHA256
-              : WORKFLOW_INSTRUCTIONS_SHA256),
+            (review
+              ? sha256(BUYER_REVIEW_INSTRUCTIONS)
+              : run.workflow_kind === 'deal'
+                ? AGENT_INSTRUCTIONS_SHA256
+                : WORKFLOW_INSTRUCTIONS_SHA256),
         'FORBIDDEN',
         'foreign instructions',
       );
+      if (review)
+        ensure(
+          run.workflow_kind === 'buyer' &&
+            body.tools === undefined &&
+            review.every((ref) => run.retrieved.includes(ref)),
+          'FORBIDDEN',
+          'invalid review evidence',
+        );
       const allowedTools = run.workflow_kind === 'deal' ? TOOL_NAMES : WORKFLOW_TOOLS;
       if (Array.isArray(body.tools)) {
         const names = body.tools.map((t: unknown) => record(record(t).function).name);
@@ -927,47 +1130,234 @@ export class AgentRuntime {
           'foreign tools',
         );
       }
+      const evidence =
+        run.workflow_kind === 'deal'
+          ? null
+          : await this.workflows.prepareEvidence(
+              ctx,
+              tx,
+              sql,
+              run.subject_id,
+              run.input_hash,
+              // Reserve space for the response schema and tool/envelope serialization.
+              provider.profile.maxContextBytes - Buffer.byteLength(JSON.stringify(body)) - 12000,
+              review ? { cited: review, read: run.retrieved } : undefined,
+            );
+      // Mandatory evidence is supplied as untrusted data, never as a system instruction
+      // or an invented model/tool message (which could break signed reasoning replay).
+      // A signature from one model cannot authorize/replay reasoning on another.
+      // Also applies to the independent review's in-memory format-repair transcript.
+      const continuationMessages = switching
+        ? messages.map((message) =>
+            Object.fromEntries(
+              Object.entries(message).filter(
+                ([field]) =>
+                  !['reasoning', 'reasoning_content', 'reasoning_details'].includes(field),
+              ),
+            ),
+          )
+        : messages;
+      let preparedMessages = evidence
+        ? [continuationMessages[0], evidence.message, ...continuationMessages.slice(1)]
+        : continuationMessages;
+      const responseFormat =
+        run.workflow_kind !== 'deal' && evidence && provider.profile.capabilities.structuredOutput
+          ? workflowResponseFormat(
+              run.workflow_kind,
+              review ? evidence.references : [...run.retrieved, ...evidence.references],
+            )
+          : undefined;
+      let preparedBytes = Buffer.byteLength(
+        JSON.stringify({ ...body, messages: preparedMessages, response_format: responseFormat }),
+      );
+      let catalogCount = evidence?.catalogCount ?? 0;
+      // Discovery metadata is optional: never reject an otherwise valid analysis
+      // merely because its catalog does not fit beside the transcript/schema.
+      if (evidence && preparedBytes > provider.profile.maxContextBytes) {
+        preparedMessages = [
+          continuationMessages[0],
+          evidence.messageWithoutCatalog,
+          ...continuationMessages.slice(1),
+        ];
+        preparedBytes = Buffer.byteLength(
+          JSON.stringify({
+            ...body,
+            messages: preparedMessages,
+            response_format: responseFormat,
+          }),
+        );
+        catalogCount = 0;
+      }
+      ensure(
+        preparedMessages.length <= 32 && preparedBytes <= provider.profile.maxContextBytes,
+        'INVALID_INPUT',
+        'context limit',
+      );
+      // Include delivered source text and the native schema in the per-call reservation.
+      const upperCost = provider.estimate(
+        preparedBytes + 2048,
+        provider.profile.generation.maxOutputTokens,
+      );
       ensure(run.committed_usd + upperCost <= run.reserved_usd, 'FORBIDDEN', 'budget limit');
+      if (switching) {
+        await sql.query(
+          "UPDATE agent_runs SET model=$3,error_code=NULL,snapshot=snapshot || jsonb_build_object('modelProfile',$4::jsonb,'modelProfileHash',$5::text,'fallbackUsed',true) WHERE tenant_id=$1 AND id=$2",
+          [
+            ctx.tenantId,
+            run.id,
+            provider.profile.model,
+            JSON.stringify(provider.profile),
+            provider.profileHash,
+          ],
+        );
+        await this.store.event(
+          sql,
+          ctx.tenantId,
+          run.id,
+          'model',
+          `Modèle de secours Europe/ZDR : ${provider.profile.model}`,
+        );
+      }
       await sql.query(
         "UPDATE agent_runs SET model_calls=model_calls+1,uncertain_calls=uncertain_calls+1,committed_usd=committed_usd+$3,cost_state='unknown' WHERE tenant_id=$1 AND id=$2",
         [ctx.tenantId, run.id, upperCost],
       );
+      if (evidence) {
+        await sql.query(
+          "UPDATE agent_runs SET retrieved=ARRAY(SELECT DISTINCT unnest(retrieved || $3::text[])),snapshot=jsonb_set(snapshot,'{workflowEvidence}',$4::jsonb) WHERE tenant_id=$1 AND id=$2",
+          [
+            ctx.tenantId,
+            run.id,
+            evidence.references,
+            JSON.stringify({
+              sourceCount: evidence.sourceCount,
+              catalogCount,
+              referenceCount: evidence.references.length,
+              offerReferenceCount: evidence.offerReferences.length,
+              competitorReferenceCount: evidence.competitorReferences.length,
+              inputBytes: preparedBytes,
+              maxContextBytes: provider.profile.maxContextBytes,
+              structuredOutput: responseFormat !== undefined,
+            }),
+          ],
+        );
+        if (retry) {
+          await sql.query(
+            "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{providerRetry,phase}','\"retrying\"'::jsonb) WHERE tenant_id=$1 AND id=$2",
+            [ctx.tenantId, run.id],
+          );
+          await sql.query(
+            "UPDATE workflow_requests SET error_code=NULL,revision=revision+1 WHERE tenant_id=$1 AND agent_run_id=$2 AND status='running' AND error_code='provider_retry_wait'",
+            [ctx.tenantId, run.id],
+          );
+        }
+      }
       await this.store.event(
         sql,
         ctx.tenantId,
         run.id,
         'model',
         run.mode === 'hermes-live'
-          ? `Appel modèle réservé : ${this.config.AGENT_MODEL_ID}, ${this.config.AGENT_PROVIDER_ROUTE}`
+          ? `Appel modèle réservé : ${provider.profile.model}, ${this.config.AGENT_PROVIDER_ROUTE}`
           : 'Appel au modèle simulé (aucun fournisseur)',
       );
-      return { runId: run.id, mode: run.mode };
+      return {
+        runId: run.id,
+        mode: run.mode,
+        workflowKind: run.workflow_kind,
+        evidence,
+        continuationMessages,
+        preparedMessages,
+        responseFormat,
+        upperCost,
+        remainingMs: Math.max(
+          1,
+          Math.min(
+            run.workflow_kind === 'deal' ? 45000 : 90000,
+            Date.parse(run.expires_at) - Date.now(),
+          ),
+        ),
+      };
     });
     const live = mode === 'hermes-live';
     // The provider key only ever leaves for OpenRouter; the stub endpoint receives none.
-    const payload = await fetchAgentCompletion(
-      live ? provider.url : (this.config.AGENT_STUB_PROVIDER_URL ?? 'invalid:'),
-      {
-        method: 'POST',
-        // A regional request must never follow a redirect to another region or host.
-        redirect: 'error',
-        headers: {
-          authorization: live ? `Bearer ${this.config.OPENROUTER_API_KEY ?? ''}` : 'Bearer none',
-          'content-type': 'application/json',
+    let payload: Record<string, unknown>;
+    try {
+      payload = await fetchAgentCompletion(
+        live ? provider.url : (this.config.AGENT_STUB_PROVIDER_URL ?? 'invalid:'),
+        {
+          method: 'POST',
+          // A regional request must never follow a redirect to another region or host.
+          redirect: 'error',
+          headers: {
+            authorization: live ? `Bearer ${this.config.OPENROUTER_API_KEY ?? ''}` : 'Bearer none',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: provider.profile.model,
+            messages: preparedMessages,
+            response_format: responseFormat,
+            tools: body.tools,
+            tool_choice: body.tools === undefined ? undefined : 'auto',
+            stream: false,
+            ...provider.parameters,
+            provider: provider.provider,
+          }),
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(remainingMs)])
+            : AbortSignal.timeout(remainingMs),
         },
-        body: JSON.stringify({
-          model: this.config.AGENT_MODEL_ID,
-          messages: body.messages,
-          tools: body.tools,
-          tool_choice: body.tools === undefined ? undefined : 'auto',
-          stream: false,
-          ...provider.parameters,
-          provider: provider.provider,
-        }),
-        signal: AbortSignal.timeout(45000),
-      },
-    ).catch(async (error: unknown) => {
+      );
+    } catch (error) {
       if (error instanceof ProviderCallError) {
+        const nativeFallback =
+          workflowKind !== 'deal' &&
+          this.fallback &&
+          provider !== this.fallback &&
+          [
+            'provider_http_429',
+            'provider_http_500',
+            'provider_http_502',
+            'provider_http_503',
+            'provider_http_504',
+            'provider_timeout',
+            'provider_transport_error',
+          ].includes(error.code);
+        if (nativeFallback) {
+          await this.store.transaction(ctx, async (_tx, sql) => {
+            await sql.query(
+              "UPDATE agent_runs SET snapshot=snapshot || jsonb_build_object('fallbackEligible',true,'fallbackReason',$3::text) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+              [ctx.tenantId, runId, error.code],
+            );
+          });
+          // The separate reviewer has no Hermes conversation. It uses the same single,
+          // administrator-approved backup, with all checks and reservations reapplied.
+          if (review)
+            return this.infer(
+              capability,
+              { ...body, model: this.fallback.profile.model },
+              signal,
+              review,
+            );
+        }
+        if (
+          !nativeFallback &&
+          workflowKind !== 'deal' &&
+          ['provider_http_429', 'provider_http_503'].includes(error.code)
+        ) {
+          const delay = await this.deferWorkflowProvider(ctx, runId, error, upperCost);
+          if (delay !== null) {
+            await wait(delay, undefined, { signal });
+            // Resume this same turn. Authorization, freshness, deadline, call cap and
+            // cost are rechecked; the refused transmission keeps its unknown provision.
+            return this.infer(
+              capability,
+              { ...body, messages: continuationMessages },
+              signal,
+              review,
+            );
+          }
+        }
         await this.store.transaction(ctx, async (_tx, sql) => {
           await sql.query(
             "UPDATE agent_runs SET error_code=coalesce(error_code,$3) WHERE tenant_id=$1 AND id=$2 AND status='running'",
@@ -981,7 +1371,15 @@ export class AgentRuntime {
         );
       }
       throw error;
-    });
+    }
+    if (provider === this.provider && this.fallback && workflowKind !== 'deal') {
+      await this.store.transaction(ctx, async (_tx, sql) => {
+        await sql.query(
+          "UPDATE agent_runs SET error_code=NULL,snapshot=jsonb_set(snapshot,'{fallbackEligible}','false'::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+          [ctx.tenantId, runId],
+        );
+      });
+    }
     const usage = z
       .object({
         prompt_tokens: z.number().int().nonnegative(),
@@ -995,7 +1393,7 @@ export class AgentRuntime {
       // Record what was charged even above the bound, then refuse to continue.
       await this.store.transaction(ctx, async (_tx, sql) => {
         await sql.query(
-          "UPDATE agent_runs SET committed_usd=committed_usd-$3+$4,uncertain_calls=uncertain_calls-1,estimated_calls=estimated_calls+CASE WHEN $5='estimated' THEN 1 ELSE 0 END,cost_state=CASE WHEN uncertain_calls>1 THEN 'unknown' WHEN estimated_calls>0 OR $5='estimated' THEN 'estimated' ELSE 'declared' END,input_tokens=input_tokens+$6,output_tokens=output_tokens+$7 WHERE tenant_id=$1 AND id=$2",
+          "UPDATE agent_runs SET committed_usd=committed_usd-$3+$4,reserved_usd=CASE WHEN status IN ('running','validating') THEN reserved_usd ELSE committed_usd-$3+$4 END,uncertain_calls=uncertain_calls-1,estimated_calls=estimated_calls+CASE WHEN $5='estimated' THEN 1 ELSE 0 END,cost_state=CASE WHEN uncertain_calls>1 THEN 'unknown' WHEN estimated_calls>0 OR $5='estimated' THEN 'estimated' ELSE 'declared' END,input_tokens=input_tokens+$6,output_tokens=output_tokens+$7 WHERE tenant_id=$1 AND id=$2",
           [
             ctx.tenantId,
             runId,
@@ -1009,10 +1407,147 @@ export class AgentRuntime {
       });
       ensure(actual <= upperCost, 'INVALID_INPUT', 'provider exceeded reservation');
     }
+    if (workflowKind !== 'deal') {
+      const inspected = inspectWorkflowCompletion(payload, workflowKind);
+      if (inspected) {
+        const d =
+          review && inspected.result && evidence
+            ? (inspectBuyerCitations(inspected.result, evidence) ?? inspected.diagnostics)
+            : inspected.diagnostics;
+        await this.store.transaction(ctx, async (_tx, sql) => {
+          await sql.query(
+            "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{workflowFormat}',$3::jsonb) WHERE tenant_id=$1 AND id=$2",
+            [ctx.tenantId, runId, JSON.stringify(d)],
+          );
+        });
+        if (d.code !== 'validated') {
+          const repairBody = {
+            model: provider.profile.model,
+            messages: [
+              // The reviewer has no tools or external state: its latest response
+              // replaces the original draft. Replaying both can make the repair
+              // larger than the context limit even when the review itself fits.
+              ...(review
+                ? buyerReviewMessages(inspected.result ?? inspected.text)
+                : [...continuationMessages, inspected.assistant]),
+              {
+                role: 'user',
+                content: workflowRepairPrompt(d, workflowKind, evidence ?? undefined),
+              },
+            ],
+          };
+          // Recursive inference rebuilds the evidence exactly once; eligibility must
+          // nevertheless include its bytes and message slot before attempting repair.
+          const repairMessages = evidence
+            ? [repairBody.messages[0], evidence.message, ...repairBody.messages.slice(1)]
+            : repairBody.messages;
+          const repairBytes = Buffer.byteLength(
+            JSON.stringify({
+              ...repairBody,
+              messages: repairMessages,
+              response_format: responseFormat,
+            }),
+          );
+          const repairCost = provider.estimate(
+            repairBytes + 2048,
+            provider.profile.generation.maxOutputTokens,
+          );
+          const retry = await this.store.transaction(ctx, async (_tx, sql) => {
+            const marker = review ? 'reviewRepairAttempted' : 'formatRepairAttempted';
+            // Decide under the row lock and record only fixed reasons/counts.
+            // A skipped repair must be diagnosable without storing model text.
+            const current = Run.parse(
+              (
+                await sql.query(
+                  'SELECT * FROM agent_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE',
+                  [ctx.tenantId, runId],
+                )
+              ).rows[0],
+            );
+            const reason =
+              current.snapshot[marker] === true
+                ? 'already_attempted'
+                : !inspected.repairable
+                  ? 'provider_refused'
+                  : repairMessages.length > 32
+                    ? 'message_limit'
+                    : repairBytes > provider.profile.maxContextBytes
+                      ? 'context_limit'
+                      : current.status !== 'running'
+                        ? 'run_inactive'
+                        : current.model_calls >= WORKFLOW_MODEL_CALLS
+                          ? 'call_limit'
+                          : Date.parse(current.expires_at) <= Date.now() + 10000
+                            ? 'deadline'
+                            : current.committed_usd + repairCost > current.reserved_usd
+                              ? 'budget_limit'
+                              : 'requested';
+            await sql.query(
+              "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{workflowRepair}',$3::jsonb) WHERE tenant_id=$1 AND id=$2",
+              [
+                ctx.tenantId,
+                runId,
+                JSON.stringify({
+                  phase: review ? 'review' : 'generation',
+                  strategy: review ? 'replace_review_draft' : 'continue_generation',
+                  reason,
+                  inputBytes: repairBytes,
+                  maxContextBytes: provider.profile.maxContextBytes,
+                  messageCount: repairMessages.length,
+                }),
+              ],
+            );
+            if (reason !== 'requested') return false;
+            const reserved = await sql.query(
+              "UPDATE agent_runs SET snapshot=snapshot || jsonb_build_object($5::text,true,'initialWorkflowFormat',$4::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running' AND model_calls<12 AND expires_at>clock_timestamp()+interval '10 seconds' AND committed_usd+$3<=reserved_usd AND (snapshot->>$5) IS DISTINCT FROM 'true' RETURNING id",
+              [ctx.tenantId, runId, repairCost, JSON.stringify(d), marker],
+            );
+            return reserved.rowCount === 1;
+          });
+          // The normal gateway rechecks authorization, versions, lease, route and reservation.
+          // The persistent marker prevents another repair even across concurrent/replayed requests.
+          if (retry) return this.infer(capability, repairBody, signal, review);
+          if (review && inspected.result && evidence && d.code === 'result_evidence_invalid') {
+            const partial = retainSupportedBuyerSections(inspected.result, evidence);
+            if (partial) {
+              await this.store.transaction(ctx, async (_tx, sql) => {
+                await sql.query(
+                  "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{buyerReview,partial}','true'::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+                  [ctx.tenantId, runId],
+                );
+              });
+              return {
+                ...payload,
+                choices: [
+                  {
+                    finish_reason: 'stop',
+                    message: {
+                      role: 'assistant',
+                      content: JSON.stringify(partial),
+                    },
+                  },
+                ],
+              };
+            }
+          }
+          await this.store.transaction(ctx, async (_tx, sql) => {
+            await sql.query(
+              "UPDATE agent_runs SET error_code=coalesce(error_code,$3) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+              [ctx.tenantId, runId, d.code],
+            );
+            await this.store.event(sql, ctx.tenantId, runId, 'error', d.code);
+          });
+          throw new ProviderCallError(d.code, null);
+        }
+      }
+    }
     // Internal reasoning is never persisted; only structured tool events and final result are kept.
     return payload;
   }
   async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const controller = new AbortController();
+    const disconnected = () => controller.abort();
+    res.once('close', disconnected);
     try {
       ensure(
         req.method === 'POST' && typeof req.headers.authorization === 'string',
@@ -1033,13 +1568,14 @@ export class AgentRuntime {
       const output = tool
         ? await this.tool(token, tool, body)
         : req.url === '/agent/v1/chat/completions'
-          ? await this.inference(token, body)
+          ? await this.inference(token, body, controller.signal)
           : (() => {
               throw new Error('not_found');
             })();
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(output));
     } catch (error) {
+      if (res.destroyed) return;
       // Hermes probes local-provider metadata with GET (/api/tags, /v1/props…): refused
       // like any non-inference call, but not logged, so real refusals stay visible.
       if (req.method !== 'GET')
@@ -1051,10 +1587,11 @@ export class AgentRuntime {
           },
           'agent gateway refused a call',
         );
-      res.writeHead(403, { 'content-type': 'application/json' });
-      res.end(
-        '{"error":{"message":"execution unavailable, invalid or limited","type":"permission_error"}}',
-      );
+      const failure = providerGatewayFailure(error);
+      res.writeHead(failure.status, failure.headers);
+      res.end(JSON.stringify(failure.body));
+    } finally {
+      res.off('close', disconnected);
     }
   }
 }

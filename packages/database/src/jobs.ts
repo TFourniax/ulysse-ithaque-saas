@@ -13,6 +13,7 @@ export const QUEUES = {
   tenantMaintain: 'ulysse.tenant-maintain',
   recommendationFormulate: 'ulysse.recommendation-formulate',
   workflowRun: 'ulysse.workflow-run',
+  researchRun: 'ulysse.research-run',
   deadLetter: 'ulysse.dead-letter',
 } as const;
 
@@ -40,13 +41,24 @@ export const QUEUE_DEFINITIONS: readonly QueueDefinition[] = [
     expireInSeconds: 60,
   },
   {
+    name: QUEUES.researchRun,
+    policy: 'stately',
+    retryLimit: 4,
+    retryDelay: 30,
+    retryBackoff: true,
+    retryDelayMax: 120,
+    expireInSeconds: 120,
+    deadLetter: QUEUES.deadLetter,
+  },
+  {
     name: QUEUES.workflowRun,
     policy: 'stately',
     retryLimit: 3,
     retryDelay: 10,
     retryBackoff: true,
     retryDelayMax: 120,
-    expireInSeconds: 120,
+    // Exceeds the 300s Hermes run plus 120s buyer review lease; no overlapping replay.
+    expireInSeconds: 480,
     deadLetter: QUEUES.deadLetter,
   },
   {

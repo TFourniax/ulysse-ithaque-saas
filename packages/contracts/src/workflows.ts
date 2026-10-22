@@ -50,6 +50,7 @@ export const CreateWorkflowBody = z
     brief: WorkflowBrief,
     sourceIds: z.array(z.uuid()).min(1).max(8),
     requestKey: z.uuid(),
+    researchId: z.uuid().optional(),
   })
   .strict();
 const Finding = z
@@ -110,6 +111,7 @@ export const WorkflowRun = z.object({
   inputHash: z.string().nullable(),
   agentRunId: z.uuid().nullable(),
   stale: z.boolean(),
+  researchId: z.uuid().nullable(),
 });
 export const WorkflowReviewBody = z
   .object({ revision: z.number().int().positive(), decision: z.enum(['approve', 'reject']) })

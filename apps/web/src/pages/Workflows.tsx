@@ -1,3 +1,4 @@
+import { useResearchPolicy } from './Research.tsx';
 import type { WorkflowBriefDto, WorkflowRunDto, WorkspaceSourceDto } from '@ulysse/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -35,6 +36,10 @@ const STATES: Record<WorkflowRunDto['status'], string> = {
   failed: 'Analyse interrompue',
 };
 const WORKFLOW_ERRORS: Record<string, string> = {
+  provider_retry_wait:
+    'Le fournisseur demande une pause. Ulysse attend puis reprend automatiquement l’appel en cours.',
+  budget_reached:
+    'L’enveloppe nécessaire à cette analyse n’a pas pu être réservée. Les dépenses et réservations de la session et du mois sont conservées. Les données de recherche restent disponibles.',
   engine_unavailable: 'Activez le moteur d’analyse pour produire ce résultat.',
   STALE_EVIDENCE: 'Actualisez les sources sélectionnées avant de relancer.',
   versions_changed: 'Le contexte ou les sources ont changé pendant l’analyse.',
@@ -49,11 +54,23 @@ const WORKFLOW_ERRORS: Record<string, string> = {
   provider_timeout: 'Le fournisseur n’a pas répondu dans le délai prévu.',
   provider_transport_error: 'La connexion au fournisseur a échoué.',
   provider_invalid_response: 'Le fournisseur a renvoyé une réponse illisible.',
+  provider_response_too_large:
+    'La réponse du fournisseur dépasse la taille acceptée. Les données collectées sont conservées.',
   provider_response_error: 'Le fournisseur a signalé une erreur pendant la génération.',
   hermes_http_504: 'Le délai maximal de l’analyse a été atteint.',
   hermes_timeout: 'Le moteur d’analyse n’a pas répondu dans le délai prévu.',
   hermes_http_422: 'Le moteur d’analyse n’a pas pu retourner une réponse exploitable.',
   result_invalid: 'La réponse produite ne respecte pas le format attendu.',
+  result_schema_invalid: 'Les champs de la réponse ne respectent pas le format attendu.',
+  result_evidence_invalid:
+    'La relecture n’a pas pu produire un diagnostic avec des références valides. Les sources collectées sont conservées.',
+  comparison_evidence_missing: 'Une comparaison ne cite pas les deux offres nécessaires.',
+  result_json_invalid: 'Le modèle n’a pas fourni un résultat JSON lisible.',
+  result_truncated: 'La réponse du modèle est incomplète. Aucun diagnostic n’a été publié.',
+  result_too_large: 'La réponse du modèle dépasse la taille autorisée.',
+  result_kind_invalid: 'Le modèle a répondu pour un autre parcours.',
+  result_semantics_invalid: 'Le résultat structuré est incohérent avec les règles du diagnostic.',
+  result_refused: 'Le fournisseur n’a pas terminé normalement la réponse.',
   required_source_unread: 'L’analyse n’a pas consulté toutes les sources requises.',
   unretrieved_citation: 'L’analyse cite une référence qu’elle n’a pas consultée.',
   offer_evidence_missing: 'L’analyse ne cite pas de source décrivant l’offre.',
@@ -84,7 +101,15 @@ export function useWorkflows() {
     refetchInterval: 2000,
   });
 }
-function References({ refs, sources }: { refs: readonly string[]; sources: WorkspaceSourceDto[] }) {
+function References({
+  refs,
+  sources,
+  researchId,
+}: {
+  refs: readonly string[];
+  sources: WorkspaceSourceDto[];
+  researchId?: string | null;
+}) {
   return (
     <ul className="workflow-refs">
       {refs.map((ref) => {
@@ -94,6 +119,10 @@ function References({ refs, sources }: { refs: readonly string[]; sources: Works
             {source ? (
               <Link to={`/workspace#source-${source.id}`}>
                 {source.title} · v{source.revision}
+              </Link>
+            ) : researchId && /^source:[a-f0-9-]+:r[0-9]+$/u.test(ref) ? (
+              <Link to={`/research?campaign=${researchId}&candidate=${ref.split(':')[1] ?? ''}`}>
+                Preuve issue du benchmark
               </Link>
             ) : (
               <code>{ref}</code>
@@ -140,6 +169,14 @@ function ResultCard({
         <strong>{run.brief.target || 'Cible à préciser'}</strong> · {PHASES[run.brief.phase]} ·{' '}
         {run.brief.objective || 'Objectif à préciser'}
       </p>
+      {run.researchId && (
+        <Banner kind="info">
+          {run.status === 'queued'
+            ? 'Ulysse prépare les informations du marché avant ce diagnostic.'
+            : 'Le diagnostic utilise une recherche de marché. Validez les preuves citées avant d’approuver le brouillon; une modification du benchmark demandera une nouvelle analyse.'}{' '}
+          <Link to={`/research?campaign=${run.researchId}`}>Voir la collecte et le benchmark</Link>
+        </Banner>
+      )}
       {run.stale && (
         <Banner kind="warning">
           Des sources, le contexte ou la doctrine ont changé ou sont trop anciens. Relancez
@@ -147,8 +184,9 @@ function ResultCard({
         </Banner>
       )}
       {run.errorCode && (
-        <Banner kind="warning">
-          {WORKFLOW_ERRORS[run.errorCode] ?? 'Analyse non disponible.'} ({run.errorCode})
+        <Banner kind={run.errorCode === 'provider_retry_wait' ? 'info' : 'warning'}>
+          {WORKFLOW_ERRORS[run.errorCode] ?? 'Analyse non disponible.'}
+          {run.errorCode !== 'provider_retry_wait' && ` (${run.errorCode})`}
         </Banner>
       )}
       {r && (
@@ -168,7 +206,7 @@ function ResultCard({
             <section key={`${f.topic}-${i}`}>
               <h3>{f.topic}</h3>
               <p>{f.analysis}</p>
-              <References refs={f.references} sources={sources} />
+              <References refs={f.references} sources={sources} researchId={run.researchId} />
             </section>
           ))}
           {r.benchmark.length > 0 && (
@@ -188,7 +226,11 @@ function ResultCard({
                         <td>{f.topic}</td>
                         <td>
                           {f.analysis}
-                          <References refs={f.references} sources={sources} />
+                          <References
+                            refs={f.references}
+                            sources={sources}
+                            researchId={run.researchId}
+                          />
                         </td>
                       </tr>
                     ))}
@@ -210,7 +252,11 @@ function ResultCard({
                 }
               </strong>
               <p>{r.uniqueness.reason}</p>
-              <References refs={r.uniqueness.references} sources={sources} />
+              <References
+                refs={r.uniqueness.references}
+                sources={sources}
+                researchId={run.researchId}
+              />
             </section>
           )}
           {r.buyerQuestions.length > 0 && (
@@ -234,18 +280,22 @@ function ResultCard({
               </p>
               <h3>Pourquoi ce contenu</h3>
               <p>{r.content.rationale}</p>
-              <References refs={r.content.references} sources={sources} />
+              <References
+                refs={r.content.references}
+                sources={sources}
+                researchId={run.researchId}
+              />
             </>
           )}
           {r.limits.length > 0 && (
-            <details>
-              <summary>Limites et points à vérifier</summary>
+            <section className="workflow-limits">
+              <h3>Limites et points à vérifier</h3>
               <ul>
                 {r.limits.map((l) => (
                   <li key={l}>{l}</li>
                 ))}
               </ul>
-            </details>
+            </section>
           )}
         </>
       )}
@@ -293,14 +343,18 @@ function WorkflowForm({
   sources,
   buyer,
   runs,
+  initialResearchId,
 }: {
   kind: 'buyer' | 'content';
   sources: WorkspaceSourceDto[];
   buyer: WorkflowRunDto | undefined;
   runs: WorkflowRunDto[];
+  initialResearchId: string | undefined;
 }) {
   const session = useSession();
   const client = useQueryClient();
+  const researchPolicy = useResearchPolicy();
+  const [researchId, setResearchId] = useState(initialResearchId);
   const [brief, setBrief] = useState<WorkflowBriefDto>(
     buyer
       ? { ...buyer.brief, buyerRunId: buyer.id, objective: '', channel: '', phase: 'unknown' }
@@ -314,7 +368,13 @@ function WorkflowForm({
     mutationFn: () =>
       api<{ id: string }>('/v1/workflows', {
         method: 'POST',
-        body: { kind, brief, sourceIds: selected, requestKey },
+        body: {
+          kind,
+          brief,
+          sourceIds: selected,
+          requestKey,
+          ...(kind === 'buyer' && researchId ? { researchId } : {}),
+        },
       }),
     onSuccess: async () => {
       setRequestKey(crypto.randomUUID());
@@ -326,6 +386,7 @@ function WorkflowForm({
     setRequestKey(crypto.randomUUID());
   };
   const resume = (r: WorkflowRunDto) => {
+    setResearchId(r.researchId ?? undefined);
     setBrief(r.brief);
     setSelected(r.sourceIds.filter((id) => sources.some((s) => s.id === id)));
     setRequestKey(crypto.randomUUID());
@@ -343,6 +404,18 @@ function WorkflowForm({
           }}
         >
           <h2>{kind === 'buyer' ? 'Cadrer le regard de l’acheteur' : 'Cadrer le contenu'}</h2>
+          {kind === 'buyer' && (
+            <Banner kind="info">
+              {researchId
+                ? 'Ce diagnostic utilise les résultats conservés de la campagne sélectionnée. Si la collecte est en cours, interrompez-la pour analyser les résultats déjà disponibles.'
+                : researchPolicy.data?.profile.enabled
+                  ? 'La recherche publique est activée : Ulysse collecte les informations de marché nécessaires avant le diagnostic.'
+                  : 'Activez la recherche publique pour qu’Ulysse trouve et documente les concurrents.'}{' '}
+              <Link to={researchId ? `/research?campaign=${researchId}` : '/research'}>
+                Recherche et benchmark
+              </Link>
+            </Banner>
+          )}
           <p>
             Les champs inconnus peuvent rester vides : Ulis précisera ce dont il a besoin pour
             avancer.
@@ -512,11 +585,12 @@ export function WorkflowsPage({ kind }: { kind: 'buyer' | 'content' }) {
         </Banner>
       )}
       <WorkflowForm
-        key={`${kind}-${buyer?.id ?? ''}`}
+        key={`${kind}-${buyer?.id ?? ''}-${params.get('research') ?? ''}`}
         kind={kind}
         sources={sources.data}
         runs={runs.data}
         buyer={buyer}
+        initialResearchId={params.get('research') ?? undefined}
       />
     </>
   );

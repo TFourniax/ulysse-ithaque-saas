@@ -67,11 +67,21 @@ export async function checkEuropeanProvider(
     (e) => e.model_id === model && route.provider.only?.includes(e.tag) && e.status === 0,
   );
   if (!endpoint) throw new Error('Endpoint europeen epingle absent du registre ZDR actif.');
+  const observedPrices = {
+    prompt: endpoint.pricing.prompt * 1_000_000,
+    completion: endpoint.pricing.completion * 1_000_000,
+  };
   if (
-    endpoint.pricing.prompt * 1_000_000 > route.prices.prompt + 1e-9 ||
-    endpoint.pricing.completion * 1_000_000 > route.prices.completion + 1e-9
+    observedPrices.prompt > route.prices.prompt + 1e-9 ||
+    observedPrices.completion > route.prices.completion + 1e-9
   )
-    throw new Error('Tarif fournisseur superieur au plafond epingle ; mise a jour necessaire.');
+    // Only validated numeric prices and the configured profile identity; never raw provider data.
+    throw new Error(
+      `Tarif fournisseur superieur au plafond epingle pour ${route.profile.model} (${route.profile.endpoint}), USD par million de tokens : ` +
+        `entree ${observedPrices.prompt} (plafond ${route.prices.prompt}), ` +
+        `sortie ${observedPrices.completion} (plafond ${route.prices.completion}). ` +
+        'Verifier puis mettre a jour le profil ; aucun plafond modifie automatiquement.',
+    );
   if (!route.requiredParameters.every((p) => endpoint.supported_parameters.includes(p)))
     throw new Error('Endpoint incompatible avec les parametres Ulysse.');
   return {

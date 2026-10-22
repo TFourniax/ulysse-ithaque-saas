@@ -19,6 +19,7 @@ import {
 } from '@ulysse/domain';
 import type { PoolClient } from 'pg';
 import { PgAgentStore } from './agent-store.ts';
+import { PgResearchStore } from './research-store.ts';
 import type { Row } from './rows.ts';
 import { int, json, oneOf, str, strOrNull } from './rows.ts';
 
@@ -45,6 +46,7 @@ export type WorkflowRequest = {
   inputHash: string | null;
   agentRunId: string | null;
   stale: boolean;
+  researchId: string | null;
 };
 function requestFrom(r: Row): WorkflowRequest {
   return {
@@ -71,6 +73,7 @@ function requestFrom(r: Row): WorkflowRequest {
     inputHash: strOrNull(r, 'input_hash'),
     agentRunId: strOrNull(r, 'agent_run_id'),
     stale: false,
+    researchId: strOrNull(r, 'research_id'),
   };
 }
 export class PgWorkspaceStore extends PgAgentStore {
@@ -177,7 +180,37 @@ export class PgWorkspaceStore extends PgAgentStore {
       this.assertFresh(priorInput);
       buyer = { id: previous.id, result: previous.result };
     }
-    return { kind: request.kind, brief: request.brief, context, doctrine, sources, buyer };
+    let research: WorkflowInput['research'];
+    if (request.researchId) {
+      const store = new PgResearchStore(this.pool);
+      const campaign = await store.campaign(sql, tx.tenantId, request.researchId);
+      ensure(await store.isCurrent(tx, sql, campaign), 'STALE_EVIDENCE');
+      const corpus = await store.workflowSources(
+        sql,
+        tx.tenantId,
+        request.researchId,
+        request.brief,
+      );
+      sources.push(...corpus.sources);
+      research = {
+        id: campaign.id,
+        revision: campaign.revision,
+        status: campaign.status,
+        candidateCount: campaign.candidateCount,
+        qualifiedCount: campaign.qualifiedCount,
+        pendingReferences: corpus.pendingReferences,
+        geography: campaign.profile.geography,
+      };
+    }
+    return {
+      kind: request.kind,
+      brief: request.brief,
+      context,
+      doctrine,
+      sources,
+      buyer,
+      research,
+    };
   }
   assertFresh(input: WorkflowInput): void {
     ensure(input.doctrine, 'DOCTRINE_NOT_VALIDATED');
@@ -221,12 +254,19 @@ export class PgWorkspaceStore extends PgAgentStore {
   }
   async create(
     ctx: Context,
-    body: { kind: WorkflowKind; brief: WorkflowBrief; sourceIds: string[]; requestKey: string },
+    body: {
+      kind: WorkflowKind;
+      brief: WorkflowBrief;
+      sourceIds: string[];
+      requestKey: string;
+      researchId?: string;
+    },
     mode: WorkflowRequest['mode'],
   ): Promise<string> {
     const actor = requirePermission(ctx, 'recommendation:revise');
     ensure(new Set(body.sourceIds).size === body.sourceIds.length, 'INVALID_INPUT');
     ensure(body.kind === 'content' || body.brief.buyerRunId === null, 'INVALID_INPUT');
+    ensure(body.kind === 'buyer' || body.researchId === undefined, 'INVALID_INPUT');
     return this.transaction(ctx, async (tx, sql) => {
       await tx.lock('analysis');
       const requestHash = fingerprintOf({ body, mode });
@@ -251,8 +291,15 @@ export class PgWorkspaceStore extends PgAgentStore {
       );
       ensure((pending.rowCount ?? 0) < 5, 'INVALID_INPUT', 'queue limit');
       const id = randomUUID();
+      const researchStore = new PgResearchStore(this.pool);
+      const researchId =
+        body.kind === 'buyer'
+          ? await researchStore.forWorkflow(ctx, tx, sql, body.researchId)
+          : body.brief.buyerRunId
+            ? (await this.get(sql, ctx.tenantId, body.brief.buyerRunId)).researchId
+            : null;
       await sql.query(
-        'INSERT INTO workflow_requests(tenant_id,id,kind,brief,source_ids,request_key,request_hash,mode,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        'INSERT INTO workflow_requests(tenant_id,id,kind,brief,source_ids,request_key,request_hash,mode,created_by,research_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
         [
           ctx.tenantId,
           id,
@@ -263,6 +310,7 @@ export class PgWorkspaceStore extends PgAgentStore {
           requestHash,
           mode,
           actor.userId,
+          researchId,
         ],
       );
       // Validate a linked buyer in the same tenant now; it is rechecked by the worker.
@@ -301,6 +349,17 @@ export class PgWorkspaceStore extends PgAgentStore {
         const input = await this.input(tx, sql, run);
         this.assertFresh(input);
         ensure(run.inputHash === workflowInputHash(input), 'STALE_EVIDENCE');
+        const references = [
+          ...(run.result?.findings ?? []),
+          ...(run.result?.benchmark ?? []),
+          ...(run.result?.uniqueness ? [run.result.uniqueness] : []),
+          ...(run.result?.content ? [run.result.content] : []),
+        ].flatMap((f) => f.references);
+        ensure(
+          !references.some((ref) => input.research?.pendingReferences.includes(ref)),
+          'INVALID_TRANSITION',
+          'research evidence awaits review',
+        );
       }
       await sql.query(
         'UPDATE workflow_requests SET status=$3,revision=revision+1,reviewed_by=$4 WHERE tenant_id=$1 AND id=$2',

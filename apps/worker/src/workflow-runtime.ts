@@ -17,11 +17,15 @@ import {
   WORKFLOW_VERSION,
   workflowInputHash,
   workflowQuestions,
+  withResearchCoverage,
 } from '@ulysse/domain';
 import type { Pool, PoolClient, WorkflowRequest } from '@ulysse/database';
-import { PgWorkspaceStore } from '@ulysse/database';
+import { PgWorkspaceStore, PgResearchStore } from '@ulysse/database';
 import { z } from 'zod';
 import { workflowFailure, type WorkflowStage } from './agent-errors.ts';
+import { WORKFLOW_TIMEOUT_MS } from './workflow-retry.ts';
+import { researchPreview, workflowResearchCatalog } from './workflow-catalog.ts';
+import { workflowCitations } from './buyer-review.ts';
 
 export const WORKFLOW_TOOLS = [
   'get_workflow_context',
@@ -29,6 +33,37 @@ export const WORKFLOW_TOOLS = [
   'read_company_source',
 ] as const;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+export const WORKFLOW_EVIDENCE_PREFIX = 'ULYSSE_WORKFLOW_EVIDENCE_V1\n';
+function workflowContext(input: WorkflowInput, id: string) {
+  const references = [
+    `workflow:${id}`,
+    `context:v${input.context?.version ?? 0}`,
+    `doctrine:${input.doctrine?.id ?? ''}:v${input.doctrine?.version ?? 0}`,
+  ];
+  if (input.buyer) references.push(`buyer:${input.buyer.id}`);
+  return {
+    references,
+    kind: input.kind,
+    brief: input.brief,
+    context: input.context?.content,
+    doctrine: input.doctrine?.content,
+    buyer: input.buyer,
+    research: input.research
+      ? {
+          id: input.research.id,
+          status: input.research.status,
+          candidateCount: input.research.candidateCount,
+          qualifiedCount: input.research.qualifiedCount,
+          provisionalCount: input.research.pendingReferences.length,
+          geography: input.research.geography,
+        }
+      : null,
+    untrusted: true,
+  };
+}
+function requiredSources(input: WorkflowInput, request: WorkflowRequest) {
+  return input.sources.filter((s) => request.sourceIds.includes(s.id));
+}
 const Run = z.object({
   id: z.uuid(),
   subject_id: z.uuid(),
@@ -45,6 +80,8 @@ type Settings = {
   modelProfile?: object;
   modelProfileHash?: string;
   modelSettings?: Parameters<AgentExecutor['execute']>[0]['modelSettings'];
+  fallbackModel?: string;
+  fallbackProfileHash?: string;
   session: string;
   budgets: { run: number; session: number; month: number };
   hermesVersion: string;
@@ -53,22 +90,87 @@ export class WorkflowRuntime {
   readonly store: PgWorkspaceStore;
   readonly settings: Settings;
   readonly executor: AgentExecutor;
-  constructor(pool: Pool, settings: Settings, executor: AgentExecutor) {
+  readonly reviewBuyer: (
+    capability: string,
+    draft: WorkflowResult,
+    signal?: AbortSignal,
+  ) => Promise<WorkflowResult>;
+  constructor(
+    pool: Pool,
+    settings: Settings,
+    executor: AgentExecutor,
+    reviewBuyer: WorkflowRuntime['reviewBuyer'],
+  ) {
     this.store = new PgWorkspaceStore(pool);
     this.settings = settings;
     this.executor = executor;
+    this.reviewBuyer = reviewBuyer;
   }
-  async assertCurrent(
+  async prepareEvidence(
     ctx: Context,
     tx: TenantTx,
     sql: PoolClient,
     subjectId: string,
     inputHash: string,
-  ): Promise<void> {
+    maxEvidenceBytes: number,
+    review?: { cited: readonly string[]; read: readonly string[] },
+  ) {
     const run = await this.store.get(sql, ctx.tenantId, subjectId);
     const input = await this.store.input(tx, sql, run);
     this.store.assertFresh(input);
     ensure(run.status === 'running' && workflowInputHash(input) === inputHash, 'STALE_EVIDENCE');
+    const context = workflowContext(input, subjectId);
+    const selected = review
+      ? input.sources.filter(
+          (s) =>
+            run.sourceIds.includes(s.id) ||
+            review.cited.includes(sourceReference(s)) ||
+            (['offer', 'website'].includes(s.kind) && review.read.includes(sourceReference(s))),
+        )
+      : requiredSources(input, run);
+    const sources = selected.map((s) => ({
+      ...s,
+      reference: sourceReference(s),
+      untrusted: true,
+    }));
+    // Deliver the actual versioned text, not just an identifier marked as read.
+    // Rebuild for every provider call so Hermes need not retain an extra transcript.
+    const citationRoles = {
+      offerReferences: selected
+        .filter((s) => s.kind === 'offer' || s.kind === 'website')
+        .map(sourceReference),
+      competitorReferences: selected.filter((s) => s.kind === 'competitor').map(sourceReference),
+    };
+    const payload = {
+      context,
+      sources,
+      ...(review ? { citationRoles } : {}),
+      untrusted: true,
+    };
+    // Leave room for escaped JSON and the surrounding message. Mandatory source text
+    // is never truncated to fit a catalog; the gateway still checks the complete request.
+    const remaining = Math.max(
+      0,
+      maxEvidenceBytes - Buffer.byteLength(JSON.stringify(payload)) - 512,
+    );
+    const researchCatalog =
+      input.research && !review
+        ? workflowResearchCatalog(input.sources, Math.min(24000, Math.floor(remaining / 2)))
+        : undefined;
+    return {
+      references: [...context.references, ...sources.map((s) => s.reference)],
+      sourceCount: sources.length,
+      catalogCount: researchCatalog?.items.length ?? 0,
+      ...citationRoles,
+      messageWithoutCatalog: {
+        role: 'user',
+        content: WORKFLOW_EVIDENCE_PREFIX + JSON.stringify(payload),
+      },
+      message: {
+        role: 'user',
+        content: WORKFLOW_EVIDENCE_PREFIX + JSON.stringify({ ...payload, researchCatalog }),
+      },
+    };
   }
   async run(ctx: Context, id: string, signal?: AbortSignal): Promise<void> {
     requireScope(ctx, 'analysis:run');
@@ -85,10 +187,19 @@ export class WorkflowRuntime {
           [ctx.tenantId, request.agentRunId],
         );
         if (active.rowCount) throw new Error('workflow_already_running');
+        await sql.query(
+          "UPDATE agent_runs SET status='interrupted',completed_at=clock_timestamp(),error_code='lease_expired',reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status IN ('running','validating') AND expires_at<=clock_timestamp()",
+          [ctx.tenantId, request.agentRunId],
+        );
         await this.finish(sql, ctx, id, 'failed', null, 'interrupted');
         return false;
       }
       if (request.status !== 'queued') return false;
+      if (request.researchId) {
+        const research = new PgResearchStore(this.store.pool);
+        const campaign = await research.campaign(sql, ctx.tenantId, request.researchId);
+        if (['queued', 'running'].includes(campaign.status)) return false;
+      }
       let input: WorkflowInput;
       try {
         input = await this.store.input(tx, sql, request);
@@ -128,7 +239,15 @@ export class WorkflowRuntime {
         return false;
       }
       await sql.query(
-        "UPDATE agent_runs SET status='interrupted',completed_at=clock_timestamp(),error_code='lease_expired' WHERE tenant_id=$1 AND status IN ('running','validating') AND expires_at<=clock_timestamp()",
+        "UPDATE agent_runs SET status='interrupted',completed_at=clock_timestamp(),error_code='lease_expired',reserved_usd=committed_usd WHERE tenant_id=$1 AND status IN ('running','validating') AND expires_at<=clock_timestamp()",
+        [ctx.tenantId],
+      );
+      // Older buyer/content runs kept their whole run envelope after failure. Each
+      // transmitted call already has its conservative upper cost in committed_usd,
+      // including calls still uncertain or in flight. Release only the unused part;
+      // preserve costs, counters, session identity and all business history.
+      await sql.query(
+        "UPDATE agent_runs SET reserved_usd=committed_usd WHERE tenant_id=$1 AND workflow_kind IN ('buyer','content') AND status NOT IN ('running','validating') AND reserved_usd>committed_usd",
         [ctx.tenantId],
       );
       const slots = await sql.query<{ available: boolean }>(
@@ -137,7 +256,7 @@ export class WorkflowRuntime {
       if (!slots.rows[0]?.available) throw new Error('agent_concurrency_limit');
       const inputHash = workflowInputHash(input);
       await sql.query(
-        "INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id,workflow_kind) VALUES($1,$2,$3,$4,$5,'running','manual',$6,$7,clock_timestamp()+interval '90 seconds',$8,$9,$10,$11,$12,$13)",
+        "INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id,workflow_kind) VALUES($1,$2,$3,$4,$5,'running','manual',$6,$7,clock_timestamp()+($14::integer * interval '1 millisecond'),$8,$9,$10,$11,$12,$13)",
         [
           ctx.tenantId,
           agentId,
@@ -152,6 +271,10 @@ export class WorkflowRuntime {
             providerRoute: this.settings.providerRoute,
             modelProfile: this.settings.modelProfile ?? null,
             modelProfileHash: this.settings.modelProfileHash ?? null,
+            primaryModel: this.settings.model,
+            primaryModelProfile: this.settings.modelProfile ?? null,
+            fallbackModel: this.settings.fallbackModel ?? null,
+            fallbackProfileHash: this.settings.fallbackProfileHash ?? null,
           }),
           hash(capability),
           this.settings.session,
@@ -160,6 +283,7 @@ export class WorkflowRuntime {
           WORKFLOW_VERSION,
           ctx.correlationId,
           kind,
+          WORKFLOW_TIMEOUT_MS + (kind === 'buyer' ? 120000 : 0),
         ],
       );
       await sql.query(
@@ -204,13 +328,39 @@ export class WorkflowRuntime {
                 mode: this.settings.mode === 'hermes-stub' ? 'hermes-stub' : 'hermes-live',
                 model: this.settings.model,
                 modelSettings: this.settings.modelSettings,
-                timeoutMs: 90000,
+                fallbackModel: this.settings.fallbackModel,
+                timeoutMs: WORKFLOW_TIMEOUT_MS,
                 workflow: kind,
               },
               signal,
             );
       stage = 'result';
-      const result = validateWorkflowResult(raw);
+      let result = validateWorkflowResult(raw);
+      if (
+        result.kind === 'buyer' &&
+        result.outcome === 'draft' &&
+        this.settings.mode !== 'simulated'
+      ) {
+        // Do not let review turn an unread/invented citation into a newly authorized read.
+        stage = 'publication';
+        await this.store.transaction(ctx, async (_tx, sql) => {
+          const run = Run.parse(
+            (
+              await sql.query('SELECT * FROM agent_runs WHERE tenant_id=$1 AND id=$2', [
+                ctx.tenantId,
+                agentId,
+              ])
+            ).rows[0],
+          );
+          ensure(
+            workflowCitations(result).every((ref) => run.retrieved.includes(ref)),
+            'INVALID_INPUT',
+            'unretrieved citation',
+          );
+        });
+        stage = 'execution';
+        result = await this.reviewBuyer(capability, result, signal);
+      }
       stage = 'publication';
       await this.store.transaction(ctx, async (tx, sql) => {
         await tx.lock('analysis');
@@ -233,28 +383,26 @@ export class WorkflowRuntime {
         this.store.assertFresh(input);
         ensure(run.input_hash === workflowInputHash(input), 'STALE_EVIDENCE');
         const required = [
-          `workflow:${id}`,
-          `context:v${input.context?.version ?? 0}`,
-          `doctrine:${input.doctrine?.id ?? ''}:v${input.doctrine?.version ?? 0}`,
-          ...input.sources.map(sourceReference),
+          ...workflowContext(input, id).references,
+          ...requiredSources(input, request).map(sourceReference),
         ];
-        if (input.buyer) required.push(`buyer:${input.buyer.id}`);
         ensure(
           required.every((ref) => run.retrieved.includes(ref)),
           'INVALID_INPUT',
           'required source unread',
         );
         validateWorkflowPublication(result, input, new Set(run.retrieved));
+        const published = withResearchCoverage(result, input);
         await sql.query(
-          "UPDATE agent_runs SET status=$3,result=$4,error_code=NULL,completed_at=clock_timestamp(),reserved_usd=CASE WHEN cost_state='unknown' THEN reserved_usd ELSE committed_usd END WHERE tenant_id=$1 AND id=$2",
+          'UPDATE agent_runs SET status=$3,result=$4,error_code=NULL,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2',
           [
             ctx.tenantId,
             agentId,
             result.outcome === 'draft' ? 'completed' : 'abstained',
-            JSON.stringify(result),
+            JSON.stringify(published),
           ],
         );
-        await this.finish(sql, ctx, id, result.outcome, result);
+        await this.finish(sql, ctx, id, published.outcome, published);
         await this.store.audit(tx, ctx, 'workflow.completed', id);
         await this.store.event(
           sql,
@@ -269,10 +417,16 @@ export class WorkflowRuntime {
       const code = signal?.aborted ? 'interrupted' : workflowFailure(error, stage);
       await this.store.transaction(ctx, async (_tx, sql) => {
         const failed = await sql.query<{ error_code: string }>(
-          "UPDATE agent_runs SET status=$3,error_code=CASE WHEN $3='obsolete' THEN $4 ELSE coalesce(error_code,$4) END,completed_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 AND status='running' RETURNING error_code",
+          "UPDATE agent_runs SET status=$3,error_code=CASE WHEN $3='obsolete' THEN $4 ELSE coalesce(error_code,$4) END,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status='running' RETURNING error_code",
           [ctx.tenantId, agentId, obsolete ? 'obsolete' : 'failed', code],
         );
         const cause = failed.rows[0]?.error_code ?? code;
+        // Revocation may already have closed this run while the gateway was waiting.
+        // Keep all incurred/uncertain costs but release its unused envelope immediately.
+        await sql.query(
+          "UPDATE agent_runs SET reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status NOT IN ('running','validating') AND reserved_usd>committed_usd",
+          [ctx.tenantId, agentId],
+        );
         const run = await this.store.get(sql, ctx.tenantId, id);
         if (run.status === 'running')
           await this.finish(sql, ctx, id, obsolete ? 'obsolete' : 'failed', null, cause);
@@ -295,7 +449,14 @@ export class WorkflowRuntime {
   }
   async tool(capability: string, name: string, args: unknown): Promise<unknown> {
     ensure((WORKFLOW_TOOLS as readonly string[]).includes(name), 'FORBIDDEN');
-    const params = z.object({ sourceId: z.uuid().optional() }).strict().parse(args);
+    const params = z
+      .object({
+        sourceId: z.uuid().optional(),
+        sourceIds: z.array(z.uuid()).min(1).max(4).optional(),
+        offset: z.number().int().min(0).optional(),
+      })
+      .strict()
+      .parse(args);
     const ctx = await this.store.resolve(hash(capability));
     ensure(ctx, 'FORBIDDEN');
     return this.store.transaction(ctx, async (tx, sql) => {
@@ -321,38 +482,47 @@ export class WorkflowRuntime {
       let refs: string[] = [];
       let value: unknown;
       if (name === 'get_workflow_context') {
-        refs = [
-          `workflow:${request.id}`,
-          `context:v${input.context?.version ?? 0}`,
-          `doctrine:${input.doctrine?.id ?? ''}:v${input.doctrine?.version ?? 0}`,
-        ];
-        if (input.buyer) refs.push(`buyer:${input.buyer.id}`);
-        value = {
-          references: refs,
-          kind: input.kind,
-          brief: input.brief,
-          context: input.context?.content,
-          doctrine: input.doctrine?.content,
-          buyer: input.buyer,
-          untrusted: true,
-        };
+        const context = workflowContext(input, request.id);
+        refs = context.references;
+        value = context;
       } else if (name === 'list_company_sources') {
         value = {
-          items: input.sources.map((s) => ({
+          items: input.sources.slice(params.offset ?? 0, (params.offset ?? 0) + 20).map((s) => ({
             id: s.id,
             kind: s.kind,
             title: s.title,
             origin: s.origin,
             url: s.url,
             observedAt: s.observedAt,
+            ...(s.research ? { research: researchPreview(s) } : {}),
+            required: request.sourceIds.includes(s.id),
+            reviewStatus: input.research?.pendingReferences.includes(sourceReference(s))
+              ? 'pending'
+              : 'approved_or_company',
           })),
-          coverage: 'Corpus fourni par l’entreprise, non exhaustif.',
+          total: input.sources.length,
+          nextOffset:
+            (params.offset ?? 0) + 20 < input.sources.length ? (params.offset ?? 0) + 20 : null,
+          coverage: input.research
+            ? 'Sources choisies et corpus de recherche publique. Lire toutes les sources required=true, puis les concurrents pertinents pour une synthèse; la matrice complète reste dans Recherche. Corpus non exhaustif, collecte et revue peuvent être incomplètes.'
+            : 'Corpus fourni par l’entreprise, non exhaustif.',
         };
       } else {
-        const source = input.sources.find((s) => s.id === params.sourceId);
-        ensure(source, 'NOT_FOUND');
-        refs = [sourceReference(source)];
-        value = { ...source, reference: refs[0], untrusted: true };
+        ensure(Boolean(params.sourceId) !== Boolean(params.sourceIds), 'INVALID_INPUT');
+        const ids = params.sourceIds ?? [params.sourceId];
+        const items = ids.map((id) => {
+          const source = input.sources.find((s) => s.id === id);
+          ensure(source, 'NOT_FOUND');
+          const { research, ...versioned } = source;
+          return {
+            ...versioned,
+            ...(research ? { research: researchPreview(source) } : {}),
+            reference: sourceReference(source),
+            untrusted: true,
+          };
+        });
+        refs = items.map((item) => item.reference);
+        value = params.sourceIds ? { items } : items[0];
       }
       await sql.query(
         'UPDATE agent_runs SET tool_calls=tool_calls+1,retrieved=ARRAY(SELECT DISTINCT unnest(retrieved || $3::text[])) WHERE tenant_id=$1 AND id=$2',

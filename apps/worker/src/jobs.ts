@@ -26,3 +26,6 @@ export type RecommendationJob = z.infer<typeof RecommendationJob>;
 
 export const WorkflowJob = z.object({ tenantId: z.uuid(), workflowId: z.uuid() }).strict();
 export type WorkflowJob = z.infer<typeof WorkflowJob>;
+
+export const ResearchJob = z.object({ tenantId: z.uuid(), campaignId: z.uuid() }).strict();
+export type ResearchJob = z.infer<typeof ResearchJob>;

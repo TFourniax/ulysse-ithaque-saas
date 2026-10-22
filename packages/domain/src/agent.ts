@@ -149,6 +149,8 @@ export interface AgentExecutor {
       mode: 'simulated' | 'hermes-live' | 'hermes-stub';
       workflow?: 'buyer' | 'content';
       model: string;
+      /** One administrator-approved backup; Hermes owns the in-conversation switch. */
+      fallbackModel?: string;
       /** Normalized execution settings; no URL, credential, tool or provider policy. */
       modelSettings?: Readonly<{
         maxOutputTokens: number;

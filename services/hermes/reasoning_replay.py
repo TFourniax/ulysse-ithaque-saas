@@ -24,19 +24,30 @@ class ReasoningReplay:
     def __init__(self):
         self.entries = {}
         self.failed = False
+        self.model = None
+        self.foreign_calls = set()
 
     def __call__(self, *, request, next_call, **_context):
         try:
             outgoing = deepcopy(request)
+            model = request.get("model")
+            if self.model is not None and model != self.model:
+                self.foreign_calls.update(self.entries)
+                self.entries.clear()
+            self.model = model
             for message in outgoing.get("messages", []):
                 if message.get("role") == "assistant":
+                    if _calls(message) in self.foreign_calls:
+                        for name in ("reasoning", "reasoning_content", "reasoning_details"):
+                            message.pop(name, None)
                     fields = self.entries.get(_calls(message))
                     if fields:
                         message.update(deepcopy(fields))
         except Exception:
             self.failed = True
             raise RuntimeError("reasoning_replay_failed") from None
-        # Do not catch provider errors or call next_call twice: charging/retries belong to Ulysse.
+        # Do not catch provider errors or retry: Hermes owns conversation recovery;
+        # Ulysse authorizes and accounts for every attempted transmission.
         response = next_call(outgoing)
         try:
             plain = _plain(response)

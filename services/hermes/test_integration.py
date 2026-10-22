@@ -18,6 +18,7 @@ class Endpoint(BaseHTTPRequestHandler):
     calls = []
     systems = []
     replayed_reasoning = []
+    models = []
     lock = threading.Lock()
     reasoning_fixture = [{"type": "reasoning.text", "text": "fixture-reasoning", "format": "unknown", "index": 0},
                          {"type": "reasoning.encrypted", "data": "opaque-fixture-signature", "format": "unknown", "index": 1}]
@@ -36,6 +37,16 @@ class Endpoint(BaseHTTPRequestHandler):
         if self.path.startswith("/agent/tools/"):
             output = {"state": "present", "reference": f"fixture:{token[-3:]}", "content": "Sources fictives isolées"}
         else:
+            self.models.append(body.get("model"))
+            if token.endswith('fff') and body.get('model') == 'z-ai/glm-5.3-flash' and any(m.get('role') == 'tool' for m in body.get('messages', [])):
+                data = json.dumps({'error': {'code': 429, 'type': 'rate_limit_error', 'message': 'provider temporarily unavailable'}}).encode()
+                self.send_response(429)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Retry-After', '1')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             names = [t["function"]["name"] for t in body.get("tools", [])]
             if names:
                 self.assert_tools(names)
@@ -74,6 +85,16 @@ class Endpoint(BaseHTTPRequestHandler):
 
 
 class ModelSettings(unittest.TestCase):
+    def test_execution_deadlines_are_bounded_and_workflows_allow_provider_backoff(self):
+        from server import execution_timeout_ms
+        for workflow, maximum in (("deal", 90000), ("buyer", 300000), ("content", 300000)):
+            self.assertEqual(execution_timeout_ms({"workflow": workflow}), maximum)
+            self.assertEqual(execution_timeout_ms({"workflow": workflow, "timeoutMs": 999999}), maximum)
+            self.assertEqual(execution_timeout_ms({"workflow": workflow, "timeoutMs": 30000}), 30000)
+        for value in (True, -1, 0, "180000"):
+            with self.assertRaises(ValueError):
+                execution_timeout_ms({"workflow": "buyer", "timeoutMs": value})
+
     def test_settings_are_model_independent_and_bounded(self):
         request = {"model": "example/next-model", "modelSettings": {"maxOutputTokens": 8192, "reasoning": "low"}}
         self.assertEqual(model_settings(request), request["modelSettings"])
@@ -84,9 +105,31 @@ class ModelSettings(unittest.TestCase):
             with self.assertRaises(ValueError): model_settings({**request, "modelSettings": settings})
         for model in ("https://example.com/model", "@preset/test", "x\n/y", None):
             with self.assertRaises(ValueError): model_settings({**request, "model": model})
+        for fallback in ("https://example.com/model", request['model'], {'base_url': 'https://example.com'}):
+            with self.assertRaises(ValueError):
+                model_settings({**request, 'workflow': 'buyer', 'fallbackModel': fallback})
+        with self.assertRaises(ValueError):
+            model_settings({**request, 'fallbackModel': 'example/backup'})
 
 
 class ReasoningContinuity(unittest.TestCase):
+    def test_switch_discards_previous_model_reasoning_but_keeps_new_model_signatures(self):
+        from reasoning_replay import ReasoningReplay
+        replay = ReasoningReplay()
+        call = {'id': 'first', 'function': {'name': 'get_workflow_context'}}
+        message = {'role': 'assistant', 'content': None, 'tool_calls': [call], 'reasoning_details': [{'data': 'primary-only'}]}
+        replay(request={'model': 'primary', 'messages': []}, next_call=lambda _: {'choices': [{'message': message}]})
+        seen = []
+        second = {'role': 'assistant', 'tool_calls': [{'id': 'second', 'function': {'name': 'read_company_source'}}], 'reasoning_details': [{'data': 'backup-only'}]}
+        def capture(request):
+            seen.append(request)
+            return {'choices': [{'message': second}]}
+        replay(request={'model': 'backup', 'messages': [message]}, next_call=capture)
+        self.assertNotIn('reasoning_details', seen[-1]['messages'][0])
+        replay(request={'model': 'backup', 'messages': [message, {k: v for k, v in second.items() if k != 'reasoning_details'}]}, next_call=capture)
+        self.assertNotIn('reasoning_details', seen[-1]['messages'][0])
+        self.assertEqual(seen[-1]['messages'][1]['reasoning_details'], second['reasoning_details'])
+
     def test_exact_replay_is_isolated_bounded_and_does_not_retry(self):
         from reasoning_replay import ReasoningReplay
         replay = ReasoningReplay()
@@ -128,11 +171,93 @@ class FinalResponse(unittest.TestCase):
                 parse_final(invalid)
 
 
+class WorkflowEvidence(unittest.TestCase):
+    def test_stub_repairs_the_latest_review_without_replaying_the_original_draft(self):
+        from model_stub import _workflow_step, respond
+        sources = [dict(id=str(uuid4()), kind=kind, title=title, text="Fictional source text.", reference=f"source:{title}:r1")
+                   for kind, title in [("offer", "own"), ("competitor", "rival-a"), ("competitor", "rival-b")]]
+        evidence = {"context": {"kind": "buyer"}, "sources": sources, "untrusted": True}
+        _, draft = _workflow_step([{"name": "list_company_sources", "args": {}, "result": {"items": sources}}], evidence)
+        def messages(value):
+            return [{"role": "system", "content": "Relecture fictive"},
+                    {"role": "user", "content": "ULYSSE_WORKFLOW_EVIDENCE_V1\n" + json.dumps(evidence)},
+                    {"role": "user", "content": "ULYSSE_BUYER_DRAFT_TO_REVIEW_V1\n" + json.dumps({"draft": value, "untrusted": True})}]
+        first = json.loads(respond({"messages": messages(draft)})["choices"][0]["message"]["content"])
+        self.assertTrue(all(len(row['references']) == 1 for row in first['benchmark']))
+        repair = messages(first) + [{"role": "user", "content": "Ulysse a refusé les références du diagnostic : correction de fixture."}]
+        self.assertFalse(any(m['role'] == 'assistant' for m in repair))
+        corrected = json.loads(respond({"messages": repair})["choices"][0]["message"]["content"])
+        self.assertEqual(corrected['benchmark'], draft['benchmark'])
+        self.assertEqual(len(corrected['limits']), len(set(corrected['limits'])))
+
+    def test_buyer_stub_exercises_separate_review_and_preserves_a_cited_draft(self):
+        from model_stub import _workflow_step, respond
+        source = {"id": str(uuid4()), "kind": "offer", "text": "Service fictif avec accompagnement.", "reference": "source:fixture:r1"}
+        evidence = {"context": {"kind": "buyer"}, "sources": [source], "untrusted": True}
+        _, draft = _workflow_step([{"name": "list_company_sources", "args": {}, "result": {"items": [source]}}], evidence)
+        self.assertEqual(draft["outcome"], "draft")
+        messages = [{"role": "system", "content": "Relecture fictive"},
+                    {"role": "user", "content": "ULYSSE_WORKFLOW_EVIDENCE_V1\n" + json.dumps(evidence)},
+                    {"role": "user", "content": "ULYSSE_BUYER_DRAFT_TO_REVIEW_V1\n" + json.dumps({"draft": draft, "untrusted": True})}]
+        reviewed = json.loads(respond({"messages": messages})["choices"][0]["message"]["content"])
+        self.assertEqual(reviewed["outcome"], "draft")
+        self.assertEqual(reviewed["findings"], draft['findings'])
+        self.assertIn("Relecture séparée exécutée avec les preuves consultées.", reviewed["limits"])
+        with self.assertRaises(ValueError):
+            respond({"messages": messages, "tools": [{"function": {"name": name}} for name in ("get_workflow_context", "list_company_sources", "read_company_source")]})
+
+    def test_simulated_429_happens_once_after_tools_and_is_isolated_by_workflow(self):
+        from model_stub import transient_workflow_fixture
+        for _ in range(2):
+            evidence = {"context": {"references": [f"workflow:{uuid4()}"]}}
+            body = {"response_format": {"type": "json_schema"}, "messages": [
+                {"role": "user", "content": "ULYSSE_WORKFLOW_EVIDENCE_V1\n" + json.dumps(evidence)},
+            ]}
+            self.assertFalse(transient_workflow_fixture(body))
+            body["messages"].append({"role": "tool", "content": "{}"})
+            self.assertTrue(transient_workflow_fixture(body))
+            self.assertFalse(transient_workflow_fixture(body))
+
+    def test_prepared_sources_need_no_duplicate_read_but_competitors_still_do(self):
+        from model_stub import _workflow_step
+        sources = [{"id": str(uuid4()), "text": f"Source fictive {i}"} for i in range(8)]
+        rival = {"id": str(uuid4())}
+        evidence = {"context": {"kind": "buyer"}, "sources": sources, "untrusted": True}
+        calls = [{"name": "list_company_sources", "args": {}, "result": {"items": [*sources, rival]}}]
+        pending, result = _workflow_step(calls, evidence)
+        self.assertIsNone(result)
+        self.assertEqual(pending, [("read_company_source", {"sourceIds": [rival["id"]]})])
+        calls.append({"name": "read_company_source", "args": {"sourceIds": [rival["id"]]}, "result": {"items": [rival]}})
+        pending, result = _workflow_step(calls, evidence)
+        self.assertEqual(pending, [])
+        self.assertEqual(result["outcome"], "abstained")
+        self.assertIn("Sources obligatoires fournies automatiquement.", result["limits"])
+
+
 class HermesIntegration(unittest.TestCase):
     def setUp(self):
         Endpoint.calls = []
         Endpoint.systems = []
         Endpoint.replayed_reasoning = []
+        Endpoint.models = []
+
+    def test_native_fallback_keeps_tool_results_and_uses_only_the_scoped_gateway(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        os.environ["ULYSSE_GATEWAY_URL"] = f"http://127.0.0.1:{server.server_port}/agent"
+        try:
+            request = {'runId': str(uuid4()), 'subjectId': str(uuid4()), 'capability': 'f' * 43,
+                       'mode': 'hermes-stub', 'workflow': 'buyer', 'model': 'z-ai/glm-5.3-flash',
+                       'fallbackModel': 'mistralai/mistral-small-2603', 'timeoutMs': 90000}
+            result = isolated_run(request)
+            self.assertEqual(result['outcome'], 'abstained')
+            self.assertIn(request['fallbackModel'], Endpoint.models)
+            self.assertEqual(sum(path == '/agent/tools/get_workflow_context' for path, _ in Endpoint.calls), 1)
+            self.assertTrue(all(token == 'Bearer ' + request['capability'] for _, token in Endpoint.calls))
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop('ULYSSE_GATEWAY_URL', None)
 
     def test_workflows_select_their_own_tools(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)

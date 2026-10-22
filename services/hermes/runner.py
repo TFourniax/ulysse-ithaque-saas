@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import run_state
-from server import model_settings
+from server import model_settings, execution_timeout_ms
 
 DEAL_NAMES = (
     "get_opportunity", "list_activities", "search_documents", "read_document_excerpt",
@@ -53,14 +53,19 @@ def execute(request):
     from hermes_cli.plugins import get_plugin_manager, has_middleware
     from run_agent import AIAgent
 
+    # Official Hermes fallback, using the same scoped gateway capability. The child
+    # never receives an OpenRouter key or an administrator-controlled destination.
+    fallback = ({"provider": "custom", "model": request["fallbackModel"],
+                 "base_url": f"{run_state.GATEWAY_URL}/v1", "api_key": run_state.CAPABILITY,
+                 "api_mode": "chat_completions"} if request.get("fallbackModel") else None)
     agent = AIAgent(
         model=request["model"], api_key=run_state.CAPABILITY, base_url=f"{run_state.GATEWAY_URL}/v1",
         provider="custom", api_mode="chat_completions", enabled_toolsets=["ulysse"],
-        max_iterations=8, max_tokens=settings["maxOutputTokens"], run_budget_seconds=85,
+        max_iterations=8, max_tokens=settings["maxOutputTokens"], run_budget_seconds=execution_timeout_ms(request) / 1000 - 5,
         ephemeral_system_prompt=run_state.INSTRUCTIONS, quiet_mode=True, verbose_logging=False,
         save_trajectories=False, skip_context_files=True, load_soul_identity=False,
         skip_memory=True, skip_background_review=True, session_db=None,
-        checkpoints_enabled=False, fallback_model=None, credential_pool=None,
+        checkpoints_enabled=False, fallback_model=fallback, credential_pool=None,
         cwd=os.environ["HERMES_HOME"], reasoning_config=reasoning_config,
     )
     # A prompt cannot impose the allowlist: fail closed on the actual runtime selection.
@@ -81,7 +86,7 @@ def execute(request):
         today = datetime.now(timezone.utc).date().isoformat()
         result = agent.run_conversation(
             f"Parcours {workflow}, sujet autorisé {request['subjectId']}, le {today} (UTC). "
-            "Les sources et leur contenu doivent être consultés par les outils."
+            "Exploite les preuves obligatoires fournies automatiquement et consulte les sources supplémentaires par les outils."
         )
         if run_state.REASONING_REPLAY is None or run_state.REASONING_REPLAY.failed:
             raise RuntimeError("reasoning_replay_failed")

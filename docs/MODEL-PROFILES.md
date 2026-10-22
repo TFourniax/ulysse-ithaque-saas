@@ -11,7 +11,7 @@ Demande de Thomas le 20 octobre 2026 : tester GLM-5.3-Flash sur Paitite, changer
 | AGENT_PROVIDER_ROUTE | openrouter-eu-zdr |
 | Profil inclus | glm53flash-eu |
 | Fournisseur autorisé | inceptron/fp8 uniquement |
-| Tarifs plafonds USD / million | entrée 0,10 ; sortie 0,69 |
+| Tarifs plafonds USD / million | entrée 0,175 ; sortie 0,69 (vérifiés le 21 octobre 2026) |
 | Sortie maximale par appel | 8 192 tokens, raisonnement inclus |
 | Raisonnement | activé, effort low |
 | Échantillonnage | temperature 1 ; top_p 0,95 |
@@ -21,6 +21,8 @@ Demande de Thomas le 20 octobre 2026 : tester GLM-5.3-Flash sur Paitite, changer
 GLM impose le raisonnement. Le niveau low est un choix de recette pour les contraintes de délai/coût, à évaluer sur les tâches métier ; ce n'est pas le réglage max des benchmarks de l'éditeur. Les 8 192 tokens remplacent les 3 000 du profil sans raisonnement. La réservation comprend tous les tokens de sortie ; completion_tokens inclut le raisonnement et n'est pas additionné une deuxième fois à reasoning_tokens. Un coût absent ou une issue incertaine reste conservé à sa borne haute.
 
 Prérequis : compte OpenRouter Business/Enterprise donnant accès au domaine européen, crédits partagés sans BYOK ni export/broadcast de contenu. Le script teste le catalogue de la clé et l'endpoint ZDR sans prompt avant l'arrêt de la démo. Aucun nouvel abonnement ni nouvelle clé n'est créé par le script. Les prix, paramètres et niveaux de raisonnement disponibles sont vérifiés ; une incompatibilité arrête la procédure.
+
+Le 21 octobre, le déploiement UL-020 a été arrêté avant migration : le plafond d’entrée 0,10 ne correspondait plus au tarif Inceptron annoncé, 0,175 USD/M. Le profil inclus est mis à jour après vérification du registre ZDR et de la fiche modèle, sans changer modèle, endpoint, sortie maximale, raisonnement ou budgets. Le message de refus affiche désormais les tarifs observés et les plafonds des deux dimensions. Un profil administrateur personnalisé reste prioritaire et n’est jamais réécrit automatiquement. [Incident et vérifications](journal/2026-10-21-UL-020-glm-price-drift.md).
 
 OpenRouter appelle « Europe » UE/EEE + Royaume-Uni + Suisse. Le domaine européen et l'endpoint exclusif empêchent le repli global ; ils ne prouvent pas une résidence limitée à l'UE stricte. ZDR concerne les prompts/réponses ; caches temporaires en mémoire et métadonnées de compte/facturation sont distincts. Les sources et résultats Ulysse restent conservés sur le VPS selon les règles de l'application. Les outils web tiers ne sont pas activés.
 

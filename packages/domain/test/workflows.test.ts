@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { withResearchCoverage } from '../src/research-selection.ts';
 import type { WorkflowInput, WorkflowResult } from '../src/workflows.ts';
 import {
   pendingWorkflow,
@@ -61,6 +62,51 @@ const draft: WorkflowResult = {
     references: ['source:s:r1'],
   },
 };
+test('research coverage counts distinct cited actors, retained partial data and pending reviews without claiming market exhaustiveness', () => {
+  const researchInput: WorkflowInput = {
+    ...input,
+    sources: [
+      ...input.sources,
+      ...['a', 'b', 'c'].map((id) => ({
+        ...input.sources[0]!,
+        id,
+        kind: 'competitor' as const,
+        research: {
+          relevance: 'direct' as const,
+          reason: '',
+          review: 'pending' as const,
+          offers: [],
+          targets: [],
+          dimensions: [],
+        },
+      })),
+    ],
+    research: {
+      id: 'r',
+      revision: 1,
+      status: 'paused',
+      candidateCount: 100,
+      qualifiedCount: 3,
+      pendingReferences: ['source:a:r1'],
+    },
+  };
+  const result = withResearchCoverage(
+    {
+      ...draft,
+      benchmark: [
+        { topic: 'A', analysis: 'Offre documentée', references: ['source:a:r1', 'source:s:r1'] },
+        { topic: 'A autre offre', analysis: 'Autre périmètre', references: ['source:a:r1'] },
+      ],
+    },
+    researchInput,
+  );
+  assert.match(result.limits[0]!, /1 alternative.*sur 3 fiches/u);
+  assert.match(result.limits[0]!, /1 fiche.*revue humaine/u);
+  assert.match(result.limits[0]!, /Collecte partielle/u);
+  assert.match(result.limits[0]!, /ne représente pas tout le marché/u);
+  assert.deepEqual(validateWorkflowResult(result), result);
+  assert.equal(withResearchCoverage(draft, input), draft);
+});
 test('content asks for purpose, target, phase and channel before a draft', () => {
   const questions = workflowQuestions({
     ...input,
@@ -117,6 +163,41 @@ test('unread citations, mismatched kinds and mixed output shapes fail closed', (
     validateWorkflowResult({ ...draft, outcome: 'needs_context', questions: ['Question ?'] }),
   );
   assert.deepEqual(validateWorkflowResult(draft), draft);
+});
+test('publication requires both offers in each comparison and affirmative uniqueness', () => {
+  const withRival: WorkflowInput = {
+    ...input,
+    sources: [...input.sources, { ...input.sources[0]!, id: 'rival', kind: 'competitor' }],
+  };
+  const read = new Set(['source:s:r1', 'source:rival:r1']);
+  const row = {
+    topic: 'Concurrent',
+    analysis: 'Besoin similaire',
+    references: ['source:rival:r1'],
+  };
+  assert.throws(
+    () => validateWorkflowPublication({ ...draft, benchmark: [row] }, withRival, read),
+    /comparison offer evidence required/,
+  );
+  const bilateral = { ...row, references: [...read] };
+  validateWorkflowPublication({ ...draft, benchmark: [bilateral] }, withRival, read);
+  assert.throws(
+    () =>
+      validateWorkflowPublication(
+        {
+          ...draft,
+          benchmark: [bilateral],
+          uniqueness: {
+            ...draft.uniqueness!,
+            verdict: 'not_differentiated',
+            references: ['source:rival:r1'],
+          },
+        },
+        withRival,
+        read,
+      ),
+    /uniqueness without benchmark/,
+  );
 });
 test('source, context and linked diagnosis changes invalidate the shared input fingerprint', () => {
   const baseline = workflowInputHash(input);

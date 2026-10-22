@@ -1,3 +1,5 @@
+import type { ResearchRuntime } from './research-runtime.ts';
+import { ResearchJob } from './jobs.ts';
 import type { ModelSettings } from '@ulysse/ai';
 import type { AgentRuntime } from './agent-runtime.ts';
 import { formulateNextStep, PROMPT_VERSION } from '@ulysse/ai';
@@ -23,7 +25,7 @@ import {
 import type { Logger, Metrics } from '@ulysse/observability';
 import type { Job, SendOptions } from 'pg-boss';
 import { PgBoss } from 'pg-boss';
-import type { z } from 'zod';
+import { z } from 'zod';
 import type { WorkerConfig } from './config.ts';
 import { ConnectionJob, RecommendationJob, SyncJob, TenantJob, WorkflowJob } from './jobs.ts';
 
@@ -64,6 +66,7 @@ export type WorkerDeps = Readonly<{
   /** Optional model-assisted wording; null provider = deterministic wording only. */
   model?: ModelSettings;
   agent?: AgentRuntime;
+  research?: ResearchRuntime;
 }>;
 
 type OutboxRow = {
@@ -251,6 +254,11 @@ export class WorkerRuntime {
       tenantScoped,
       instrument(QUEUES.workflowRun, (job) => this.handleWorkflow(parse(WorkflowJob, job), job.id)),
     );
+    await this.boss.work(
+      QUEUES.researchRun,
+      tenantScoped,
+      instrument(QUEUES.researchRun, (job) => this.handleResearch(parse(ResearchJob, job), job.id)),
+    );
     if (this.#deps.model?.provider) {
       await this.boss.work(
         QUEUES.recommendationFormulate,
@@ -320,6 +328,18 @@ export class WorkerRuntime {
     const tenantId = event.tenant_id;
     const group = { id: tenantId };
     switch (event.event_type) {
+      case 'research.requested': {
+        const notBefore = z.iso.datetime().optional().parse(event.payload.notBefore);
+        return {
+          name: QUEUES.researchRun,
+          data: { tenantId, campaignId: event.subject_id },
+          options: {
+            singletonKey: event.subject_id,
+            group,
+            ...(notBefore ? { startAfter: notBefore } : {}),
+          },
+        };
+      }
       case 'workflow.requested':
         return {
           name: QUEUES.workflowRun,
@@ -367,6 +387,15 @@ export class WorkerRuntime {
         // recommendation.decided: no background action in this version (no external execution, ADR-0002).
         return null;
     }
+  }
+
+  async handleResearch(job: ResearchJob, jobId: string): Promise<void> {
+    if (!this.#deps.research) throw new Error('research_engine_unavailable');
+    await this.#deps.research.run(
+      serviceContext(job.tenantId, `job:${jobId}`, ['analysis:run']),
+      job.campaignId,
+      this.#abort.signal,
+    );
   }
 
   async handleWorkflow(job: WorkflowJob, jobId: string): Promise<void> {
@@ -564,6 +593,24 @@ export class WorkerRuntime {
   async handleMaintain(job: TenantJob, jobId: string): Promise<void> {
     const ctx = serviceContext(job.tenantId, `job:${jobId}`, ['recommendation:maintain']);
     await this.#maintenance.expireDue(ctx);
+    if (this.#deps.research) {
+      const ids = await this.#deps.research.store.transaction(
+        ctx,
+        async (_tx, sql) =>
+          (
+            await sql.query<{ id: string }>(
+              "SELECT id FROM research_campaigns WHERE tenant_id=$1 AND status IN ('queued','running')",
+              [ctx.tenantId],
+            )
+          ).rows,
+      );
+      for (const row of ids)
+        await this.boss.send(
+          QUEUES.researchRun,
+          { tenantId: ctx.tenantId, campaignId: row.id },
+          { singletonKey: row.id, group: { id: ctx.tenantId } },
+        );
+    }
     // A process crash can leave an expired lease without a fresh source event.
     // Periodic reconciliation retries it; completed input hashes are skipped.
     if (this.#deps.agent && this.#deps.agent.config.ULYSSE_ANALYSIS_MODE !== 'rules')

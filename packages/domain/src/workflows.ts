@@ -24,6 +24,15 @@ export type WorkspaceSource = Readonly<{
   text: string;
   observedAt: string;
   origin: 'observed' | 'company' | 'simulated';
+  /** Discovery metadata only; a preview never authorizes a citation. */
+  research?: Readonly<{
+    relevance: 'direct' | 'indirect' | 'substitute';
+    reason: string;
+    review: 'pending' | 'approved';
+    offers: readonly string[];
+    targets: readonly string[];
+    dimensions: readonly string[];
+  }>;
 }>;
 export type WorkflowBrief = Readonly<{
   offer: string;
@@ -69,6 +78,15 @@ export type WorkflowInput = Readonly<{
   doctrine: Doctrine | null;
   sources: readonly WorkspaceSource[];
   buyer: null | Readonly<{ id: string; result: WorkflowResult }>;
+  research?: {
+    id: string;
+    revision: number;
+    status: string;
+    candidateCount: number;
+    qualifiedCount: number;
+    pendingReferences: string[];
+    geography?: string;
+  };
 }>;
 
 export const sourceReference = (s: WorkspaceSource): string => `source:${s.id}:r${s.revision}`;
@@ -81,6 +99,7 @@ export const workflowInputHash = (i: WorkflowInput): string =>
     doctrine: i.doctrine ? [i.doctrine.id, i.doctrine.version, i.doctrine.contentHash] : null,
     sources: i.sources.map((s) => [s.id, s.revision, s.observedAt]),
     buyer: i.buyer,
+    research: i.research,
   });
 
 /** Questions precede drafting; a model cannot turn missing context into invented facts. */
@@ -234,6 +253,11 @@ export function validateWorkflowPublication(
     'unretrieved citation',
   );
   if (result.outcome !== 'draft') return;
+  ensure(
+    input.kind !== 'buyer' || !input.research?.qualifiedCount || result.benchmark.length > 0,
+    'INVALID_INPUT',
+    'available research benchmark ignored',
+  );
   ensure(workflowQuestions(input).length === 0, 'INVALID_INPUT', 'incomplete brief');
   const offerRefs = new Set(
     input.sources.filter((s) => s.kind === 'offer' || s.kind === 'website').map(sourceReference),
@@ -251,12 +275,19 @@ export function validateWorkflowPublication(
     'INVALID_INPUT',
     'competitor evidence required',
   );
+  ensure(
+    result.benchmark.every((f) => f.references.some((r) => offerRefs.has(r))),
+    'INVALID_INPUT',
+    'comparison offer evidence required',
+  );
   if (
     result.uniqueness?.verdict !== undefined &&
     result.uniqueness.verdict !== 'insufficient_evidence'
   ) {
     ensure(
-      result.benchmark.length > 0 && result.uniqueness.references.some((r) => competitors.has(r)),
+      result.benchmark.length > 0 &&
+        result.uniqueness.references.some((r) => competitors.has(r)) &&
+        result.uniqueness.references.some((r) => offerRefs.has(r)),
       'INVALID_INPUT',
       'uniqueness without benchmark',
     );
