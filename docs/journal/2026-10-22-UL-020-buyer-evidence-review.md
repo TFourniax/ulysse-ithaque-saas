@@ -18,6 +18,13 @@ Fichiers concernés : worker (`buyer-review`, passerelle, préparation/publicati
 
 ## Vérifications et limites
 
-`npm run verify` réussi : 130 tests unitaires, format, lint typé, TypeScript, cycles, OpenAPI et documentation. Les tests PostgreSQL et de stack restent à exécuter en CI : reprise 429, correction de références, changement de source pendant la relecture, facturation des tentatives et rejet d'outils. La stack Hermes doit exécuter un premier brouillon scripté, puis une relecture qui s'abstient explicitement de conclure sur des données fictives.
+Code **`fbb44c480ac0a72ff1f7dded7c093d4ea1dac48e`** publié : [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39779581152) et [Hermes/mises à niveau 6/6](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39779581178) réussies; les onze contrôles sont terminés avec succès.
+
+- `npm run verify` réussi : 130 tests unitaires, format, lint typé, TypeScript, cycles, OpenAPI et documentation.
+- PostgreSQL 50/50, API 18/18 et worker 50/50 sous les rôles réels. Le nouveau scénario vérifie la transmission des textes sans catalogue/raisonnement précédent, le remplacement du brouillon par le résultat relu, les preuves bilatérales, la correction unique, le rejet persistant, un appel d’outil refusé, une reprise 429, les coûts et le refus de publication après changement d’une source.
+- Navigateur 15/15. Sept tests Python ciblés en local et neuf dans l’image Hermes, dont la vraie boucle. Onze tests du script VPS et `bash -n` réussis.
+- Stack neuve et mise à niveau depuis UL-016 : Hermes génère le brouillon scripté, le worker exécute la relecture sans outil, puis le modèle simulé s’abstient explicitement. Le script de recette exige la trace de cette seconde passe dans la sortie simulée. Parcours contenu, historique, session, redémarrage et sauvegarde/restauration vérifiés.
+
+[Procédure de mise à jour](../RESEARCH-OPERATIONS.md) épinglée sur ce code. Les commits documentaires suivants ne changent pas le code testé.
 
 Les fixtures vérifient le circuit et les contrôles; elles ne mesurent pas la qualité sémantique d'un modèle réel. Une seconde passe du même modèle peut encore conserver une erreur. Les citations exactes d'une extraction peuvent elles-mêmes manquer de contexte; la corroboration indépendante, la qualification des acteurs et les lacunes de collecte restent ouvertes. Aucun appel fournisseur réel ni déploiement VPS depuis cet environnement. Clôture après déploiement et relecture d'un nouveau diagnostic avec ses preuves, coût et durée.

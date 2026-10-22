@@ -1,6 +1,6 @@
 # Recherche publique — activation et recette UL-020
 
-État : code **`f06dee6c1ee94bb63c95964f5ef6648aa9a86eb5`** publié, CI applicative et Hermes réussies (11 contrôles). Le diagnostic transmis le 22 octobre aboutit mais sa comparaison est insuffisante. Ce correctif fournit un catalogue d’offres et cibles avant la sélection, priorise les lectures selon les faits et le brief, diversifie les preuves des digests, renforce les consignes de comparaison et affiche les limites avec une couverture calculée. [Preuves et limites](journal/2026-10-22-UL-020-benchmark-selection.md). Une nouvelle analyse sur la campagne existante permet de tester le changement; la qualité sémantique reste à relire.
+État : code **`fbb44c480ac0a72ff1f7dded7c093d4ea1dac48e`** publié, 11 contrôles CI réussis. Le diagnostic transmis le 22 octobre à 13 h 10 compare quatre acteurs et affiche ses limites, mais conserve des conclusions non étayées. Ce correctif ajoute une relecture obligatoire du brouillon sur les extraits réellement consultés et exige les citations des deux offres dans chaque comparaison. Les exemples tarifaires, inconnues, déclarations et résultats mesurés doivent être distingués dans le texte corrigé. [Preuves et limites](journal/2026-10-22-UL-020-buyer-evidence-review.md). Une nouvelle analyse sur la campagne existante permet de tester le changement; la qualité sémantique reste à relire. La collecte et ses faits ne sont pas effacés.
 
 Les correctifs précédents de reprise 429/503, schéma natif, preuves obligatoires, réservations et pause restent inclus. La configuration autorisée conserve **2 USD/analyse, 20 USD/session et 100 USD/entreprise/mois**; nouvelles campagnes proposées à 3 USD (maximum configurable 10 USD). Ce sont des plafonds, pas des coûts attendus. Le modèle, son profil et le corpus restent conservés.
 
@@ -8,7 +8,7 @@ Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue
 
 ## Préparer et déployer
 
-La branche est `codex/ul-020-web-research`, issue d’UL-019, [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). La commande ci-dessous épingle le code vérifié par les tests cités dans le journal; les commits documentaires suivants ne changent pas ce code. Les migrations additives 0014 à 0016 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : le contrat v3 accepte un diagnostic de trois minutes avec reprise du même appel. Le script conserve le modèle européen, les clés, la session et le corpus. L’option `--budgets` applique explicitement les nouvelles enveloppes; sans cette option, les plafonds actifs sont conservés. Il vérifie une sauvegarde chiffrée avant migration. Prévoir une brève interruption pendant le remplacement des services.
+La branche est `codex/ul-020-web-research`, issue d’UL-019, [PR #8](https://github.com/TFourniax/ulysse-ithaque-saas/pull/8). La commande ci-dessous épingle le code vérifié par les tests cités dans le journal; les commits documentaires suivants ne changent pas ce code. Les migrations additives 0014 à 0016 conservent les données existantes. L’application et Hermes doivent être reconstruits ensemble : le contrat v3 accepte une exécution Hermes de trois minutes avec reprise du même appel, puis le worker dispose d’une marge supplémentaire pour la relecture acheteur (bail total quatre minutes). Le script conserve le modèle européen, les clés, la session et le corpus. L’option `--budgets` applique explicitement les nouvelles enveloppes; sans cette option, les plafonds actifs sont conservés. Il vérifie une sauvegarde chiffrée avant migration. Prévoir une brève interruption pendant le remplacement des services.
 
 Sur le VPS, depuis le terminal `hermesadmin`, exécuter ce bloc qui utilise le compte `ulysse`, selon la procédure [modèles Europe](MODEL-EU.md). Le script vérifie l’hôte, l’UID, le Docker rootless, la configuration active et l’absence de dérive. Il n’est pas destiné à un autre Docker ou serveur. En cas d’arrêt sur erreur, conserver le message et ne pas passer à l’activation.
 
@@ -20,7 +20,7 @@ umask 077
 cd /
 [[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
 ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-ULYSSE_REVISION=f06dee6c1ee94bb63c95964f5ef6648aa9a86eb5
+ULYSSE_REVISION=fbb44c480ac0a72ff1f7dded7c093d4ea1dac48e
 ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
@@ -34,11 +34,11 @@ Pour la démo déjà configurée, ce déploiement conserve la clé Brave, le mod
 
 **Reprendre la collecte** reste une action distincte, sans hausse du plafond après une erreur. Un appel déjà transmis lors de l’interruption peut encore être facturé, sans publication tardive de ses données. Les anciennes interruptions manuelles sont également réutilisables si l’autorisation et les versions restent valides. L’étape de branchement ci-dessous concerne une première configuration ou un remplacement de clé.
 
-Le diagnostic `diagnose` affiche désormais `automatically_supplied_sources` et `automatically_supplied_references` pour les nouveaux appels. Un nombre d’outils nul ne signifie plus que les sources obligatoires ont été omises : leurs textes sont fournis par la passerelle. Les lectures supplémentaires de concurrents restent tracées comme outils. Ces compteurs ne prouvent pas la justesse de la comparaison.
+Le diagnostic `diagnose` affiche désormais `automatically_supplied_sources` et `automatically_supplied_references` pour les nouveaux appels. Un nombre d’outils nul ne signifie plus que les sources obligatoires ont été omises : leurs textes sont fournis par la passerelle. Les lectures supplémentaires de concurrents restent tracées comme outils. Ces compteurs ne prouvent pas la justesse de la comparaison. Le champ `buyer_evidence_review` affiche la version et l’état de la nouvelle relecture. Il indique son exécution, pas une validation indépendante de la véracité des conclusions.
 
 ## Refus temporaire : reprise automatique
 
-Pour `provider_http_429` ou `provider_http_503`, le correctif de reprise décrit dans le [journal dédié](journal/2026-10-21-UL-020-provider-retry.md) reprend le même appel buyer/content au plus deux fois, avec attente affichée. Il respecte le délai fournisseur, ou attend 30 puis 60 secondes en son absence. Les reprises partagent le plafond de huit appels et les budgets actifs; les transmissions refusées gardent leur provision. Un délai supérieur à deux minutes ou incompatible avec le temps restant arrête le diagnostic. Le bail total passe à trois minutes; une limite durable de compte ou de fournisseur peut toujours provoquer un échec. `diagnose` ajoute le compteur `provider_retries` et les métadonnées techniques `provider_retry`, sans texte fournisseur. L’application et Hermes doivent être mis à jour ensemble.
+Pour `provider_http_429` ou `provider_http_503`, le correctif de reprise décrit dans le [journal dédié](journal/2026-10-21-UL-020-provider-retry.md) reprend le même appel buyer/content au plus deux fois, avec attente affichée. Il respecte le délai fournisseur, ou attend 30 puis 60 secondes en son absence. Les reprises partagent le plafond de huit appels et les budgets actifs; les transmissions refusées gardent leur provision. Un délai supérieur à deux minutes ou incompatible avec le temps restant arrête le diagnostic. Le bail total est de quatre minutes pour buyer, trois pour content; une limite durable de compte ou de fournisseur peut toujours provoquer un échec. `diagnose` ajoute le compteur `provider_retries` et les métadonnées techniques `provider_retry`, sans texte fournisseur. L’application et Hermes doivent être mis à jour ensemble.
 
 ## Réponse tronquée : ajuster le plafond Mistral
 
