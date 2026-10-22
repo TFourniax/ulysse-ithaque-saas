@@ -59,7 +59,7 @@ Priorité de cette branche : assembler et vérifier UL-017, puis terminer la rec
 
 | Dette | Impact | État / clôture |
 | --- | --- | --- |
-| DEBT-037 | Un plafond égal au dernier tarif observé empêche l’activation du secours pour une faible variation | prise par Codex le 22 octobre — plafonds GLM 0,20/0,80 USD/M avec marge explicite, test du refus historique et des deux bornes, procédure sans rebuild. Clôture restante : activation effective puis diagnostic live avec secours et qualité des preuves revues. |
+| DEBT-037 | Un plafond égal au dernier tarif observé empêche l’activation du secours pour une faible variation | prise par Codex le 22 octobre — plafonds GLM 0,20/0,80 USD/M avec marge explicite, test du refus historique et des deux bornes, procédure sans rebuild. Code `06f028b` : 11 contrôles CI réussis. Brouillon live abouti rapporté à 18 h 59; activation et usage effectifs du secours non établis par le texte. Clôture restante : bascule observée et qualité des preuves revue. |
 | DEBT-036 | La duplication des brouillons peut empêcher une correction de citations sur un corpus volumineux; le motif d’inéligibilité n’était pas enregistré | prise par Codex le 22 octobre — correction compacte de la relecture, références typées dans les preuves et diagnostic technique des limites. Code `1d1836ca0ef00d2e4fa2050608b5fe16917a63b6` publié : 11 contrôles CI réussis, worker 53/53, vraie boucle Hermes et stacks neuve/mise à niveau. Clôture restante : diagnostic réel relu avec la campagne conservée. La taille historique du run échoué reste inconnue. |
 | DEBT-001 | Aucun tsc/lint | fermée (UL-002) |
 | DEBT-002 | Adaptateur mémoire non durable | fermée (UL-003, adaptateur PostgreSQL ; la mémoire reste l'oracle de tests) |
