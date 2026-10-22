@@ -172,6 +172,24 @@ class FinalResponse(unittest.TestCase):
 
 
 class WorkflowEvidence(unittest.TestCase):
+    def test_stub_repairs_the_latest_review_without_replaying_the_original_draft(self):
+        from model_stub import _workflow_step, respond
+        sources = [dict(id=str(uuid4()), kind=kind, title=title, text="Fictional source text.", reference=f"source:{title}:r1")
+                   for kind, title in [("offer", "own"), ("competitor", "rival-a"), ("competitor", "rival-b")]]
+        evidence = {"context": {"kind": "buyer"}, "sources": sources, "untrusted": True}
+        _, draft = _workflow_step([{"name": "list_company_sources", "args": {}, "result": {"items": sources}}], evidence)
+        def messages(value):
+            return [{"role": "system", "content": "Relecture fictive"},
+                    {"role": "user", "content": "ULYSSE_WORKFLOW_EVIDENCE_V1\n" + json.dumps(evidence)},
+                    {"role": "user", "content": "ULYSSE_BUYER_DRAFT_TO_REVIEW_V1\n" + json.dumps({"draft": value, "untrusted": True})}]
+        first = json.loads(respond({"messages": messages(draft)})["choices"][0]["message"]["content"])
+        self.assertTrue(all(len(row['references']) == 1 for row in first['benchmark']))
+        repair = messages(first) + [{"role": "user", "content": "Ulysse a refusé les références du diagnostic : correction de fixture."}]
+        self.assertFalse(any(m['role'] == 'assistant' for m in repair))
+        corrected = json.loads(respond({"messages": repair})["choices"][0]["message"]["content"])
+        self.assertEqual(corrected['benchmark'], draft['benchmark'])
+        self.assertEqual(len(corrected['limits']), len(set(corrected['limits'])))
+
     def test_buyer_stub_exercises_separate_review_and_preserves_a_cited_draft(self):
         from model_stub import _workflow_step, respond
         source = {"id": str(uuid4()), "kind": "offer", "text": "Service fictif avec accompagnement.", "reference": "source:fixture:r1"}

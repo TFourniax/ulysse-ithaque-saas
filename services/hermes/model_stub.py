@@ -199,11 +199,19 @@ def respond(body):
             raise ValueError("review has no source text")
         workflow_result = {**review["draft"],
                            "summary": "Modèle simulé : brouillon comparatif relu techniquement, aucune validation de pertinence métier.",
-                           "limits": [*review["draft"]["limits"], "Relecture séparée exécutée avec les preuves consultées."]}
+                           "limits": list(dict.fromkeys([*review["draft"]["limits"], "Relecture séparée exécutée avec les preuves consultées."]))}
         # Force a real review repair in complete-stack acceptance, then return the
         # bilateral references. This is deliberately a fault fixture, never live logic.
-        if len(workflow_result['benchmark']) >= 2 and not any(m.get('role') == 'assistant' for m in messages):
-            workflow_result['benchmark'] = [{**row, 'references': row['references'][1:]} for row in workflow_result['benchmark']]
+        repairing = any(m.get('role') == 'user' and isinstance(m.get('content'), str)
+                        and m['content'].startswith('Ulysse a refusé les références du diagnostic') for m in messages)
+        if len(workflow_result['benchmark']) >= 2:
+            if repairing:
+                own = next(s['reference'] for s in evidence['sources'] if s.get('kind') in ('offer', 'website'))
+                rivals = {s['reference'] for s in evidence['sources'] if s.get('kind') == 'competitor'}
+                workflow_result['benchmark'] = [{**row, 'references': [own, *[r for r in row['references'] if r in rivals]]}
+                                                for row in workflow_result['benchmark']]
+            else:
+                workflow_result['benchmark'] = [{**row, 'references': row['references'][1:]} for row in workflow_result['benchmark']]
     elif names == WORKFLOW_TOOLS or "get_workflow_context" in called:
         prefix = "ULYSSE_WORKFLOW_EVIDENCE_V1\n"
         evidence = next((json.loads(m["content"][len(prefix):]) for m in messages
