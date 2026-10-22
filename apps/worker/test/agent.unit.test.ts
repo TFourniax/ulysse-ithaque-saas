@@ -9,6 +9,7 @@ import {
   HERMES_COMMIT,
   HermesExecutor,
   agentConfig,
+  fallbackProvider,
 } from '../src/agent-runtime.ts';
 import {
   agentProvider,
@@ -27,6 +28,32 @@ const hermesEnv = {
   AGENT_MONTH_BUDGET_USD: '10',
   AGENT_SESSION_ID: 'unit-test-session',
 };
+
+test('fallback configuration is a distinct approved European profile, never a caller-selected URL or global route', () => {
+  const env = {
+    ...hermesEnv,
+    AGENT_PROVIDER_ROUTE: 'openrouter-eu-zdr',
+    AGENT_FALLBACK_MODEL_ID: 'mistralai/mistral-small-2603',
+  };
+  const config = agentConfig(env);
+  const backup = fallbackProvider(config);
+  assert.ok(backup);
+  assert.equal(backup.url, 'https://eu.openrouter.ai/api/v1/chat/completions');
+  assert.equal(backup.provider.zdr, true);
+  assert.equal(backup.provider.data_collection, 'deny');
+  assert.deepEqual(backup.provider.only, ['mistral/eu']);
+  for (const invalid of [
+    { ...env, AGENT_PROVIDER_ROUTE: 'openrouter' },
+    { ...env, AGENT_FALLBACK_MODEL_ID: env.AGENT_MODEL_ID },
+    { ...env, AGENT_FALLBACK_MODEL_ID: 'https://foreign/model' },
+    { ...env, AGENT_FALLBACK_MODEL_ID: '', AGENT_FALLBACK_MODEL_PROFILE_JSON: '{}' },
+    {
+      ...env,
+      AGENT_FALLBACK_MODEL_PROFILE_JSON: JSON.stringify({ ...backup.profile, route: 'openrouter' }),
+    },
+  ])
+    assert.throws(() => agentConfig(invalid));
+});
 
 test('GLM keeps reasoning enabled, reserves its full output allowance and has a stable profile', () => {
   const route = agentProvider('z-ai/glm-5.3-flash', 'openrouter-eu-zdr');

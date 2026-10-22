@@ -61,6 +61,8 @@ jobs:
       ULYSSE_ANALYSIS_MODE: hermes-stub
       ENABLE_DEMO_SCENARIOS: 'true'
       AGENT_MODEL_ID: openai/gpt-4.1-mini
+      AGENT_PROVIDER_ROUTE: openrouter-eu-zdr
+      AGENT_FALLBACK_MODEL_ID: mistralai/mistral-small-2603
       AGENT_RUN_BUDGET_USD: '0.25'
       AGENT_SESSION_BUDGET_USD: '2'
       AGENT_MONTH_BUDGET_USD: '10'

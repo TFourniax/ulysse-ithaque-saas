@@ -15,11 +15,11 @@ from uuid import UUID
 
 SLOTS = threading.BoundedSemaphore(2)
 MODES = {"hermes-live", "hermes-stub"}
-EXECUTION_CONTRACT = "ulysse-execution-v3"
+EXECUTION_CONTRACT = "ulysse-execution-v4"
 
 
 def execution_timeout_ms(request):
-    maximum = 180000 if request.get("workflow", "deal") in ("buyer", "content") else 90000
+    maximum = 300000 if request.get("workflow", "deal") in ("buyer", "content") else 90000
     requested = request.get("timeoutMs", maximum)
     if type(requested) is not int or requested < 5000:
         raise ValueError("invalid_execution_timeout")
@@ -31,6 +31,11 @@ def model_settings(request):
     model = request.get("model")
     if not isinstance(model, str) or len(model) > 160 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*", model):
         raise ValueError("invalid_model_id")
+    fallback = request.get("fallbackModel")
+    if fallback is not None and (request.get("workflow") not in ("buyer", "content") or
+                                not isinstance(fallback, str) or fallback == model or len(fallback) > 160 or
+                                not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*", fallback)):
+        raise ValueError("invalid_fallback_model")
     settings = request.get("modelSettings", {"maxOutputTokens": 3000, "reasoning": "disabled"})
     if not isinstance(settings, dict) or set(settings) != {"maxOutputTokens", "reasoning"}:
         raise ValueError("invalid_model_settings")

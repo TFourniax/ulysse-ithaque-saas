@@ -7,11 +7,60 @@ import {
   inspectBuyerCitations,
   workflowRepairPrompt,
   workflowResponseFormat,
+  retainSupportedBuyerSections,
 } from '../src/workflow-response.ts';
 
 const base = pendingWorkflow('buyer', [], 'Fixture structurée');
 const completion = (content: unknown, finish_reason = 'stop') => ({
   choices: [{ finish_reason, message: { content } }],
+});
+
+test('partial review keeps bilateral rows, removes dependent conclusions and never invents a missing citation', () => {
+  const evidence = {
+    references: ['own', 'rival'],
+    offerReferences: ['own'],
+    competitorReferences: ['rival'],
+  };
+  const reviewed = {
+    ...base,
+    outcome: 'draft' as const,
+    summary: 'Unsupported global superiority',
+    questions: ['Accusation from removed row?'],
+    buyerQuestions: ['Unknown cost?'],
+    findings: [
+      { topic: 'Offer', analysis: 'Description supported by own source', references: ['own'] },
+      { topic: 'Invented', analysis: 'Unretrieved', references: ['foreign'] },
+    ],
+    benchmark: [
+      { topic: 'Supported', analysis: 'Two described offers', references: ['own', 'rival'] },
+      { topic: 'Unilateral', analysis: 'Missing own evidence', references: ['rival'] },
+      {
+        topic: 'Unknown',
+        analysis: 'Citation outside allowed texts',
+        references: ['own', 'foreign'],
+      },
+    ],
+    uniqueness: {
+      verdict: 'plausible' as const,
+      reason: 'Unsupported uniqueness',
+      references: ['own', 'rival'],
+    },
+  };
+  const partial = retainSupportedBuyerSections(reviewed, evidence);
+  assert.ok(partial);
+  assert.deepEqual(partial.benchmark, [reviewed.benchmark[0]]);
+  assert.deepEqual(partial.findings, [reviewed.findings[0]]);
+  assert.equal(partial.uniqueness?.verdict, 'insufficient_evidence');
+  assert.deepEqual(partial.questions, []);
+  assert.deepEqual(partial.buyerQuestions, []);
+  assert.ok(!JSON.stringify(partial).includes('Unsupported'));
+  assert.match(partial.summary, /partiel/);
+  assert.equal(inspectBuyerCitations(partial, evidence), null);
+  assert.equal(
+    retainSupportedBuyerSections({ ...reviewed, benchmark: reviewed.benchmark.slice(1) }, evidence),
+    null,
+  );
+  assert.equal(retainSupportedBuyerSections({ ...reviewed, findings: [] }, evidence), null);
 });
 
 test('review checks each bilateral comparison and affirmative uniqueness, not merely a global own-offer citation', () => {

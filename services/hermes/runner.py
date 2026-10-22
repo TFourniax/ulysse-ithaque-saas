@@ -53,6 +53,11 @@ def execute(request):
     from hermes_cli.plugins import get_plugin_manager, has_middleware
     from run_agent import AIAgent
 
+    # Official Hermes fallback, using the same scoped gateway capability. The child
+    # never receives an OpenRouter key or an administrator-controlled destination.
+    fallback = ({"provider": "custom", "model": request["fallbackModel"],
+                 "base_url": f"{run_state.GATEWAY_URL}/v1", "api_key": run_state.CAPABILITY,
+                 "api_mode": "chat_completions"} if request.get("fallbackModel") else None)
     agent = AIAgent(
         model=request["model"], api_key=run_state.CAPABILITY, base_url=f"{run_state.GATEWAY_URL}/v1",
         provider="custom", api_mode="chat_completions", enabled_toolsets=["ulysse"],
@@ -60,7 +65,7 @@ def execute(request):
         ephemeral_system_prompt=run_state.INSTRUCTIONS, quiet_mode=True, verbose_logging=False,
         save_trajectories=False, skip_context_files=True, load_soul_identity=False,
         skip_memory=True, skip_background_review=True, session_db=None,
-        checkpoints_enabled=False, fallback_model=None, credential_pool=None,
+        checkpoints_enabled=False, fallback_model=fallback, credential_pool=None,
         cwd=os.environ["HERMES_HOME"], reasoning_config=reasoning_config,
     )
     # A prompt cannot impose the allowlist: fail closed on the actual runtime selection.

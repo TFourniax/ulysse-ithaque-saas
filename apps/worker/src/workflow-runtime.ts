@@ -80,6 +80,8 @@ type Settings = {
   modelProfile?: object;
   modelProfileHash?: string;
   modelSettings?: Parameters<AgentExecutor['execute']>[0]['modelSettings'];
+  fallbackModel?: string;
+  fallbackProfileHash?: string;
   session: string;
   budgets: { run: number; session: number; month: number };
   hermesVersion: string;
@@ -261,6 +263,10 @@ export class WorkflowRuntime {
             providerRoute: this.settings.providerRoute,
             modelProfile: this.settings.modelProfile ?? null,
             modelProfileHash: this.settings.modelProfileHash ?? null,
+            primaryModel: this.settings.model,
+            primaryModelProfile: this.settings.modelProfile ?? null,
+            fallbackModel: this.settings.fallbackModel ?? null,
+            fallbackProfileHash: this.settings.fallbackProfileHash ?? null,
           }),
           hash(capability),
           this.settings.session,
@@ -269,7 +275,7 @@ export class WorkflowRuntime {
           WORKFLOW_VERSION,
           ctx.correlationId,
           kind,
-          WORKFLOW_TIMEOUT_MS + (kind === 'buyer' ? 60000 : 0),
+          WORKFLOW_TIMEOUT_MS + (kind === 'buyer' ? 120000 : 0),
         ],
       );
       await sql.query(
@@ -314,6 +320,7 @@ export class WorkflowRuntime {
                 mode: this.settings.mode === 'hermes-stub' ? 'hermes-stub' : 'hermes-live',
                 model: this.settings.model,
                 modelSettings: this.settings.modelSettings,
+                fallbackModel: this.settings.fallbackModel,
                 timeoutMs: WORKFLOW_TIMEOUT_MS,
                 workflow: kind,
               },

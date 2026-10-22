@@ -34,13 +34,14 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
 import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts';
-import { fetchAgentCompletion, ProviderCallError } from './agent-errors.ts';
-import { workflowRetryDelay } from './workflow-retry.ts';
+import { fetchAgentCompletion, ProviderCallError, providerGatewayFailure } from './agent-errors.ts';
+import { workflowRetryDelay, WORKFLOW_MODEL_CALLS } from './workflow-retry.ts';
 import {
   inspectBuyerCitations,
   inspectWorkflowCompletion,
   workflowRepairPrompt,
   workflowResponseFormat,
+  retainSupportedBuyerSections,
 } from './workflow-response.ts';
 import {
   BUYER_REVIEW_INSTRUCTIONS,
@@ -50,7 +51,7 @@ import {
 } from './buyer-review.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
-export const EXECUTION_CONTRACT = 'ulysse-execution-v3';
+export const EXECUTION_CONTRACT = 'ulysse-execution-v4';
 /** sha256 of services/hermes/instructions.txt (LF); a unit test keeps both identical. */
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
@@ -77,6 +78,8 @@ const Config = z.object({
   OPENROUTER_API_KEY: z.string().min(16).optional(),
   AGENT_MODEL_ID: ModelId.optional(),
   AGENT_MODEL_PROFILE_JSON: z.string().optional(),
+  AGENT_FALLBACK_MODEL_ID: ModelId.optional(),
+  AGENT_FALLBACK_MODEL_PROFILE_JSON: z.string().optional(),
   AGENT_PROVIDER_ROUTE: z.enum(['openrouter', 'openrouter-eu-zdr']).default('openrouter'),
   AGENT_RUN_BUDGET_USD: z.coerce.number().positive().max(2).optional(),
   AGENT_SESSION_BUDGET_USD: z.coerce.number().positive().max(20).optional(),
@@ -94,6 +97,7 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
     throw new Error('Un profil exige AGENT_MODEL_ID');
   if (c.AGENT_MODEL_ID)
     agentProvider(c.AGENT_MODEL_ID, c.AGENT_PROVIDER_ROUTE, c.AGENT_MODEL_PROFILE_JSON);
+  fallbackProvider(c);
   if (c.ULYSSE_ANALYSIS_MODE === 'hermes-live' || c.ULYSSE_ANALYSIS_MODE === 'hermes-stub') {
     const live = c.ULYSSE_ANALYSIS_MODE === 'hermes-live';
     if (
@@ -127,6 +131,23 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
   }
   return c;
 }
+export function fallbackProvider(config: AgentConfig) {
+  if (!config.AGENT_FALLBACK_MODEL_ID) {
+    if (config.AGENT_FALLBACK_MODEL_PROFILE_JSON) throw new Error('Profil de secours sans modele');
+    return undefined;
+  }
+  if (
+    config.AGENT_PROVIDER_ROUTE !== 'openrouter-eu-zdr' ||
+    config.AGENT_FALLBACK_MODEL_ID === config.AGENT_MODEL_ID ||
+    !config.AGENT_MODEL_ID
+  )
+    throw new Error('Le secours exige deux modeles distincts sur la route Europe/ZDR');
+  return agentProvider(
+    config.AGENT_FALLBACK_MODEL_ID,
+    config.AGENT_PROVIDER_ROUTE,
+    config.AGENT_FALLBACK_MODEL_PROFILE_JSON,
+  );
+}
 const hash = (token: string) => createHash('sha256').update(token).digest('hex');
 const Run = z.object({
   id: z.uuid(),
@@ -136,8 +157,13 @@ const Run = z.object({
   model: z.string(),
   snapshot: z.object({
     modelProfileHash: z.string().nullable().optional(),
+    fallbackModel: z.string().nullable().optional(),
+    fallbackProfileHash: z.string().nullable().optional(),
+    fallbackEligible: z.boolean().optional(),
     providerRetryCount: z.number().int().min(0).max(2).optional(),
-    providerRetry: z.object({ notBefore: z.iso.datetime().nullable() }).optional(),
+    providerRetry: z
+      .object({ notBefore: z.iso.datetime().nullable(), phase: z.string().optional() })
+      .optional(),
   }),
   mode: z.enum(['simulated', 'hermes-live', 'hermes-stub']),
   status: z.string(),
@@ -235,6 +261,7 @@ export class AgentRuntime {
   readonly workflows: WorkflowRuntime;
   readonly log: AgentLog | undefined;
   readonly provider: ReturnType<typeof agentProvider> | undefined;
+  readonly fallback: ReturnType<typeof agentProvider> | undefined;
   constructor(
     pool: Pool,
     config: AgentConfig,
@@ -250,6 +277,7 @@ export class AgentRuntime {
           config.AGENT_MODEL_PROFILE_JSON,
         )
       : undefined;
+    this.fallback = fallbackProvider(config);
     this.executor = executor;
     this.workflows = new WorkflowRuntime(
       pool,
@@ -260,6 +288,8 @@ export class AgentRuntime {
         modelProfile: this.provider?.profile,
         modelProfileHash: this.provider?.profileHash,
         modelSettings: this.provider?.executionSettings,
+        fallbackModel: this.fallback?.profile.model,
+        fallbackProfileHash: this.fallback?.profileHash,
         session: config.AGENT_SESSION_ID ?? 'simulation',
         hermesVersion: HERMES_COMMIT,
         budgets: {
@@ -901,7 +931,9 @@ export class AgentRuntime {
       const retries = run.snapshot.providerRetryCount ?? 0;
       const delay = workflowRetryDelay(error, retries, Date.parse(run.expires_at) - Date.now());
       const allowed =
-        delay !== null && run.model_calls < 8 && run.committed_usd + nextCost <= run.reserved_usd;
+        delay !== null &&
+        run.model_calls < WORKFLOW_MODEL_CALLS &&
+        run.committed_usd + nextCost <= run.reserved_usd;
       const metadata = {
         code: error.code,
         httpStatus: error.httpStatus,
@@ -938,9 +970,9 @@ export class AgentRuntime {
   ): Promise<WorkflowResult> {
     const ctx = await this.store.resolve(hash(capability));
     ensure(ctx, 'FORBIDDEN', 'inactive capability');
-    const runId = await this.store.transaction(ctx, async (_tx, sql) => {
-      const claimed = await sql.query<{ id: string }>(
-        "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{buyerReview}',$3::jsonb) WHERE tenant_id=$1 AND capability_hash=$2 AND workflow_kind='buyer' AND status='running' AND expires_at>clock_timestamp() AND NOT (snapshot ? 'buyerReview') RETURNING id",
+    const active = await this.store.transaction(ctx, async (_tx, sql) => {
+      const claimed = await sql.query<{ id: string; model: string }>(
+        "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{buyerReview}',$3::jsonb) WHERE tenant_id=$1 AND capability_hash=$2 AND workflow_kind='buyer' AND status='running' AND expires_at>clock_timestamp() AND NOT (snapshot ? 'buyerReview') RETURNING id,model",
         [
           ctx.tenantId,
           hash(capability),
@@ -955,11 +987,11 @@ export class AgentRuntime {
         'validating',
         'Relecture du diagnostic à partir des preuves consultées',
       );
-      return claimed.rows[0].id;
+      return claimed.rows[0];
     });
     const payload = await this.infer(
       capability,
-      { messages: buyerReviewMessages(draft) },
+      { model: active.model, messages: buyerReviewMessages(draft) },
       signal,
       workflowCitations(draft),
     );
@@ -969,7 +1001,7 @@ export class AgentRuntime {
     await this.store.transaction(ctx, async (_tx, sql) => {
       await sql.query(
         "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{buyerReview,status}','\"completed\"'::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running'",
-        [ctx.tenantId, runId],
+        [ctx.tenantId, active.id],
       );
     });
     return inspected.result;
@@ -998,7 +1030,13 @@ export class AgentRuntime {
     const messages = body.messages.map((m: unknown) => record(m));
     assertTextMessages(messages);
     const bytes = Buffer.byteLength(JSON.stringify(body));
-    const provider = this.provider;
+    const requestedModel = body.model ?? this.config.AGENT_MODEL_ID;
+    const provider =
+      requestedModel === this.config.AGENT_MODEL_ID
+        ? this.provider
+        : requestedModel === this.fallback?.profile.model
+          ? this.fallback
+          : undefined;
     ensure(provider && this.config.AGENT_MODEL_ID, 'INVALID_INPUT', 'model absent');
     ensure(bytes <= provider.profile.maxContextBytes, 'INVALID_INPUT', 'context limit');
     const {
@@ -1006,6 +1044,7 @@ export class AgentRuntime {
       mode,
       workflowKind,
       evidence,
+      continuationMessages,
       preparedMessages,
       responseFormat,
       upperCost,
@@ -1017,6 +1056,7 @@ export class AgentRuntime {
       );
       const run = Run.parse(query.rows[0]);
       const retry = run.snapshot.providerRetry;
+      ensure(retry?.phase !== 'stopped', 'FORBIDDEN', 'provider retries exhausted');
       ensure(
         !retry?.notBefore || Date.parse(retry.notBefore) <= Date.now(),
         'FORBIDDEN',
@@ -1025,14 +1065,31 @@ export class AgentRuntime {
       ensure(
         run.mode !== 'simulated' &&
           run.mode === this.config.ULYSSE_ANALYSIS_MODE &&
-          run.model === this.config.AGENT_MODEL_ID &&
-          run.snapshot.modelProfileHash === provider.profileHash &&
           run.status === 'running' &&
-          run.model_calls < 8 &&
+          run.model_calls < (run.workflow_kind === 'deal' ? 8 : WORKFLOW_MODEL_CALLS) &&
           Date.parse(run.expires_at) > Date.now(),
         'FORBIDDEN',
         'model limit',
       );
+      const switching = run.model !== provider.profile.model;
+      if (switching) {
+        ensure(
+          run.workflow_kind !== 'deal' &&
+            provider === this.fallback &&
+            run.model === this.provider?.profile.model &&
+            run.snapshot.modelProfileHash === this.provider.profileHash &&
+            run.snapshot.fallbackModel === provider.profile.model &&
+            run.snapshot.fallbackProfileHash === provider.profileHash &&
+            run.snapshot.fallbackEligible === true,
+          'FORBIDDEN',
+          'unauthorized model switch',
+        );
+      } else
+        ensure(
+          run.snapshot.modelProfileHash === provider.profileHash,
+          'FORBIDDEN',
+          'model profile changed',
+        );
       if (run.workflow_kind === 'deal') {
         const { opportunity: o, doctrine: d, context: c } = await this.current(tx, run.subject_id);
         ensure(agentInputHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
@@ -1086,9 +1143,21 @@ export class AgentRuntime {
             );
       // Mandatory evidence is supplied as untrusted data, never as a system instruction
       // or an invented model/tool message (which could break signed reasoning replay).
-      let preparedMessages = evidence
-        ? [messages[0], evidence.message, ...messages.slice(1)]
+      // A signature from one model cannot authorize/replay reasoning on another.
+      // Also applies to the independent review's in-memory format-repair transcript.
+      const continuationMessages = switching
+        ? messages.map((message) =>
+            Object.fromEntries(
+              Object.entries(message).filter(
+                ([field]) =>
+                  !['reasoning', 'reasoning_content', 'reasoning_details'].includes(field),
+              ),
+            ),
+          )
         : messages;
+      let preparedMessages = evidence
+        ? [continuationMessages[0], evidence.message, ...continuationMessages.slice(1)]
+        : continuationMessages;
       const responseFormat =
         run.workflow_kind !== 'deal' && evidence && provider.profile.capabilities.structuredOutput
           ? workflowResponseFormat(
@@ -1103,7 +1172,11 @@ export class AgentRuntime {
       // Discovery metadata is optional: never reject an otherwise valid analysis
       // merely because its catalog does not fit beside the transcript/schema.
       if (evidence && preparedBytes > provider.profile.maxContextBytes) {
-        preparedMessages = [messages[0], evidence.messageWithoutCatalog, ...messages.slice(1)];
+        preparedMessages = [
+          continuationMessages[0],
+          evidence.messageWithoutCatalog,
+          ...continuationMessages.slice(1),
+        ];
         preparedBytes = Buffer.byteLength(
           JSON.stringify({
             ...body,
@@ -1124,6 +1197,25 @@ export class AgentRuntime {
         provider.profile.generation.maxOutputTokens,
       );
       ensure(run.committed_usd + upperCost <= run.reserved_usd, 'FORBIDDEN', 'budget limit');
+      if (switching) {
+        await sql.query(
+          "UPDATE agent_runs SET model=$3,error_code=NULL,snapshot=snapshot || jsonb_build_object('modelProfile',$4::jsonb,'modelProfileHash',$5::text,'fallbackUsed',true) WHERE tenant_id=$1 AND id=$2",
+          [
+            ctx.tenantId,
+            run.id,
+            provider.profile.model,
+            JSON.stringify(provider.profile),
+            provider.profileHash,
+          ],
+        );
+        await this.store.event(
+          sql,
+          ctx.tenantId,
+          run.id,
+          'model',
+          `Modèle de secours Europe/ZDR : ${provider.profile.model}`,
+        );
+      }
       await sql.query(
         "UPDATE agent_runs SET model_calls=model_calls+1,uncertain_calls=uncertain_calls+1,committed_usd=committed_usd+$3,cost_state='unknown' WHERE tenant_id=$1 AND id=$2",
         [ctx.tenantId, run.id, upperCost],
@@ -1160,7 +1252,7 @@ export class AgentRuntime {
         run.id,
         'model',
         run.mode === 'hermes-live'
-          ? `Appel modèle réservé : ${this.config.AGENT_MODEL_ID}, ${this.config.AGENT_PROVIDER_ROUTE}`
+          ? `Appel modèle réservé : ${provider.profile.model}, ${this.config.AGENT_PROVIDER_ROUTE}`
           : 'Appel au modèle simulé (aucun fournisseur)',
       );
       return {
@@ -1168,10 +1260,17 @@ export class AgentRuntime {
         mode: run.mode,
         workflowKind: run.workflow_kind,
         evidence,
+        continuationMessages,
         preparedMessages,
         responseFormat,
         upperCost,
-        remainingMs: Math.max(1, Math.min(45000, Date.parse(run.expires_at) - Date.now())),
+        remainingMs: Math.max(
+          1,
+          Math.min(
+            run.workflow_kind === 'deal' ? 45000 : 90000,
+            Date.parse(run.expires_at) - Date.now(),
+          ),
+        ),
       };
     });
     const live = mode === 'hermes-live';
@@ -1189,7 +1288,7 @@ export class AgentRuntime {
             'content-type': 'application/json',
           },
           body: JSON.stringify({
-            model: this.config.AGENT_MODEL_ID,
+            model: provider.profile.model,
             messages: preparedMessages,
             response_format: responseFormat,
             tools: body.tools,
@@ -1205,7 +1304,38 @@ export class AgentRuntime {
       );
     } catch (error) {
       if (error instanceof ProviderCallError) {
+        const nativeFallback =
+          workflowKind !== 'deal' &&
+          this.fallback &&
+          provider !== this.fallback &&
+          [
+            'provider_http_429',
+            'provider_http_500',
+            'provider_http_502',
+            'provider_http_503',
+            'provider_http_504',
+            'provider_timeout',
+            'provider_transport_error',
+          ].includes(error.code);
+        if (nativeFallback) {
+          await this.store.transaction(ctx, async (_tx, sql) => {
+            await sql.query(
+              "UPDATE agent_runs SET snapshot=snapshot || jsonb_build_object('fallbackEligible',true,'fallbackReason',$3::text) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+              [ctx.tenantId, runId, error.code],
+            );
+          });
+          // The separate reviewer has no Hermes conversation. It uses the same single,
+          // administrator-approved backup, with all checks and reservations reapplied.
+          if (review)
+            return this.infer(
+              capability,
+              { ...body, model: this.fallback.profile.model },
+              signal,
+              review,
+            );
+        }
         if (
+          !nativeFallback &&
           workflowKind !== 'deal' &&
           ['provider_http_429', 'provider_http_503'].includes(error.code)
         ) {
@@ -1214,7 +1344,12 @@ export class AgentRuntime {
             await wait(delay, undefined, { signal });
             // Resume this same turn. Authorization, freshness, deadline, call cap and
             // cost are rechecked; the refused transmission keeps its unknown provision.
-            return this.infer(capability, input, signal, review);
+            return this.infer(
+              capability,
+              { ...body, messages: continuationMessages },
+              signal,
+              review,
+            );
           }
         }
         await this.store.transaction(ctx, async (_tx, sql) => {
@@ -1230,6 +1365,14 @@ export class AgentRuntime {
         );
       }
       throw error;
+    }
+    if (provider === this.provider && this.fallback && workflowKind !== 'deal') {
+      await this.store.transaction(ctx, async (_tx, sql) => {
+        await sql.query(
+          "UPDATE agent_runs SET error_code=NULL,snapshot=jsonb_set(snapshot,'{fallbackEligible}','false'::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+          [ctx.tenantId, runId],
+        );
+      });
     }
     const usage = z
       .object({
@@ -1273,10 +1416,14 @@ export class AgentRuntime {
         });
         if (d.code !== 'validated') {
           const repairBody = {
+            model: provider.profile.model,
             messages: [
-              ...messages,
+              ...continuationMessages,
               inspected.assistant,
-              { role: 'user', content: workflowRepairPrompt(d, workflowKind) },
+              {
+                role: 'user',
+                content: workflowRepairPrompt(d, workflowKind, evidence ?? undefined),
+              },
             ],
           };
           // Recursive inference rebuilds the evidence exactly once; eligibility must
@@ -1303,14 +1450,43 @@ export class AgentRuntime {
             eligible &&
             (await this.store.transaction(ctx, async (_tx, sql) => {
               const reserved = await sql.query(
-                "UPDATE agent_runs SET snapshot=snapshot || jsonb_build_object('formatRepairAttempted',true,'initialWorkflowFormat',$4::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running' AND model_calls<8 AND expires_at>clock_timestamp()+interval '5 seconds' AND committed_usd+$3<=reserved_usd AND (snapshot->>'formatRepairAttempted') IS DISTINCT FROM 'true' RETURNING id",
-                [ctx.tenantId, runId, repairCost, JSON.stringify(d)],
+                "UPDATE agent_runs SET snapshot=snapshot || jsonb_build_object($5::text,true,'initialWorkflowFormat',$4::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running' AND model_calls<12 AND expires_at>clock_timestamp()+interval '10 seconds' AND committed_usd+$3<=reserved_usd AND (snapshot->>$5) IS DISTINCT FROM 'true' RETURNING id",
+                [
+                  ctx.tenantId,
+                  runId,
+                  repairCost,
+                  JSON.stringify(d),
+                  review ? 'reviewRepairAttempted' : 'formatRepairAttempted',
+                ],
               );
               return reserved.rowCount === 1;
             }));
           // The normal gateway rechecks authorization, versions, lease, route and reservation.
           // The persistent marker prevents another repair even across concurrent/replayed requests.
           if (retry) return this.infer(capability, repairBody, signal, review);
+          if (review && inspected.result && evidence && d.code === 'result_evidence_invalid') {
+            const partial = retainSupportedBuyerSections(inspected.result, evidence);
+            if (partial) {
+              await this.store.transaction(ctx, async (_tx, sql) => {
+                await sql.query(
+                  "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{buyerReview,partial}','true'::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+                  [ctx.tenantId, runId],
+                );
+              });
+              return {
+                ...payload,
+                choices: [
+                  {
+                    finish_reason: 'stop',
+                    message: {
+                      role: 'assistant',
+                      content: JSON.stringify(partial),
+                    },
+                  },
+                ],
+              };
+            }
+          }
           await this.store.transaction(ctx, async (_tx, sql) => {
             await sql.query(
               "UPDATE agent_runs SET error_code=coalesce(error_code,$3) WHERE tenant_id=$1 AND id=$2 AND status='running'",
@@ -1368,10 +1544,9 @@ export class AgentRuntime {
           },
           'agent gateway refused a call',
         );
-      res.writeHead(403, { 'content-type': 'application/json' });
-      res.end(
-        '{"error":{"message":"execution unavailable, invalid or limited","type":"permission_error"}}',
-      );
+      const failure = providerGatewayFailure(error);
+      res.writeHead(failure.status, failure.headers);
+      res.end(JSON.stringify(failure.body));
     } finally {
       res.off('close', disconnected);
     }

@@ -57,7 +57,8 @@ export const QUEUE_DEFINITIONS: readonly QueueDefinition[] = [
     retryDelay: 10,
     retryBackoff: true,
     retryDelayMax: 120,
-    expireInSeconds: 240,
+    // Exceeds the 300s Hermes run plus 120s buyer review lease; no overlapping replay.
+    expireInSeconds: 480,
     deadLetter: QUEUES.deadLetter,
   },
   {

@@ -1,7 +1,8 @@
 import { randomInt } from 'node:crypto';
 import type { ProviderCallError } from './agent-errors.ts';
 
-export const WORKFLOW_TIMEOUT_MS = 180_000;
+export const WORKFLOW_TIMEOUT_MS = 300_000;
+export const WORKFLOW_MODEL_CALLS = 12;
 export const WORKFLOW_PROVIDER_RETRIES = 2;
 
 /** Respect the upstream minimum; never shorten a long Retry-After to fit our deadline. */

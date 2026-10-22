@@ -54,6 +54,8 @@ const WORKFLOW_ERRORS: Record<string, string> = {
   provider_timeout: 'Le fournisseur n’a pas répondu dans le délai prévu.',
   provider_transport_error: 'La connexion au fournisseur a échoué.',
   provider_invalid_response: 'Le fournisseur a renvoyé une réponse illisible.',
+  provider_response_too_large:
+    'La réponse du fournisseur dépasse la taille acceptée. Les données collectées sont conservées.',
   provider_response_error: 'Le fournisseur a signalé une erreur pendant la génération.',
   hermes_http_504: 'Le délai maximal de l’analyse a été atteint.',
   hermes_timeout: 'Le moteur d’analyse n’a pas répondu dans le délai prévu.',

@@ -27,7 +27,7 @@ import { AdminClient, createPool, PgUnitOfWork, PgWorkspaceStore, QUEUES } from 
 import type { TestDatabase } from '@ulysse/database/testing';
 import { createTestDatabase } from '@ulysse/database/testing';
 import type { WorkflowBrief, WorkflowResult } from '@ulysse/domain';
-import { pendingWorkflow } from '@ulysse/domain';
+import { pendingWorkflow, validateWorkflowResult } from '@ulysse/domain';
 import { z } from 'zod';
 import type { ServiceDeps } from '@ulysse/domain';
 import {
@@ -1567,7 +1567,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
         },
         {
           execute: async (request) => {
-            assert.equal(request.timeoutMs, 180_000);
+            assert.equal(request.timeoutMs, 300_000);
             const body = { messages: [{ role: 'system', content: instructions }] };
             const pending = engine.inference(request.capability, body);
             await waitFor(
@@ -2151,8 +2151,215 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       mock.mock.restore();
     }
   });
+  test('native fallback requires a transient refusal, preserves evidence, accounts both models and rechecks source withdrawal', async (t) => {
+    const workflowInstructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    for (const withdrawn of [false, true]) {
+      const w = await setup(`native-fallback-${withdrawn}`);
+      const config = {
+        ...liveTestConfig(),
+        AGENT_PROVIDER_ROUTE: 'openrouter-eu-zdr' as const,
+        AGENT_FALLBACK_MODEL_ID: 'mistralai/mistral-small-2603',
+      };
+      const own = `source:${w.source.id}:r1`;
+      const draft: WorkflowResult = {
+        ...pendingWorkflow('buyer', [], 'Diagnostic relu fictif'),
+        outcome: 'draft',
+        findings: [{ topic: 'Offre', analysis: w.source.text, references: [own] }],
+        uniqueness: {
+          verdict: 'insufficient_evidence',
+          reason: 'Aucun concurrent dans cette fixture.',
+          references: [own],
+        },
+      };
+      const models: string[] = [];
+      const mock = t.mock.method(globalThis, 'fetch', (url: unknown, init: RequestInit) => {
+        assert.equal(url, 'https://eu.openrouter.ai/api/v1/chat/completions');
+        assert.equal(init.redirect, 'error');
+        const body = z
+          .object({
+            model: z.string(),
+            provider: z.object({
+              zdr: z.literal(true),
+              data_collection: z.literal('deny'),
+              only: z.array(z.string()),
+            }),
+          })
+          .parse(JSON.parse(z.string().parse(init.body)));
+        models.push(body.model);
+        if (body.model === config.AGENT_MODEL_ID)
+          return Promise.resolve(
+            Response.json(
+              { error: { code: 429, message: 'private upstream text' } },
+              { status: 429, headers: { 'retry-after': '1' } },
+            ),
+          );
+        assert.deepEqual(body.provider.only, ['mistral/eu']);
+        return Promise.resolve(
+          Response.json({
+            choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(draft) } }],
+            usage: { prompt_tokens: 100, completion_tokens: 100, cost: 0.0001 },
+          }),
+        );
+      });
+      const engine: AgentRuntime = new AgentRuntime(workerPool, config, {
+        execute: async (request) => {
+          assert.equal(request.fallbackModel, config.AGENT_FALLBACK_MODEL_ID);
+          const body = {
+            model: request.model,
+            messages: [{ role: 'system', content: workflowInstructions }],
+          };
+          await assert.rejects(
+            engine.inference(request.capability, { ...body, model: request.fallbackModel }),
+            /unauthorized model switch/,
+          );
+          await assert.rejects(
+            engine.inference(request.capability, { ...body, model: 'unapproved/model' }),
+          );
+          assert.equal(models.length, 0);
+          await assert.rejects(engine.inference(request.capability, body), /provider_http_429/);
+          if (withdrawn) await w.workspace.withdraw(w.owner, w.source.id, 1);
+          const response = await engine.inference(request.capability, {
+            ...body,
+            model: request.fallbackModel,
+          });
+          const parsed = z
+            .object({ choices: z.array(z.object({ message: z.object({ content: z.string() }) })) })
+            .parse(response);
+          return validateWorkflowResult(JSON.parse(parsed.choices[0]!.message.content));
+        },
+      });
+      const id = await w.workspace.create(
+        w.owner,
+        { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+        'hermes-live',
+      );
+      await engine.workflows.run(w.ctx, id);
+      const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+      assert.equal(run.status, withdrawn ? 'obsolete' : 'draft', run.errorCode ?? '');
+      assert.deepEqual(
+        models,
+        withdrawn
+          ? [config.AGENT_MODEL_ID]
+          : [config.AGENT_MODEL_ID, config.AGENT_FALLBACK_MODEL_ID, config.AGENT_FALLBACK_MODEL_ID],
+      );
+      const saved = (
+        await engine.store.transaction(w.ctx, (_tx, sql) =>
+          sql.query(
+            'SELECT model,model_calls,uncertain_calls,committed_usd,reserved_usd,snapshot FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+            [w.tenantId, run.agentRunId],
+          ),
+        )
+      ).rows[0] as Record<string, unknown>;
+      assert.equal(saved.model_calls, models.length);
+      assert.equal(saved.uncertain_calls, 1);
+      assert.equal(saved.committed_usd, saved.reserved_usd);
+      if (!withdrawn) {
+        assert.equal(saved.model, config.AGENT_FALLBACK_MODEL_ID);
+        assert.ok(Number(saved.committed_usd) > 0.0002);
+      }
+      assert.ok(!JSON.stringify(saved.snapshot).includes('private upstream text'));
+      mock.mock.restore();
+    }
+  });
+
+  test('generation format repair cannot consume the independent buyer review repair', async (t) => {
+    const w = await setup('two-repair-phases');
+    const rival = await w.workspace.saveSource(w.owner, {
+      ...w.source,
+      kind: 'competitor',
+      title: 'Alternative fictive',
+    });
+    const ownRef = `source:${w.source.id}:r1`;
+    const rivalRef = `source:${rival.id}:r1`;
+    const draft: WorkflowResult = {
+      ...pendingWorkflow('buyer', [], 'Diagnostic fictif'),
+      outcome: 'draft',
+      findings: [{ topic: 'Offre', analysis: w.source.text, references: [ownRef] }],
+      benchmark: [
+        {
+          topic: 'Alternative',
+          analysis: 'Comparaison fictive des deux offres.',
+          references: [rivalRef],
+        },
+      ],
+      uniqueness: {
+        verdict: 'insufficient_evidence',
+        reason: 'Fixture limitée.',
+        references: [ownRef],
+      },
+    };
+    const corrected = {
+      ...draft,
+      benchmark: [{ ...draft.benchmark[0]!, references: [ownRef, rivalRef] }],
+    };
+    let calls = 0;
+    const mock = t.mock.method(globalThis, 'fetch', () => {
+      calls++;
+      return Promise.resolve(
+        Response.json({
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content:
+                  calls === 1 ? '{malformed' : JSON.stringify(calls === 4 ? corrected : draft),
+              },
+            },
+          ],
+          usage: { prompt_tokens: 100, completion_tokens: 100, cost: 0.0001 },
+        }),
+      );
+    });
+    const workflowInstructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        const response = await engine.inference(request.capability, {
+          messages: [{ role: 'system', content: workflowInstructions }],
+        });
+        const parsed = z
+          .object({ choices: z.array(z.object({ message: z.object({ content: z.string() }) })) })
+          .parse(response);
+        return validateWorkflowResult(JSON.parse(parsed.choices[0]!.message.content));
+      },
+    });
+    const id = await w.workspace.create(
+      w.owner,
+      { kind: 'buyer', brief, sourceIds: [w.source.id, rival.id], requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    await engine.workflows.run(w.ctx, id);
+    const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+    assert.equal(run.status, 'draft', run.errorCode ?? '');
+    assert.equal(calls, 4);
+    assert.deepEqual(run.result?.benchmark, corrected.benchmark);
+    const saved = (
+      await engine.store.transaction(w.ctx, (_tx, sql) =>
+        sql.query<{ generation: string; review: string }>(
+          "SELECT snapshot->>'formatRepairAttempted' AS generation,snapshot->>'reviewRepairAttempted' AS review FROM agent_runs WHERE tenant_id=$1 AND id=$2",
+          [w.tenantId, run.agentRunId],
+        ),
+      )
+    ).rows[0];
+    assert.deepEqual(saved, { generation: 'true', review: 'true' });
+    mock.mock.restore();
+  });
+
   test('buyer review uses stored bilateral evidence, replaces unsupported conclusions, retries within limits and refuses stale publication', async (t) => {
-    for (const scenario of ['corrected', 'repair', 'rejected', 'changed', 'provider', 'tool']) {
+    for (const scenario of [
+      'corrected',
+      'repair',
+      'partial',
+      'rejected',
+      'changed',
+      'provider',
+      'tool',
+    ]) {
       const w = await setup(`buyer-review-${scenario}`);
       const rival = await w.workspace.saveSource(w.owner, {
         ...w.source,
@@ -2250,7 +2457,15 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
             { id: w.source.id, revision: 1 },
           );
         const answer =
-          scenario === 'rejected' || (scenario === 'repair' && calls === 1) ? initial : corrected;
+          scenario === 'partial'
+            ? {
+                ...corrected,
+                summary: 'Conclusion dépendant d’une ligne refusée.',
+                benchmark: [...corrected.benchmark, ...initial.benchmark],
+              }
+            : scenario === 'rejected' || (scenario === 'repair' && calls === 1)
+              ? initial
+              : corrected;
         return Response.json({
           choices: [
             {
@@ -2288,7 +2503,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       );
       await engine.workflows.run(w.ctx, id);
       const run = (await w.workspace.listWorkflows(w.owner))[0]!;
-      assert.equal(calls, ['repair', 'rejected', 'provider'].includes(scenario) ? 2 : 1);
+      assert.equal(calls, ['repair', 'partial', 'rejected', 'provider'].includes(scenario) ? 2 : 1);
       assert.equal(
         run.status,
         scenario === 'changed'
@@ -2299,7 +2514,9 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
         run.errorCode ?? '',
       );
       if (run.status === 'draft') {
-        assert.equal(run.result?.summary, corrected.summary);
+        assert.ok(run.result);
+        if (scenario === 'partial') assert.match(run.result.summary, /partiel/);
+        else assert.equal(run.result.summary, corrected.summary);
         assert.deepEqual(run.result.benchmark, corrected.benchmark);
         assert.equal(run.result.uniqueness?.verdict, 'insufficient_evidence');
       } else assert.equal(run.result, null, 'the unreviewed draft is never silently published');

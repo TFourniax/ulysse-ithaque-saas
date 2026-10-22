@@ -182,8 +182,58 @@ export function inspectBuyerCitations(
 export function workflowRepairPrompt(
   d: WorkflowFormatDiagnostic,
   kind: 'buyer' | 'content',
+  evidence?: { offerReferences: readonly string[]; competitorReferences: readonly string[] },
 ): string {
   if (d.code === 'result_evidence_invalid')
-    return `Ulysse a refusé les références du diagnostic : ${JSON.stringify(d)}. Une seule correction est autorisée. Chaque ligne comparative et chaque verdict d'unicité affirmatif doit citer une source de notre offre et une source concurrente effectivement fournies, pertinentes pour la comparaison. Une citation ajoutée ne rend pas une affirmation vraie : réécris les affirmations non étayées, limite les absences aux extraits consultés et ne classe pas les prix inconnus ou incomparables. Aucun outil. Retourne uniquement le résultat complet corrigé, au même schéma; si aucune comparaison n'est étayée, une abstention conforme et explicite.`;
+    return `Ulysse a refusé les références du diagnostic : ${JSON.stringify(d)}. Une correction est autorisée pour cette relecture. Références de notre offre : ${JSON.stringify(evidence?.offerReferences ?? [])}. Références concurrentes : ${JSON.stringify(evidence?.competitorReferences ?? [])}. Chaque ligne comparative et chaque verdict d'unicité affirmatif doit citer une source de notre offre et une source concurrente effectivement fournies, pertinentes pour la comparaison. Une citation ajoutée ne rend pas une affirmation vraie : réécris les affirmations non étayées, limite les absences aux extraits consultés et ne classe pas les prix inconnus ou incomparables. Aucun outil. Retourne uniquement le résultat complet corrigé, au même schéma; si aucune comparaison n'est étayée, une abstention conforme et explicite.`;
   return `Ulysse a refusé le FORMAT du résultat ${kind} : ${JSON.stringify(d)}. Une seule correction est autorisée. Retourne uniquement l'objet JSON complet conforme au schéma des instructions, avec tous les champs requis. Conserve les faits et références déjà consultés, sans ajout ni invention. Aucune nouvelle lecture ni action. Références non vides et sans doublons. Raccourcis les textes pour terminer le JSON dans le plafond de sortie. Pour buyer : content=null; findings et uniqueness requis pour draft. Pour content : uniqueness=null, benchmark=[], buyerQuestions=[]. Pour needs_context/abstained : findings=[], benchmark=[], buyerQuestions=[], uniqueness=null, content=null. Si tu ne peux pas étayer un brouillon, retourne une abstention conforme et explicite.`;
+}
+
+/** After the review's repair, keep independently cited sections, never the unrevised draft.
+ * Cross-section conclusions are replaced, since they may depend on a discarded row.
+ * This checks provenance, not the semantic truth of the retained model-written sections.
+ */
+export function retainSupportedBuyerSections(
+  result: Result,
+  evidence: {
+    references: readonly string[];
+    offerReferences: readonly string[];
+    competitorReferences: readonly string[];
+  },
+): Result | null {
+  if (result.kind !== 'buyer' || result.outcome !== 'draft') return null;
+  const readable = (refs: readonly string[]) =>
+    refs.every((ref) => evidence.references.includes(ref));
+  const findings = result.findings.filter((item) => readable(item.references));
+  const benchmark = result.benchmark.filter(
+    (item) =>
+      readable(item.references) &&
+      item.references.some((ref) => evidence.offerReferences.includes(ref)) &&
+      item.references.some((ref) => evidence.competitorReferences.includes(ref)),
+  );
+  const own = [...new Set(findings.flatMap((item) => item.references))]
+    .filter((ref) => evidence.offerReferences.includes(ref))
+    .slice(0, 12);
+  // Retaining nothing, or concealing an entirely lost comparison, is not a usable draft.
+  if (!findings.length || !own.length || !benchmark.length) return null;
+  return {
+    ...result,
+    summary:
+      'Diagnostic partiel à relire : seules les sections relues dont les références sont valides sont conservées. Certaines sections ont été retirées; aucune conclusion globale sur les prestataires n’est proposée.',
+    findings,
+    benchmark,
+    questions: [],
+    buyerQuestions: [],
+    uniqueness: {
+      verdict: 'insufficient_evidence',
+      reason:
+        'La comparaison est partielle après retrait de sections insuffisamment référencées. Elle ne permet pas de conclure sur l’unicité de l’offre.',
+      references: own,
+    },
+    limits: [
+      `${result.findings.length - findings.length} constat(s) et ${result.benchmark.length - benchmark.length} comparaison(s) retirés pour références invalides ou incomplètes.`,
+      'La synthèse et les conclusions transversales ont été retirées. Vérifiez les textes et preuves des sections conservées avant validation.',
+      'Aucune validation par un client réel; aucune vérification indépendante de la justesse des affirmations.',
+    ],
+  };
 }

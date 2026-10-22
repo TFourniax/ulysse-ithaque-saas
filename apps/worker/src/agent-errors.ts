@@ -51,7 +51,7 @@ function retryAfterSeconds(raw: string | null): number | null {
   const value = /^\d+$/u.test(raw) ? Number(raw) : (Date.parse(raw) - Date.now()) / 1000;
   return Number.isFinite(value) && value >= 0 ? Math.ceil(value) : null;
 }
-async function smallErrorBody(response: Response): Promise<unknown> {
+async function boundedBody(response: Response, maximum: number): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) return null;
   let size = 0;
@@ -64,16 +64,23 @@ async function smallErrorBody(response: Response): Promise<unknown> {
       const value = part.value;
       if (!(value instanceof Uint8Array)) return null;
       size += value.byteLength;
-      if (size > 16384) {
+      if (size > maximum) {
         await reader.cancel();
-        return null;
+        throw new ProviderCallError('provider_response_too_large', response.status);
       }
       text += decoder.decode(value, { stream: true });
     }
     const value: unknown = JSON.parse(text + decoder.decode());
     return value;
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof ProviderCallError) throw error;
+    if (error instanceof SyntaxError) return null;
+    throw new ProviderCallError(
+      error instanceof Error && error.name === 'TimeoutError'
+        ? 'provider_timeout'
+        : 'provider_transport_error',
+      response.status,
+    );
   } finally {
     reader.releaseLock();
   }
@@ -99,20 +106,52 @@ export async function fetchAgentCompletion(
   if (!response.ok)
     throw providerError(
       response.status,
-      await smallErrorBody(response),
+      await boundedBody(response, 16384).catch(() => null),
       response.headers.get('retry-after'),
     );
-  let value: unknown;
-  try {
-    value = await response.json();
-  } catch {
-    throw new ProviderCallError('provider_invalid_response', response.status);
-  }
+  // Includes opaque reasoning. Bound even an HTTP 200 body before JSON parsing.
+  const value = await boundedBody(response, 512000);
   const payload = object(value);
   if (!payload) throw new ProviderCallError('provider_invalid_response', response.status);
   if (payload.error !== undefined && payload.error !== null)
     throw providerError(response.status, payload, response.headers.get('retry-after'));
   return payload;
+}
+
+/** Preserve transient HTTP semantics for Hermes, without exposing upstream text. */
+export function providerGatewayFailure(error: unknown) {
+  const statuses: Record<string, number> = {
+    provider_http_429: 429,
+    provider_http_500: 500,
+    provider_http_502: 502,
+    provider_http_503: 503,
+    provider_http_504: 504,
+    provider_timeout: 504,
+    provider_transport_error: 502,
+  };
+  const status = error instanceof ProviderCallError ? (statuses[error.code] ?? 403) : 403;
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (error instanceof ProviderCallError && status === 429 && error.retryAfterSeconds !== null)
+    headers['retry-after'] = String(error.retryAfterSeconds);
+  return {
+    status,
+    headers,
+    body: {
+      error: {
+        code: status,
+        message:
+          status === 403
+            ? 'execution unavailable, invalid or limited'
+            : 'provider temporarily unavailable',
+        type:
+          status === 429
+            ? 'rate_limit_error'
+            : status === 403
+              ? 'permission_error'
+              : 'server_error',
+      },
+    },
+  };
 }
 
 export type WorkflowStage = 'execution' | 'result' | 'publication';

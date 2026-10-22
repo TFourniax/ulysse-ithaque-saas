@@ -118,6 +118,12 @@ def transient_workflow_fixture(body):
         return False
     key = workflow_fixture_key(body)
     with RETRY_LOCK:
+        forced = any(isinstance(m.get('content'), str) and 'CI_NATIVE_FALLBACK' in m['content']
+                     for m in body.get('messages', []))
+        if key and forced and body.get('model') == 'openai/gpt-4.1-mini':
+            if key not in RETRY_FIXTURES:
+                RETRY_FIXTURES.append(key)
+            return True
         if not key or key in RETRY_FIXTURES:
             return False
         RETRY_FIXTURES.append(key)
@@ -152,6 +158,14 @@ def _workflow_step(calls, evidence=None):
         # Exercise the worker's independent review after the actual Hermes loop.
         result.update(outcome="draft", findings=[{"topic": "Fixture", "analysis": "Offre fictive à relire.", "references": [own["reference"]]}],
                       uniqueness={"verdict": "insufficient_evidence", "reason": "Aucune qualité métier démontrée par un stub.", "references": [own["reference"]]})
+        result['benchmark'] = [{'topic': rival['title'], 'analysis': 'Comparaison fictive : les deux offres décrivent un accompagnement. Prix non documentés dans ces textes.',
+                                'references': [own['reference'], rival['reference']]}
+                               for rival in evidence.get('sources', []) if rival.get('kind') == 'competitor'][:8]
+    elif result['kind'] == 'content' and own:
+        result.update(outcome='draft', content={'title': 'Contenu fictif issu du diagnostic',
+            'body': 'Scénario simulé : présenter le diagnostic de flux et demander le périmètre attendu.',
+            'callToAction': 'Préciser le périmètre fictif.', 'rationale': 'Reprise du diagnostic acheteur fourni par le contexte.',
+            'references': [own['reference'], *[ref for ref in context.get('references', []) if ref.startswith('buyer:')]][:12]})
     return [], result
 
 
@@ -176,16 +190,20 @@ def respond(body):
                    if m.get("role") == "user" and isinstance(m.get("content"), str)
                    and m["content"].startswith(review_prefix)), None)
     if review:
-        if names or calls or any(m.get("role") == "assistant" for m in messages):
+        if names or calls:
             raise ValueError("review must be a separate tool-free pass")
         prefix = "ULYSSE_WORKFLOW_EVIDENCE_V1\n"
         evidence = next((json.loads(m["content"][len(prefix):]) for m in messages
                          if isinstance(m.get("content"), str) and m["content"].startswith(prefix)), {})
         if not any(s.get("text") and s.get("reference") for s in evidence.get("sources", [])):
             raise ValueError("review has no source text")
-        workflow_result = {**review["draft"], "outcome": "abstained", "findings": [], "benchmark": [], "buyerQuestions": [], "uniqueness": None,
-                           "summary": "Modèle simulé : relecture technique exécutée, aucune validation de pertinence métier.",
+        workflow_result = {**review["draft"],
+                           "summary": "Modèle simulé : brouillon comparatif relu techniquement, aucune validation de pertinence métier.",
                            "limits": [*review["draft"]["limits"], "Relecture séparée exécutée avec les preuves consultées."]}
+        # Force a real review repair in complete-stack acceptance, then return the
+        # bilateral references. This is deliberately a fault fixture, never live logic.
+        if len(workflow_result['benchmark']) >= 2 and not any(m.get('role') == 'assistant' for m in messages):
+            workflow_result['benchmark'] = [{**row, 'references': row['references'][1:]} for row in workflow_result['benchmark']]
     elif names == WORKFLOW_TOOLS or "get_workflow_context" in called:
         prefix = "ULYSSE_WORKFLOW_EVIDENCE_V1\n"
         evidence = next((json.loads(m["content"][len(prefix):]) for m in messages
@@ -205,6 +223,8 @@ def respond(body):
                 with RETRY_LOCK:
                     if workflow_fixture_key(body) in RETRY_FIXTURES:
                         workflow_result["limits"].append("Reprise après HTTP 429 du fournisseur simulé.")
+                if body.get('model') == 'mistralai/mistral-small-2603':
+                    workflow_result['limits'].append('Modèle de secours simulé utilisé.')
     elif not set(FIRST) <= called:
         pending = [(n, {"subjectId": subject.group(0)} if n == "get_opportunity" and subject else {})
                    for n in FIRST if n not in called]

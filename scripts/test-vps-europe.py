@@ -120,6 +120,21 @@ class DeploymentConfig(unittest.TestCase):
                 exec(compile(MODEL_TRANSFORM, 'model-config', 'exec'), {})
             self.assertFalse((d/'deploy.json').exists())
 
+    def test_fallback_configuration_only_changes_backup_and_keeps_primary_credentials_and_costs(self):
+        _, original, _ = self.transform('openrouter-eu-zdr')
+        for selector in ('mistralai/mistral-small-2603', 'off'):
+            with self.subTest(selector=selector), tempfile.TemporaryDirectory() as temp:
+                d = Path(temp)
+                (d/'rollback.json').write_text(json.dumps(original))
+                with patch.object(sys, 'argv', ['-', str(d), selector, 'fallback']):
+                    exec(compile(MODEL_TRANSFORM, 'fallback-config', 'exec'), {})
+                expected = copy.deepcopy(original)
+                expected['services']['worker']['environment'].update({
+                    'AGENT_FALLBACK_MODEL_ID': '' if selector == 'off' else selector,
+                    'AGENT_FALLBACK_MODEL_PROFILE_JSON': ''})
+                self.assertEqual(json.loads((d/'deploy.json').read_text()), expected)
+                self.assertEqual(json.loads((d/'rollback.json').read_text()), original)
+
     def research_transform(self, mode='brave', permissions=0o600, symlink=False):
         _, original, _ = self.transform('openrouter-eu-zdr')
         with tempfile.TemporaryDirectory() as temp:

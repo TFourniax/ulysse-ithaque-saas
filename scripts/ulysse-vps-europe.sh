@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ulysse demo only. Run as Linux user ulysse (UID 10002), never as root.
-# audit | diagnose [tenant-slug] | diagnose-budget [tenant-slug] | diagnose-research [tenant-slug] | deploy <commit> | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback
+# audit | diagnose [tenant-slug] | diagnose-budget [tenant-slug] | diagnose-research [tenant-slug] | deploy <commit> | status | model MODEL_ID|/chemin/profil.json | fallback auto|off|MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback
 # This script never runs a global docker command, down, prune, seed or reset.
 set -Eeuo pipefail
 umask 077
@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-21.research9-capacity
+ULYSSE_SCRIPT_VERSION=2026-10-22.research10-recovery
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -104,6 +104,11 @@ SELECT r.id,r.workflow_kind,r.model,r.status,r.error_code,r.started_at,
        r.snapshot->>'providerRetryCount' AS provider_retries,
        r.snapshot->'providerRetry' AS provider_retry,
        r.snapshot->>'formatRepairAttempted' AS format_repair_attempted,
+       r.snapshot->>'reviewRepairAttempted' AS review_repair_attempted,
+       r.snapshot->>'primaryModel' AS primary_model,
+       r.snapshot->>'fallbackModel' AS fallback_model,
+       r.snapshot->>'fallbackUsed' AS fallback_used,
+       r.snapshot->>'fallbackReason' AS fallback_reason,
        r.snapshot->'buyerReview' AS buyer_evidence_review,
        r.snapshot->'workflowFormat'->>'code' AS format_code,
        r.snapshot->'workflowFormat'->>'finishReason' AS finish_reason,
@@ -312,13 +317,13 @@ case "$action" in
   diagnose) diagnose "${2:-acme-demo}"; exit 0 ;;
   diagnose-budget) diagnose_budget "${2:-acme-demo}"; exit 0 ;;
   diagnose-research) diagnose_research "${2:-acme-demo}"; exit 0 ;;
-  deploy|model|research|rollback) ;;
+  deploy|model|fallback|research|rollback) ;;
   models)
     worker=$(container_id worker)
     [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
     ud exec "$worker" node --input-type=module -e 'import {modelProfiles} from "./apps/worker/dist/src/agent-provider.js"; console.log(JSON.stringify(modelProfiles(),null,2))'
     exit 0 ;;
-  *) die 'actions : audit | diagnose [tenant] | diagnose-budget [tenant] | diagnose-research [tenant] | deploy COMMIT [--budgets RUN SESSION MONTH] | status | model MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
+  *) die 'actions : audit | diagnose [tenant] | diagnose-budget [tenant] | diagnose-research [tenant] | deploy COMMIT [--budgets RUN SESSION MONTH] | status | model MODEL_ID|/chemin/profil.json | fallback auto|off|MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
 esac
 mkdir -p "$ULYSSE_RELEASES"
 exec 9>"$ULYSSE_PRIVATE/november-deploy.lock"
@@ -347,6 +352,7 @@ preflight() {
       const c=agentConfig();
       if(c.ULYSSE_ANALYSIS_MODE!=="hermes-live" || c.AGENT_PROVIDER_ROUTE!=="openrouter-eu-zdr") throw new Error("Profil Europe live requis");
       console.log(JSON.stringify(await checkEuropeanProvider(c.AGENT_MODEL_ID,c.OPENROUTER_API_KEY,fetch,c.AGENT_MODEL_PROFILE_JSON)));
+      if(c.AGENT_FALLBACK_MODEL_ID) console.log(JSON.stringify({fallback:await checkEuropeanProvider(c.AGENT_FALLBACK_MODEL_ID,c.OPENROUTER_API_KEY,fetch,c.AGENT_FALLBACK_MODEL_PROFILE_JSON)}));
       console.log("Catalogue et endpoint ZDR verifies ; inference live et qualite restant a tester.");
     } catch(e) { console.error(e.message); process.exit(1); }
   '
@@ -410,7 +416,7 @@ PYRESEARCH
   exit 0
 fi
 
-if [[ "$action" == model ]]; then
+if [[ "$action" == model || "$action" == fallback ]]; then
   target_model=${2:-}
   case "$target_model" in
     glm) target_model=z-ai/glm-5.3-flash ;;
@@ -426,6 +432,18 @@ if [[ "$action" == model ]]; then
   current_config > "$release/rollback.json"
   worker=$(container_id worker)
   [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
+  if [[ "$action" == fallback && "$target_model" == auto ]]; then
+    # Configuration only, no inference. Both pinned routes are checked before cutover.
+    ud exec "$worker" node --input-type=module -e '
+      import {modelProfiles} from "./apps/worker/dist/src/agent-provider.js";
+      const model=process.env.AGENT_MODEL_ID==="z-ai/glm-5.3-flash"?"mistralai/mistral-small-2603":"z-ai/glm-5.3-flash";
+      const profile=modelProfiles().find(p=>p.model===model);
+      if(!profile) process.exit(1);
+      profile.generation.maxOutputTokens=Math.max(6000,profile.generation.maxOutputTokens);
+      process.stdout.write(JSON.stringify(profile));
+    ' > "$release/fallback-profile.json"
+    target_model="$release/fallback-profile.json"
+  fi
   ud inspect "$worker" > "$release/worker.inspect.json"
   python3 - "$release" <<'PYDRIFT'
 import json,pathlib,sys
@@ -437,26 +455,32 @@ for k,v in expected.items():
 PYDRIFT
   cp "$ULYSSE_ACTIVE" "$release/previous-active.txt"
   printf '%s\n' api worker > "$release/services.txt"
-  python3 - "$release" "$target_model" <<'PYMODEL'
+  python3 - "$release" "$target_model" "$action" <<'PYMODEL'
 import json,sys,pathlib,copy
 p=pathlib.Path(sys.argv[1]); c=json.loads((p/'rollback.json').read_text())
 e=c['services']['worker']['environment']
 if e.get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr': raise SystemExit('ARRET : deploy Europe requis avant model.')
 if c['services']['api']['environment'].get('ULYSSE_ANALYSIS_MODE')!='hermes-live' or e.get('ULYSSE_ANALYSIS_MODE')!='hermes-live': raise SystemExit('ARRET : mode live Europe requis.')
 selector=sys.argv[2]
-if selector.startswith('/'):
+fallback=len(sys.argv)>3 and sys.argv[3]=='fallback'
+model_key='AGENT_FALLBACK_MODEL_ID' if fallback else 'AGENT_MODEL_ID'
+profile_key='AGENT_FALLBACK_MODEL_PROFILE_JSON' if fallback else 'AGENT_MODEL_PROFILE_JSON'
+if fallback and selector=='off':
+    e[model_key]=''
+    e[profile_key]=''
+elif selector.startswith('/'):
     profile_path=pathlib.Path(selector)
     if not profile_path.is_file() or profile_path.stat().st_size>16384: raise SystemExit('ARRET : fichier de profil absent ou trop volumineux.')
     try: profile=json.loads(profile_path.read_text())
     except (ValueError, UnicodeError): raise SystemExit('ARRET : profil JSON invalide.') from None
     if not isinstance(profile,dict) or not isinstance(profile.get('model'),str): raise SystemExit('ARRET : profil sans identifiant modele.')
-    e['AGENT_MODEL_ID']=profile['model']
+    e[model_key]=profile['model']
     # Compose interpolates dollar signs in values. Preserve them exactly; the runtime schema
     # then rejects unknown fields, URLs, credentials, plugins and out-of-bound settings.
-    e['AGENT_MODEL_PROFILE_JSON']=json.dumps(profile,separators=(',',':')).replace('$','$$')
+    e[profile_key]=json.dumps(profile,separators=(',',':')).replace('$','$$')
 else:
-    e['AGENT_MODEL_ID']=selector
-    e['AGENT_MODEL_PROFILE_JSON']=''
+    e[model_key]=selector
+    e[profile_key]=''
 (p/'deploy.json').write_text(json.dumps(c,indent=2))
 PYMODEL
   preflight "$release/deploy.json"
@@ -468,7 +492,7 @@ PYMODEL
   check_health
   printf '%s\n' "$release/deploy.json" > "$ULYSSE_ACTIVE"
   ULYSSE_STOPPED=0
-  say "Modele actif : $target_model | Europe + ZDR | budgets et session conserves."
+  say "Configuration $action : $target_model | Europe + ZDR | budgets et session conserves."
   exit 0
 fi
 
