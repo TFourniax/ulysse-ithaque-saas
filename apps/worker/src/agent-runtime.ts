@@ -47,7 +47,7 @@ export const EXECUTION_CONTRACT = 'ulysse-execution-v3';
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
 export const WORKFLOW_INSTRUCTIONS_SHA256 =
-  '6a2aadc0222906211d24ba4d1235305784ec75a3c6bafbb76ace863a70081f81';
+  'b8f2d2d97374dbbe783cde7ef8af2432808b957249741b6c344259e1dba99562';
 export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
 /** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
 export const MAX_ATTEMPTS = 2;
@@ -998,7 +998,15 @@ export class AgentRuntime {
         const evidence =
           run.workflow_kind === 'deal'
             ? null
-            : await this.workflows.prepareEvidence(ctx, tx, sql, run.subject_id, run.input_hash);
+            : await this.workflows.prepareEvidence(
+                ctx,
+                tx,
+                sql,
+                run.subject_id,
+                run.input_hash,
+                // Reserve space for the response schema and tool/envelope serialization.
+                provider.profile.maxContextBytes - Buffer.byteLength(JSON.stringify(body)) - 12000,
+              );
         // Mandatory evidence is supplied as untrusted data, never as a system instruction
         // or an invented model/tool message (which could break signed reasoning replay).
         const preparedMessages = evidence
@@ -1035,6 +1043,7 @@ export class AgentRuntime {
               evidence.references,
               JSON.stringify({
                 sourceCount: evidence.sourceCount,
+                catalogCount: evidence.catalogCount,
                 referenceCount: evidence.references.length,
                 structuredOutput: responseFormat !== undefined,
               }),

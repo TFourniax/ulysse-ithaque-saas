@@ -283,14 +283,14 @@ function ResultCard({
             </>
           )}
           {r.limits.length > 0 && (
-            <details>
-              <summary>Limites et points à vérifier</summary>
+            <section className="workflow-limits">
+              <h3>Limites et points à vérifier</h3>
               <ul>
                 {r.limits.map((l) => (
                   <li key={l}>{l}</li>
                 ))}
               </ul>
-            </details>
+            </section>
           )}
         </>
       )}

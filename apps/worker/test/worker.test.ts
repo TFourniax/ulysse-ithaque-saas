@@ -2893,6 +2893,7 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
       modelCalls++;
       const sent = z
         .object({
+          messages: z.array(z.object({ role: z.string(), content: z.unknown() })),
           response_format: z.object({
             type: z.literal('json_schema'),
             json_schema: z.object({ strict: z.literal(true), schema: z.unknown() }),
@@ -2900,6 +2901,29 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
         })
         .parse(JSON.parse(z.string().parse(init.body)));
       const format = JSON.stringify(sent.response_format);
+      const evidenceMessage = sent.messages.find(
+        (m) =>
+          typeof m.content === 'string' && m.content.startsWith('ULYSSE_WORKFLOW_EVIDENCE_V1\n'),
+      );
+      assert.ok(evidenceMessage);
+      const evidence = z
+        .object({
+          researchCatalog: z.object({
+            previewOnly: z.literal(true),
+            total: z.number(),
+            items: z.array(z.object({ id: z.string(), offers: z.array(z.string()) })),
+          }),
+        })
+        .parse(
+          JSON.parse(z.string().parse(evidenceMessage.content).split('\n').slice(1).join('\n')),
+        );
+      assert.ok(evidence.researchCatalog.total >= 2);
+      assert.equal(evidence.researchCatalog.items.length, evidence.researchCatalog.total);
+      assert.ok(
+        evidence.researchCatalog.items.some(
+          (item) => item.id === rivalId && item.offers.length > 0,
+        ),
+      );
       assert.ok(format.includes(`source:${source.id}:r1`));
       assert.equal(
         format.includes(rivalId),
@@ -3010,6 +3034,7 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     await engine.workflows.run(w.ctx, buyer);
     const draft = (await workspace.listWorkflows(w.owner))[0]!;
     assert.equal(draft.status, 'draft', draft.errorCode ?? '');
+    assert.match(draft.result?.limits[0] ?? '', /Couverture de cette synthèse/u);
     await assert.rejects(workspace.review(w.owner, buyer, draft.revision, 'approve'));
     const partialCandidates = (await w.items()).items;
     const unqualified = partialCandidates.find((c) => c.facts.length === 0);

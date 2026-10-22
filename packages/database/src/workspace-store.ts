@@ -185,7 +185,12 @@ export class PgWorkspaceStore extends PgAgentStore {
       const store = new PgResearchStore(this.pool);
       const campaign = await store.campaign(sql, tx.tenantId, request.researchId);
       ensure(await store.isCurrent(tx, sql, campaign), 'STALE_EVIDENCE');
-      const corpus = await store.workflowSources(sql, tx.tenantId, request.researchId);
+      const corpus = await store.workflowSources(
+        sql,
+        tx.tenantId,
+        request.researchId,
+        request.brief,
+      );
       sources.push(...corpus.sources);
       research = {
         id: campaign.id,
@@ -194,6 +199,7 @@ export class PgWorkspaceStore extends PgAgentStore {
         candidateCount: campaign.candidateCount,
         qualifiedCount: campaign.qualifiedCount,
         pendingReferences: corpus.pendingReferences,
+        geography: campaign.profile.geography,
       };
     }
     return {

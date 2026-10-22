@@ -9,6 +9,7 @@ import type {
   ResearchTask,
   ResearchTaskBody,
   WorkspaceSource,
+  WorkflowBrief,
 } from '@ulysse/domain';
 import {
   canonicalResearchUrl,
@@ -19,6 +20,8 @@ import {
   requireScope,
   researchDomain,
   researchProfileHash,
+  rankResearchCandidates,
+  researchFactsForDigest,
 } from '@ulysse/domain';
 import type { PoolClient } from 'pg';
 import { PgAgentStore } from './agent-store.ts';
@@ -648,6 +651,7 @@ export class PgResearchStore extends PgAgentStore {
     sql: PoolClient,
     tenant: string,
     campaignId: string,
+    brief?: WorkflowBrief,
   ): Promise<{
     sources: WorkspaceSource[];
     revision: number;
@@ -659,19 +663,36 @@ export class PgResearchStore extends PgAgentStore {
       "SELECT body,revision FROM research_candidates WHERE tenant_id=$1 AND campaign_id=$2 AND body->>'review'<>'excluded' AND body->>'relevance' IN ('direct','indirect','substitute') ORDER BY (body->>'own')::boolean DESC,(body->>'review'='approved') DESC,domain",
       [tenant, campaignId],
     );
-    const sources = rows.rows
-      .map(candidateFrom)
+    const candidates = rankResearchCandidates(rows.rows.map(candidateFrom), c.profile, brief);
+    const sources = candidates
       .filter((item) => item.facts.length > 0)
-      .map((item): WorkspaceSource => ({
-        id: item.id,
-        revision: item.revision,
-        kind: item.own ? 'offer' : 'competitor',
-        title: item.name,
-        url: `https://${item.domain}/`,
-        observedAt: item.pages[0]?.retrievedAt ?? c.createdAt,
-        origin: 'observed',
-        text: researchSourceText(item),
-      }));
+      .map((item): WorkspaceSource => {
+        ensure(
+          item.relevance === 'direct' ||
+            item.relevance === 'indirect' ||
+            item.relevance === 'substitute',
+          'INVALID_INPUT',
+        );
+        ensure(item.review !== 'excluded', 'INVALID_INPUT');
+        return {
+          id: item.id,
+          revision: item.revision,
+          kind: item.own ? 'offer' : 'competitor',
+          title: item.name,
+          url: `https://${item.domain}/`,
+          observedAt: item.pages[0]?.retrievedAt ?? c.createdAt,
+          origin: 'observed',
+          text: researchSourceText(item),
+          research: {
+            relevance: item.relevance,
+            reason: item.reason,
+            review: item.review,
+            offers: [...new Set(item.facts.map((f) => f.offer))],
+            targets: item.facts.filter((f) => f.dimension === 'target').map((f) => f.value),
+            dimensions: [...new Set(item.facts.map((f) => f.dimension))],
+          },
+        };
+      });
     return {
       sources,
       revision: c.revision,
@@ -700,7 +721,7 @@ export class PgResearchStore extends PgAgentStore {
 }
 
 function researchSourceText(item: ResearchCandidate): string {
-  const facts = item.facts.map((f) => ({
+  const facts = researchFactsForDigest(item.facts).map((f) => ({
     id: f.id,
     offer: f.offer,
     dimension: f.dimension,
@@ -708,11 +729,13 @@ function researchSourceText(item: ResearchCandidate): string {
     quote: f.quote,
     quality: f.quality,
     url: item.pages.find((p) => p.id === f.pageId)?.url,
+    retrievedAt: item.pages.find((p) => p.id === f.pageId)?.retrievedAt,
     correction: item.corrections.find((c) => c.factId === f.id)?.value,
   }));
   const base = {
     review: item.review,
     qualification: item.reason,
+    relevance: item.relevance,
     note: item.note.slice(0, 400),
     totalFacts: facts.length,
     coverage: 'Digest limité; autres faits dans la matrice de recherche.',

@@ -238,6 +238,10 @@ test('November workspace connects sources, buyer and content; missing context is
   await expect(
     page.getByText('Que doit comprendre, dire ou faire le lecteur après ce contenu ?').first(),
   ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Limites et points à vérifier' }).first(),
+  ).toBeVisible();
+  await expect(page.getByText('Aucune validation par un client réel.').first()).toBeVisible();
   for (const url of ['/buyer', '/content', '/workspace']) {
     await page.goto(url);
     await settle(page);

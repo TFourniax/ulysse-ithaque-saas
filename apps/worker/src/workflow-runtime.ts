@@ -17,12 +17,14 @@ import {
   WORKFLOW_VERSION,
   workflowInputHash,
   workflowQuestions,
+  withResearchCoverage,
 } from '@ulysse/domain';
 import type { Pool, PoolClient, WorkflowRequest } from '@ulysse/database';
 import { PgWorkspaceStore, PgResearchStore } from '@ulysse/database';
 import { z } from 'zod';
 import { workflowFailure, type WorkflowStage } from './agent-errors.ts';
 import { WORKFLOW_TIMEOUT_MS } from './workflow-retry.ts';
+import { researchPreview, workflowResearchCatalog } from './workflow-catalog.ts';
 
 export const WORKFLOW_TOOLS = [
   'get_workflow_context',
@@ -52,6 +54,7 @@ function workflowContext(input: WorkflowInput, id: string) {
           candidateCount: input.research.candidateCount,
           qualifiedCount: input.research.qualifiedCount,
           provisionalCount: input.research.pendingReferences.length,
+          geography: input.research.geography,
         }
       : null,
     untrusted: true,
@@ -95,6 +98,7 @@ export class WorkflowRuntime {
     sql: PoolClient,
     subjectId: string,
     inputHash: string,
+    maxEvidenceBytes: number,
   ) {
     const run = await this.store.get(sql, ctx.tenantId, subjectId);
     const input = await this.store.input(tx, sql, run);
@@ -108,12 +112,23 @@ export class WorkflowRuntime {
     }));
     // Deliver the actual versioned text, not just an identifier marked as read.
     // Rebuild for every provider call so Hermes need not retain an extra transcript.
+    const payload = { context, sources, untrusted: true };
+    // Leave room for escaped JSON and the surrounding message. Mandatory source text
+    // is never truncated to fit a catalog; the gateway still checks the complete request.
+    const remaining = Math.max(
+      0,
+      maxEvidenceBytes - Buffer.byteLength(JSON.stringify(payload)) - 512,
+    );
+    const researchCatalog = input.research
+      ? workflowResearchCatalog(input.sources, Math.min(24000, Math.floor(remaining / 2)))
+      : undefined;
     return {
       references: [...context.references, ...sources.map((s) => s.reference)],
       sourceCount: sources.length,
+      catalogCount: researchCatalog?.items.length ?? 0,
       message: {
         role: 'user',
-        content: WORKFLOW_EVIDENCE_PREFIX + JSON.stringify({ context, sources, untrusted: true }),
+        content: WORKFLOW_EVIDENCE_PREFIX + JSON.stringify({ ...payload, researchCatalog }),
       },
     };
   }
@@ -307,16 +322,17 @@ export class WorkflowRuntime {
           'required source unread',
         );
         validateWorkflowPublication(result, input, new Set(run.retrieved));
+        const published = withResearchCoverage(result, input);
         await sql.query(
           'UPDATE agent_runs SET status=$3,result=$4,error_code=NULL,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2',
           [
             ctx.tenantId,
             agentId,
             result.outcome === 'draft' ? 'completed' : 'abstained',
-            JSON.stringify(result),
+            JSON.stringify(published),
           ],
         );
-        await this.finish(sql, ctx, id, result.outcome, result);
+        await this.finish(sql, ctx, id, published.outcome, published);
         await this.store.audit(tx, ctx, 'workflow.completed', id);
         await this.store.event(
           sql,
@@ -366,7 +382,7 @@ export class WorkflowRuntime {
     const params = z
       .object({
         sourceId: z.uuid().optional(),
-        sourceIds: z.array(z.uuid()).min(1).max(4).optional(),
+        sourceIds: z.array(z.uuid()).min(1).max(6).optional(),
         offset: z.number().int().min(0).optional(),
       })
       .strict()
@@ -408,6 +424,7 @@ export class WorkflowRuntime {
             origin: s.origin,
             url: s.url,
             observedAt: s.observedAt,
+            ...(s.research ? { research: researchPreview(s) } : {}),
             required: request.sourceIds.includes(s.id),
             reviewStatus: input.research?.pendingReferences.includes(sourceReference(s))
               ? 'pending'

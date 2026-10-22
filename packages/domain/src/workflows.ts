@@ -24,6 +24,15 @@ export type WorkspaceSource = Readonly<{
   text: string;
   observedAt: string;
   origin: 'observed' | 'company' | 'simulated';
+  /** Discovery metadata only; a preview never authorizes a citation. */
+  research?: Readonly<{
+    relevance: 'direct' | 'indirect' | 'substitute';
+    reason: string;
+    review: 'pending' | 'approved';
+    offers: readonly string[];
+    targets: readonly string[];
+    dimensions: readonly string[];
+  }>;
 }>;
 export type WorkflowBrief = Readonly<{
   offer: string;
@@ -76,6 +85,7 @@ export type WorkflowInput = Readonly<{
     candidateCount: number;
     qualifiedCount: number;
     pendingReferences: string[];
+    geography?: string;
   };
 }>;
 

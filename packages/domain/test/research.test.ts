@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { rankResearchCandidates, researchFactsForDigest } from '../src/research-selection.ts';
 import {
   canonicalResearchUrl,
   initialResearchQueries,
@@ -147,5 +148,81 @@ test('matrix keeps offers separate, flags differing claims and never ranks incom
       errors: [{ url: page.url, code: 'page_http_403' }],
     })[0]?.cells[0]?.state,
     'inaccessible',
+  );
+});
+
+test('reading priority promotes documented need and geography beyond the first alphabetic page without excluding remote alternatives', () => {
+  const candidate = (domain: string, value: string): ResearchCandidate => ({
+    id: domain,
+    campaignId: 'r',
+    domain,
+    name: domain,
+    revision: 1,
+    own: false,
+    relevance: 'direct',
+    reason: 'Automatisation métier PME France — qualification non démontrée',
+    facts: [
+      {
+        id: domain,
+        pageId: 'page',
+        quality: 'vendor_claim',
+        offer: 'Offre',
+        dimension: 'offer',
+        value,
+        quote: value,
+      },
+    ],
+    pages: [],
+    errors: [],
+    review: 'pending',
+    note: '',
+    corrections: [],
+  });
+  const alphabetical = Array.from({ length: 30 }, (_, i) =>
+    candidate(`a${i}.example`, 'Développement de sites vitrine'),
+  );
+  const distant = candidate(
+    'remote.example',
+    'Automatisation métier et intégration pour PME, Canada',
+  );
+  const local = candidate(
+    'z-local.example',
+    'Automatisation métier et intégration pour PME en France',
+  );
+  const ranked = rankResearchCandidates([...alphabetical, distant, local], profile);
+  assert.equal(ranked[0]?.id, local.id);
+  assert.equal(ranked[1]?.id, distant.id);
+  assert.equal(ranked.length, 32);
+  assert.equal(alphabetical[0]?.id, 'a0.example');
+  assert.equal(local.review, 'pending', 'reading order must not approve evidence');
+});
+
+test('bounded digests include comparison dimensions before repeated offer copy and preserve exact quotations', () => {
+  const repeated = Array.from({ length: 12 }, (_, i) => ({
+    id: `offer-${i}`,
+    pageId: 'p',
+    quality: 'vendor_claim' as const,
+    offer: 'Produit',
+    dimension: 'offer' as const,
+    value: 'Description',
+    quote: 'Citation exacte.',
+  }));
+  const price = {
+    ...repeated[0]!,
+    id: 'price',
+    dimension: 'price' as const,
+    value: '90 EUR/utilisateur/mois',
+  };
+  const target = { ...repeated[0]!, id: 'target', dimension: 'target' as const, value: 'PME' };
+  const facts = [...repeated, price, target];
+  const digest = researchFactsForDigest(facts);
+  assert.deepEqual(
+    digest.slice(0, 3).map((f) => f.id),
+    ['offer-0', 'target', 'price'],
+  );
+  assert.equal(digest.length, facts.length);
+  assert.ok(
+    digest.every((f) => facts.some((original) => original === f)),
+    'no invented or rewritten evidence',
   );
 });
