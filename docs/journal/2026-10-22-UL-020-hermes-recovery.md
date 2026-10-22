@@ -26,6 +26,8 @@ La documentation officielle [Hermes fallback](https://hermes-agent.nousresearch.
 
 ## Limites et clôture
 
+Première CI du code `476a75a4` : vraie boucle Hermes réussie (onze tests, dont bascule native après outil), contrôle applicatif local et conteneur, navigateur, stacks simulées réussis. Deux anciennes assertions worker attendaient l'ignorance d'un modèle arbitraire ou le précédent libellé d'erreur de profil; elles sont adaptées au refus explicite des modèles non autorisés. Les vérifications d'absence d'appel sortant, des paramètres Europe/ZDR et des coûts sont conservées. Aucun assouplissement du contrôle pour faire passer les tests. Les scénarios natif/DB et double réparation ajoutés passent dans cette première CI; un nouveau passage complet est requis.
+
 Pas de clé fournisseur ni d'accès SSH dans cet environnement. Une panne généralisée d'OpenRouter, un problème de compte ou l'indisponibilité des deux routes restent possibles. Les profils doivent être compatibles avec le catalogue du compte au moment de l'activation. Le secours couvre buyer/content; la collecte/extraction de recherche garde sa reprise existante et reste hors de cette bascule.
 
 La relecture automatique et les citations contrôlées ne prouvent pas la justesse sémantique. DEBT-034 reste ouverte jusqu'à une revue humaine du benchmark live; DEBT-035 jusqu'à la recette de l'analyse complète sur le corpus conservé. Aucun effacement de données collectées ni réinitialisation des dépenses.

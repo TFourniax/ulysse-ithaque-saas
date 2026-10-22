@@ -562,13 +562,21 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
             ...runner.config,
             AGENT_MODEL_ID: 'openai/gpt-4.1-mini',
           });
-          await assert.rejects(changedModel.inference(request.capability, body), /model limit/);
+          await assert.rejects(runner.inference(request.capability, body), /model absent/);
+          const authorized = { ...body, model: request.model };
+          await assert.rejects(
+            changedModel.inference(request.capability, authorized),
+            /model absent/,
+          );
           assert.equal(calls, 0);
-          await runner.inference(request.capability, body);
+          await runner.inference(request.capability, authorized);
           const first = (await runner.store.list(w.owner))[0]!;
           assert.equal(Number(first.committed_usd), 0.000165);
           assert.equal(first.cost_state, 'estimated');
-          await assert.rejects(runner.inference(request.capability, body), /provider_http_403/);
+          await assert.rejects(
+            runner.inference(request.capability, authorized),
+            /provider_http_403/,
+          );
           assert.equal(calls, 2);
           return abstention;
         },
@@ -634,7 +642,7 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
             ...runner.config,
             AGENT_MODEL_PROFILE_JSON: JSON.stringify(profile),
           });
-          await assert.rejects(drift.inference(request.capability, body), /model limit/);
+          await assert.rejects(drift.inference(request.capability, body), /model profile changed/);
           await assert.rejects(
             runner.inference(request.capability, {
               ...body,
