@@ -160,6 +160,8 @@ const Run = z.object({
     fallbackModel: z.string().nullable().optional(),
     fallbackProfileHash: z.string().nullable().optional(),
     fallbackEligible: z.boolean().optional(),
+    formatRepairAttempted: z.boolean().optional(),
+    reviewRepairAttempted: z.boolean().optional(),
     providerRetryCount: z.number().int().min(0).max(2).optional(),
     providerRetry: z
       .object({ notBefore: z.iso.datetime().nullable(), phase: z.string().optional() })
@@ -1231,6 +1233,10 @@ export class AgentRuntime {
               sourceCount: evidence.sourceCount,
               catalogCount,
               referenceCount: evidence.references.length,
+              offerReferenceCount: evidence.offerReferences.length,
+              competitorReferenceCount: evidence.competitorReferences.length,
+              inputBytes: preparedBytes,
+              maxContextBytes: provider.profile.maxContextBytes,
               structuredOutput: responseFormat !== undefined,
             }),
           ],
@@ -1418,8 +1424,12 @@ export class AgentRuntime {
           const repairBody = {
             model: provider.profile.model,
             messages: [
-              ...continuationMessages,
-              inspected.assistant,
+              // The reviewer has no tools or external state: its latest response
+              // replaces the original draft. Replaying both can make the repair
+              // larger than the context limit even when the review itself fits.
+              ...(review
+                ? buyerReviewMessages(inspected.result ?? inspected.text)
+                : [...continuationMessages, inspected.assistant]),
               {
                 role: 'user',
                 content: workflowRepairPrompt(d, workflowKind, evidence ?? undefined),
@@ -1442,25 +1452,58 @@ export class AgentRuntime {
             repairBytes + 2048,
             provider.profile.generation.maxOutputTokens,
           );
-          const eligible =
-            inspected.repairable &&
-            repairMessages.length <= 32 &&
-            repairBytes <= provider.profile.maxContextBytes;
-          const retry =
-            eligible &&
-            (await this.store.transaction(ctx, async (_tx, sql) => {
-              const reserved = await sql.query(
-                "UPDATE agent_runs SET snapshot=snapshot || jsonb_build_object($5::text,true,'initialWorkflowFormat',$4::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running' AND model_calls<12 AND expires_at>clock_timestamp()+interval '10 seconds' AND committed_usd+$3<=reserved_usd AND (snapshot->>$5) IS DISTINCT FROM 'true' RETURNING id",
-                [
-                  ctx.tenantId,
-                  runId,
-                  repairCost,
-                  JSON.stringify(d),
-                  review ? 'reviewRepairAttempted' : 'formatRepairAttempted',
-                ],
-              );
-              return reserved.rowCount === 1;
-            }));
+          const retry = await this.store.transaction(ctx, async (_tx, sql) => {
+            const marker = review ? 'reviewRepairAttempted' : 'formatRepairAttempted';
+            // Decide under the row lock and record only fixed reasons/counts.
+            // A skipped repair must be diagnosable without storing model text.
+            const current = Run.parse(
+              (
+                await sql.query(
+                  'SELECT * FROM agent_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE',
+                  [ctx.tenantId, runId],
+                )
+              ).rows[0],
+            );
+            const reason =
+              current.snapshot[marker] === true
+                ? 'already_attempted'
+                : !inspected.repairable
+                  ? 'provider_refused'
+                  : repairMessages.length > 32
+                    ? 'message_limit'
+                    : repairBytes > provider.profile.maxContextBytes
+                      ? 'context_limit'
+                      : current.status !== 'running'
+                        ? 'run_inactive'
+                        : current.model_calls >= WORKFLOW_MODEL_CALLS
+                          ? 'call_limit'
+                          : Date.parse(current.expires_at) <= Date.now() + 10000
+                            ? 'deadline'
+                            : current.committed_usd + repairCost > current.reserved_usd
+                              ? 'budget_limit'
+                              : 'requested';
+            await sql.query(
+              "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{workflowRepair}',$3::jsonb) WHERE tenant_id=$1 AND id=$2",
+              [
+                ctx.tenantId,
+                runId,
+                JSON.stringify({
+                  phase: review ? 'review' : 'generation',
+                  strategy: review ? 'replace_review_draft' : 'continue_generation',
+                  reason,
+                  inputBytes: repairBytes,
+                  maxContextBytes: provider.profile.maxContextBytes,
+                  messageCount: repairMessages.length,
+                }),
+              ],
+            );
+            if (reason !== 'requested') return false;
+            const reserved = await sql.query(
+              "UPDATE agent_runs SET snapshot=snapshot || jsonb_build_object($5::text,true,'initialWorkflowFormat',$4::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running' AND model_calls<12 AND expires_at>clock_timestamp()+interval '10 seconds' AND committed_usd+$3<=reserved_usd AND (snapshot->>$5) IS DISTINCT FROM 'true' RETURNING id",
+              [ctx.tenantId, runId, repairCost, JSON.stringify(d), marker],
+            );
+            return reserved.rowCount === 1;
+          });
           // The normal gateway rechecks authorization, versions, lease, route and reservation.
           // The persistent marker prevents another repair even across concurrent/replayed requests.
           if (retry) return this.infer(capability, repairBody, signal, review);

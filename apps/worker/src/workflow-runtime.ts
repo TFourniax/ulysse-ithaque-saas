@@ -135,7 +135,18 @@ export class WorkflowRuntime {
     }));
     // Deliver the actual versioned text, not just an identifier marked as read.
     // Rebuild for every provider call so Hermes need not retain an extra transcript.
-    const payload = { context, sources, untrusted: true };
+    const citationRoles = {
+      offerReferences: selected
+        .filter((s) => s.kind === 'offer' || s.kind === 'website')
+        .map(sourceReference),
+      competitorReferences: selected.filter((s) => s.kind === 'competitor').map(sourceReference),
+    };
+    const payload = {
+      context,
+      sources,
+      ...(review ? { citationRoles } : {}),
+      untrusted: true,
+    };
     // Leave room for escaped JSON and the surrounding message. Mandatory source text
     // is never truncated to fit a catalog; the gateway still checks the complete request.
     const remaining = Math.max(
@@ -150,10 +161,7 @@ export class WorkflowRuntime {
       references: [...context.references, ...sources.map((s) => s.reference)],
       sourceCount: sources.length,
       catalogCount: researchCatalog?.items.length ?? 0,
-      offerReferences: selected
-        .filter((s) => s.kind === 'offer' || s.kind === 'website')
-        .map(sourceReference),
-      competitorReferences: selected.filter((s) => s.kind === 'competitor').map(sourceReference),
+      ...citationRoles,
       messageWithoutCatalog: {
         role: 'user',
         content: WORKFLOW_EVIDENCE_PREFIX + JSON.stringify(payload),

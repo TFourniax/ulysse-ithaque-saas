@@ -28,6 +28,8 @@ UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre c
 
 ## Prochain lot à prendre
 
+Suivi UL-020 après diagnostic VPS de l’essai du 22 octobre à 16 h 53 : la version `c5618617c51a` est déployée, mais cinq lignes comparatives échouent au contrôle bilatéral sans tentative de correction. Codex prend **DEBT-036** : remplacer le brouillon précédent lors de la réparation de relecture, fournir les rôles des citations et tracer la décision de réparation sans texte métier. Recette avec corpus volumineux, cinq lignes unilatérales, persistance des coûts et refus sur modification de source. [Journal](journal/2026-10-22-UL-020-review-context.md).
+
 Suivi UL-020 du 22 octobre à 13 h 10 : quatre acteurs nommés et limites visibles, mais comparaisons tarifaires et conclusions non étayées. Codex prend DEBT-034 : relecture séparée avec preuves réelles, références bilatérales contrôlées et coûts/fraîcheur préservés. Code `fbb44c480ac0a72ff1f7dded7c093d4ea1dac48e` publié : 11 contrôles CI réussis, 130 tests unitaires et 50 worker, 15 navigateur. [Journal](journal/2026-10-22-UL-020-buyer-evidence-review.md).
 
 Suivi UL-020 du 22 octobre : diagnostic live enfin produit, mais comparaison de deux alternatives insuffisamment qualifiées pour le brief. Codex prend DEBT-033 : supprimer le biais alphabétique de lecture, fournir un catalogue des offres/cibles, lire plusieurs acteurs nommés, comparer les critères communs, rendre les limites visibles et compter la couverture réelle. Code `f06dee6c1ee94bb63c95964f5ef6648aa9a86eb5` publié : 128 tests unitaires, 49 tests worker et 15 navigateur réussis; 11 contrôles CI applicatifs/Hermes réussis. Recette sémantique Paitite reste ouverte. [Journal](journal/2026-10-22-UL-020-benchmark-selection.md).
@@ -55,6 +57,7 @@ Priorité de cette branche : assembler et vérifier UL-017, puis terminer la rec
 
 | Dette | Impact | État / clôture |
 | --- | --- | --- |
+| DEBT-036 | La duplication des brouillons peut empêcher une correction de citations sur un corpus volumineux; le motif d’inéligibilité n’était pas enregistré | prise par Codex le 22 octobre — correction compacte de la relecture, références typées dans les preuves et diagnostic technique des limites. Clôture : test de régression sous PostgreSQL, CI complète et diagnostic réel relu avec la campagne conservée. La taille historique du run échoué reste inconnue. |
 | DEBT-001 | Aucun tsc/lint | fermée (UL-002) |
 | DEBT-002 | Adaptateur mémoire non durable | fermée (UL-003, adaptateur PostgreSQL ; la mémoire reste l'oracle de tests) |
 | DEBT-003 | Contexte sans authentification réelle | fermée (UL-002) |

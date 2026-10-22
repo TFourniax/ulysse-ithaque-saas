@@ -143,7 +143,7 @@ export function inspectWorkflowCompletion(payload: unknown, kind: 'buyer' | 'con
   const assistant: Record<string, unknown> = { role: 'assistant', content: text };
   for (const key of ['reasoning', 'reasoning_content', 'reasoning_details'])
     if (choice.message[key] !== undefined) assistant[key] = choice.message[key];
-  return { diagnostics, assistant, repairable: !refused, result };
+  return { diagnostics, assistant, repairable: !refused, result, text };
 }
 
 /** Mechanical support checks; they cannot establish semantic entailment. */

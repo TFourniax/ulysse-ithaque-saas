@@ -12,7 +12,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-22.research10-recovery
+ULYSSE_SCRIPT_VERSION=2026-10-22.research11-review-context
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -47,7 +47,7 @@ audit() {
   ud exec "$api" node -e 'for(const k of ["PUBLIC_ORIGIN","ULYSSE_DB_NAME","ULYSSE_ANALYSIS_MODE"]) console.log(k+"="+(process.env[k]||""));'
   local worker; worker=$(container_id worker)
   [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'un unique worker Ulysse actif est requis'
-  ud exec "$worker" node -e 'console.log("mode_worker="+process.env.ULYSSE_ANALYSIS_MODE); console.log("cle_fournisseur_presente="+Boolean(process.env.OPENROUTER_API_KEY)); for(const k of ["AGENT_MODEL_ID","AGENT_PROVIDER_ROUTE","AGENT_RUN_BUDGET_USD","AGENT_SESSION_BUDGET_USD","AGENT_MONTH_BUDGET_USD"]) console.log(k+"="+(process.env[k]||""));'
+  ud exec "$worker" node -e 'console.log("mode_worker="+process.env.ULYSSE_ANALYSIS_MODE); console.log("cle_fournisseur_presente="+Boolean(process.env.OPENROUTER_API_KEY)); for(const k of ["AGENT_MODEL_ID","AGENT_FALLBACK_MODEL_ID","AGENT_PROVIDER_ROUTE","AGENT_RUN_BUDGET_USD","AGENT_SESSION_BUDGET_USD","AGENT_MONTH_BUDGET_USD"]) console.log(k+"="+(process.env[k]||""));'
   ud exec "$worker" node --input-type=module -e '
     try {
       const {agentProvider}=await import("./apps/worker/dist/src/agent-provider.js");
@@ -101,10 +101,15 @@ SELECT r.id,r.workflow_kind,r.model,r.status,r.error_code,r.started_at,
        r.snapshot->'workflowEvidence'->>'sourceCount' AS automatically_supplied_sources,
        r.snapshot->'workflowEvidence'->>'referenceCount' AS automatically_supplied_references,
        r.snapshot->'workflowEvidence'->>'structuredOutput' AS native_response_schema,
+       r.snapshot->'workflowEvidence'->>'offerReferenceCount' AS offer_reference_count,
+       r.snapshot->'workflowEvidence'->>'competitorReferenceCount' AS competitor_reference_count,
+       r.snapshot->'workflowEvidence'->>'inputBytes' AS input_bytes,
+       r.snapshot->'workflowEvidence'->>'maxContextBytes' AS max_context_bytes,
        r.snapshot->>'providerRetryCount' AS provider_retries,
        r.snapshot->'providerRetry' AS provider_retry,
        r.snapshot->>'formatRepairAttempted' AS format_repair_attempted,
        r.snapshot->>'reviewRepairAttempted' AS review_repair_attempted,
+       r.snapshot->'workflowRepair' AS repair_decision,
        r.snapshot->>'primaryModel' AS primary_model,
        r.snapshot->>'fallbackModel' AS fallback_model,
        r.snapshot->>'fallbackUsed' AS fallback_used,

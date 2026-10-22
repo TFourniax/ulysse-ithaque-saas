@@ -52,6 +52,7 @@ import { loadWorkerConfig } from '../src/config.ts';
 import { AgentRuntime, agentConfig, MAX_ATTEMPTS, TOOL_NAMES } from '../src/agent-runtime.ts';
 import { WORKFLOW_EVIDENCE_PREFIX, WORKFLOW_TOOLS } from '../src/workflow-runtime.ts';
 import { BUYER_REVIEW_INSTRUCTIONS, BUYER_REVIEW_PREFIX } from '../src/buyer-review.ts';
+import { inspectBuyerCitations, workflowRepairPrompt } from '../src/workflow-response.ts';
 import { agentProvider } from '../src/agent-provider.ts';
 import type { FaultHooks } from '../src/runtime.ts';
 import { noCredentialStore, WorkerRuntime } from '../src/runtime.ts';
@@ -2358,10 +2359,211 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
     mock.mock.restore();
   });
 
+  test('five unilateral comparisons on a large corpus get a compact repair without dropping evidence or bypassing publication checks', async (t) => {
+    for (const scenario of ['corrected', 'unchanged', 'changed']) {
+      const w = await setup(`large-review-${scenario}`);
+      const own: Array<typeof w.source> = [];
+      const rivals: Array<typeof w.source> = [];
+      for (const kind of ['offer', 'competitor'] as const) {
+        for (let i = 0; i < (kind === 'offer' ? 3 : 5); i++) {
+          const source = await w.workspace.saveSource(w.owner, {
+            ...w.source,
+            kind,
+            title: `Fixture ${kind} ${i}`,
+            text:
+              `SOURCE_${kind}_${i}: ` + 'Documented fictional service. '.repeat(220).slice(0, 5980),
+          });
+          (kind === 'offer' ? own : rivals).push(source);
+        }
+      }
+      const ownRefs = own.map((s) => `source:${s.id}:r1`);
+      const rivalRefs = rivals.map((s) => `source:${s.id}:r1`);
+      const initial: WorkflowResult = {
+        ...pendingWorkflow('buyer', [], 'FIRST_DRAFT_ONLY'),
+        outcome: 'draft',
+        findings: [
+          { topic: 'Own offer', analysis: 'Fictional offer. '.repeat(70), references: ownRefs },
+        ],
+        benchmark: rivals.map((s, i) => ({
+          topic: s.title,
+          analysis: 'Fictional comparison requiring evidence from both offers. '.repeat(28),
+          references: [rivalRefs[i]!],
+        })),
+        uniqueness: {
+          verdict: 'insufficient_evidence',
+          reason: 'No verified market uniqueness.',
+          references: ownRefs,
+        },
+      };
+      const reviewed = { ...initial, summary: 'LATEST_REVIEW_ONLY' };
+      const corrected = {
+        ...reviewed,
+        benchmark: reviewed.benchmark.map((row, i) => ({
+          ...row,
+          references: [ownRefs[i % ownRefs.length]!, rivalRefs[i]!],
+        })),
+      };
+      let calls = 0;
+      const mock = t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+        calls++;
+        const raw = z.string().parse(init.body);
+        const sent = z
+          .object({
+            model: z.string(),
+            messages: z.array(z.object({ role: z.string(), content: z.string() })),
+            response_format: z.unknown(),
+          })
+          .parse(JSON.parse(raw));
+        assert.ok(Buffer.byteLength(raw) <= 80000, `request bytes: ${Buffer.byteLength(raw)}`);
+        assert.equal(sent.messages[0]?.content, BUYER_REVIEW_INSTRUCTIONS);
+        const bundles = sent.messages.filter((m) => m.content.startsWith(WORKFLOW_EVIDENCE_PREFIX));
+        assert.equal(bundles.length, 1);
+        const evidence = z
+          .object({
+            sources: z.array(z.object({ id: z.string(), text: z.string() })),
+            citationRoles: z.object({
+              offerReferences: z.array(z.string()),
+              competitorReferences: z.array(z.string()),
+            }),
+          })
+          .parse(JSON.parse(bundles[0]!.content.slice(WORKFLOW_EVIDENCE_PREFIX.length)));
+        assert.equal(evidence.sources.length, 8);
+        assert.deepEqual(evidence.citationRoles.offerReferences.toSorted(), ownRefs.toSorted());
+        assert.deepEqual(
+          evidence.citationRoles.competitorReferences.toSorted(),
+          rivalRefs.toSorted(),
+        );
+        for (const s of [...own, ...rivals])
+          assert.equal(evidence.sources.find((supplied) => supplied.id === s.id)?.text, s.text);
+        if (calls === 1) {
+          const diagnostic = inspectBuyerCitations(reviewed, {
+            references: [...ownRefs, ...rivalRefs],
+            ...evidence.citationRoles,
+          });
+          assert.equal(diagnostic?.issues.length, 5);
+          assert.ok(diagnostic);
+          const oldRepairBytes = Buffer.byteLength(
+            JSON.stringify({
+              ...sent,
+              messages: [
+                ...sent.messages,
+                { role: 'assistant', content: JSON.stringify(reviewed) },
+                {
+                  role: 'user',
+                  content: workflowRepairPrompt(diagnostic, 'buyer', evidence.citationRoles),
+                },
+              ],
+            }),
+          );
+          assert.ok(oldRepairBytes > 80000, `old replay must overflow: ${oldRepairBytes}`);
+          if (scenario === 'changed')
+            await w.workspace.saveSource(
+              w.owner,
+              { ...own[0]!, text: 'Changed during review.' },
+              { id: own[0]!.id, revision: 1 },
+            );
+        } else {
+          assert.ok(raw.includes('LATEST_REVIEW_ONLY'));
+          assert.ok(!raw.includes('FIRST_DRAFT_ONLY'));
+          assert.equal(sent.messages.length, 4);
+          assert.ok(sent.messages.every((m) => m.role !== 'assistant' && m.role !== 'tool'));
+        }
+        return Response.json({
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: JSON.stringify(
+                  calls === 2 && scenario === 'corrected' ? corrected : reviewed,
+                ),
+              },
+            },
+          ],
+          usage: { prompt_tokens: 18000, completion_tokens: 2000, cost: 0.005 },
+        });
+      });
+      const engine: AgentRuntime = new AgentRuntime(
+        workerPool,
+        {
+          ...liveTestConfig(),
+          AGENT_MODEL_ID: 'mistralai/mistral-small-2603',
+          AGENT_PROVIDER_ROUTE: 'openrouter-eu-zdr',
+        },
+        {
+          execute: async (request) => {
+            await engine.tool(request.capability, 'get_workflow_context', {});
+            await engine.tool(request.capability, 'read_company_source', {
+              sourceIds: own.map((s) => s.id),
+            });
+            await engine.tool(request.capability, 'read_company_source', {
+              sourceIds: rivals.map((s) => s.id),
+            });
+            return initial;
+          },
+        },
+      );
+      const id = await w.workspace.create(
+        w.owner,
+        {
+          kind: 'buyer',
+          brief,
+          sourceIds: [...own, ...rivals].map((s) => s.id),
+          requestKey: crypto.randomUUID(),
+        },
+        'hermes-live',
+      );
+      await engine.workflows.run(w.ctx, id);
+      const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+      assert.equal(calls, scenario === 'changed' ? 1 : 2, run.errorCode ?? '');
+      assert.equal(
+        run.status,
+        scenario === 'corrected' ? 'draft' : scenario === 'changed' ? 'obsolete' : 'failed',
+        run.errorCode ?? '',
+      );
+      if (scenario === 'corrected') assert.deepEqual(run.result?.benchmark, corrected.benchmark);
+      else assert.equal(run.result, null);
+      const saved = (
+        await engine.store.transaction(w.ctx, (_tx, sql) =>
+          sql.query<{
+            snapshot: unknown;
+            model_calls: number;
+            input_tokens: number;
+            committed_usd: string;
+            reserved_usd: string;
+          }>(
+            'SELECT snapshot,model_calls,input_tokens,committed_usd,reserved_usd FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+            [w.tenantId, run.agentRunId],
+          ),
+        )
+      ).rows[0]!;
+      const snapshot = z
+        .object({
+          reviewRepairAttempted: z.literal(true),
+          workflowRepair: z.object({
+            reason: z.string(),
+            strategy: z.literal('replace_review_draft'),
+            inputBytes: z.number().max(80000),
+          }),
+        })
+        .parse(saved.snapshot);
+      assert.equal(
+        snapshot.workflowRepair.reason,
+        scenario === 'unchanged' ? 'already_attempted' : 'requested',
+      );
+      assert.equal(saved.model_calls, calls);
+      assert.equal(saved.input_tokens, calls * 18000);
+      assert.equal(Number(saved.committed_usd), calls * 0.005);
+      assert.equal(saved.committed_usd, saved.reserved_usd);
+      assert.ok(!JSON.stringify(saved.snapshot).includes('LATEST_REVIEW_ONLY'));
+      mock.mock.restore();
+    }
+  });
+
   test('buyer review uses stored bilateral evidence, replaces unsupported conclusions, retries within limits and refuses stale publication', async (t) => {
     for (const scenario of [
       'corrected',
       'repair',
+      'malformed',
       'partial',
       'rejected',
       'changed',
@@ -2484,7 +2686,12 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
                       content: null,
                       tool_calls: [{ function: { name: 'read_company_source', arguments: '{}' } }],
                     }
-                  : { content: JSON.stringify(answer) },
+                  : {
+                      content:
+                        scenario === 'malformed' && calls === 1
+                          ? '{invalid review'
+                          : JSON.stringify(answer),
+                    },
             },
           ],
           usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.0001 },
@@ -2511,7 +2718,10 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       );
       await engine.workflows.run(w.ctx, id);
       const run = (await w.workspace.listWorkflows(w.owner))[0]!;
-      assert.equal(calls, ['repair', 'partial', 'rejected', 'provider'].includes(scenario) ? 2 : 1);
+      assert.equal(
+        calls,
+        ['repair', 'malformed', 'partial', 'rejected', 'provider'].includes(scenario) ? 2 : 1,
+      );
       assert.equal(
         run.status,
         scenario === 'changed'

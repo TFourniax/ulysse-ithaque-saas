@@ -1,5 +1,13 @@
 # ADR-0013 — Trois parcours de novembre et sources communes
 
+## Révision du 22 octobre — correction de relecture compacte (DEBT-036)
+
+Une correction du relecteur est une nouvelle vérification sans outil : elle reçoit le prompt de revue, la dernière version à corriger comme donnée non fiable, les erreurs structurées et les textes sources reconstruits. Le brouillon initial remplacé, la réponse en double et les signatures opaques ne sont pas nécessaires et ne sont plus rejoués. Si le JSON de la dernière réponse est invalide, son texte reste une donnée non fiable à réparer. La continuation de génération Hermes conserve son comportement existant.
+
+Les preuves de revue indiquent explicitement les références de l’offre propre et des concurrents, calculées depuis les sources autorisées réellement fournies. Aucune référence n’est ajoutée automatiquement au résultat; les contrôles bilatéraux, la fraîcheur, les droits et la validation finale restent requis. Les sources ne sont ni tronquées ni supprimées pour faire entrer une correction.
+
+Chaque décision de réparation est tracée avec phase, stratégie, code fixe du motif, nombre de messages et taille face au plafond du profil. Les compteurs de sources propres/concurrentes et la taille des appels sont également enregistrés, sans texte, réponse brute, clé ou raisonnement. La tentative reste atomique, unique par phase et soumise aux mêmes plafonds, bail et nouvelle vérification des autorisations. Pas de migration, de changement de contrat public ni de relance automatique des anciens runs.
+
 ## Révision du 22 octobre — reprise et relecture indépendantes (DEBT-035)
 
 Les HTTP 429/5xx et erreurs de transport sont rendus à Hermes avec leur statut transitoire et un message fixe, sans corps fournisseur. Une erreur d'autorisation, de version ou de preuve reste un refus : elle n'autorise pas un modèle de secours. Un secours administrateur distinct est optionnel, précontrôlé Europe/ZDR; Hermes effectue la bascule native pendant la conversation via son API `fallback_model`. Les lectures restent dans sa conversation. La passerelle n'accepte cette bascule qu'après une défaillance transitoire observée, pour le profil épinglé au début du run. Elle réserve et comptabilise chaque transmission avec le tarif du modèle réellement appelé, conserve les coûts incertains et interdit le retour implicite au principal. La relecture indépendante utilise le modèle actif et peut prendre le même secours si nécessaire.
