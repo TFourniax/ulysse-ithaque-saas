@@ -51,6 +51,7 @@ import { createLogger, createMetrics } from '@ulysse/observability';
 import { loadWorkerConfig } from '../src/config.ts';
 import { AgentRuntime, agentConfig, MAX_ATTEMPTS, TOOL_NAMES } from '../src/agent-runtime.ts';
 import { WORKFLOW_EVIDENCE_PREFIX, WORKFLOW_TOOLS } from '../src/workflow-runtime.ts';
+import { BUYER_REVIEW_INSTRUCTIONS, BUYER_REVIEW_PREFIX } from '../src/buyer-review.ts';
 import { agentProvider } from '../src/agent-provider.ts';
 import type { FaultHooks } from '../src/runtime.ts';
 import { noCredentialStore, WorkerRuntime } from '../src/runtime.ts';
@@ -1320,8 +1321,29 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       await runtime.stop();
     }
   });
-  test('buyer result feeds content, provenance is retained, source change blocks approval and withdrawal erases copies', async () => {
+  test('buyer result feeds content, provenance is retained, source change blocks approval and withdrawal erases copies', async (t) => {
     const w = await setup('workflow-chain');
+    t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
+      const body = z
+        .object({ messages: z.array(z.object({ content: z.string() })) })
+        .parse(JSON.parse(z.string().parse(init.body)));
+      const review = body.messages.find((m) => m.content.startsWith(BUYER_REVIEW_PREFIX));
+      assert.ok(review);
+      const draft: unknown = JSON.parse(review.content.slice(BUYER_REVIEW_PREFIX.length));
+      return Promise.resolve(
+        Response.json({
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: JSON.stringify(z.object({ draft: z.unknown() }).parse(draft).draft),
+              },
+            },
+          ],
+          usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.0001 },
+        }),
+      );
+    });
     const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
       execute: async (request) => {
         const context = z
@@ -1574,7 +1596,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       assert.equal(run.status, 'draft', run.errorCode ?? '');
       assert.equal(run.errorCode, null);
       assert.equal(waitingObserved, true);
-      assert.equal(bodies.length, 2);
+      assert.equal(bodies.length, 3);
       assert.equal(
         bodies[0],
         bodies[1],
@@ -1589,10 +1611,10 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
           ),
         )
       ).rows[0] as Record<string, unknown>;
-      assert.equal(saved.model_calls, 2);
+      assert.equal(saved.model_calls, 3);
       assert.equal(saved.tool_calls, 0);
-      assert.equal(saved.input_tokens, 100, 'successful usage settled exactly once');
-      assert.equal(saved.output_tokens, 20);
+      assert.equal(saved.input_tokens, 200, 'generation and review usage settled exactly once');
+      assert.equal(saved.output_tokens, 40);
       assert.equal(saved.uncertain_calls, 1, 'refused request retains its provision');
       assert.equal(saved.committed_usd, saved.reserved_usd);
       assert.ok(Number(saved.committed_usd) > 0.0001 && Number(saved.committed_usd) < 0.25);
@@ -1795,7 +1817,15 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
         .parse(JSON.parse(z.string().parse(init.body)));
       assert.deepEqual(
         sent.messages.filter((m) => m.role === 'system'),
-        [{ role: 'system', content: workflowInstructions }],
+        [
+          {
+            role: 'system',
+            content:
+              sent.messages[0]?.content === BUYER_REVIEW_INSTRUCTIONS
+                ? BUYER_REVIEW_INSTRUCTIONS
+                : workflowInstructions,
+          },
+        ],
       );
       const bundles = sent.messages.filter((m) => m.content.startsWith(WORKFLOW_EVIDENCE_PREFIX));
       assert.equal(bundles.length, 1);
@@ -1873,7 +1903,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       },
     });
     for (const kind of ['buyer', 'content', 'buyer'] as const) {
-      wrongCitation = calls === 2;
+      wrongCitation = calls === 3;
       const id = await w.workspace.create(
         w.owner,
         {
@@ -1901,7 +1931,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
         ),
       );
       const saved = trace.rows[0]!;
-      assert.equal(saved.model_calls, 1);
+      assert.equal(saved.model_calls, kind === 'buyer' && !wrongCitation ? 2 : 1);
       assert.equal(saved.tool_calls, 0, 'no invented tool execution');
       assert.equal(
         z.object({ structuredOutput: z.literal(true) }).safeParse(saved.snapshot.workflowEvidence)
@@ -1916,7 +1946,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       );
       assert.ok(!JSON.stringify(saved.snapshot).includes('Texte obligatoire'));
     }
-    assert.equal(calls, 3);
+    assert.equal(calls, 4);
   });
   test('automatic workflow evidence counts against context and call budgets before any transmission or read marker', async (t) => {
     const workflowInstructions = await readFile(
@@ -2076,7 +2106,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       );
       await engine.workflows.run(w.ctx, id);
       const run = (await w.workspace.listWorkflows(w.owner))[0]!;
-      assert.equal(calls, 2);
+      assert.equal(calls, scenario === 'repaired' ? 3 : 2);
       assert.equal(run.status, scenario === 'repaired' ? 'draft' : 'failed', run.errorCode ?? '');
       assert.equal(
         run.errorCode,
@@ -2101,7 +2131,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
         ),
       );
       const saved = trace.rows[0]!;
-      assert.equal(saved.model_calls, 2);
+      assert.equal(saved.model_calls, scenario === 'repaired' ? 3 : 2);
       assert.equal(saved.snapshot.formatRepairAttempted, true);
       assert.ok(!JSON.stringify(saved.snapshot).includes('private-invalid-fixture'));
       assert.deepEqual(saved.snapshot.initialWorkflowFormat, {
@@ -2110,10 +2140,183 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
         issues: [{ path: 'findings', code: 'invalid_type' }],
       });
       assert.equal(saved.uncertain_calls, scenario === 'limited' ? 1 : 0);
-      assert.equal(saved.input_tokens, scenario === 'limited' ? 100 : 200);
+      assert.equal(
+        saved.input_tokens,
+        scenario === 'limited' ? 100 : scenario === 'repaired' ? 300 : 200,
+      );
       assert.equal(saved.reserved_usd, saved.committed_usd);
-      if (scenario !== 'limited') assert.equal(Number(saved.committed_usd), 0.0002);
+      if (scenario !== 'limited')
+        assert.equal(Number(saved.committed_usd), scenario === 'repaired' ? 0.0003 : 0.0002);
       else assert.ok(Number(saved.committed_usd) > 0.0001);
+      mock.mock.restore();
+    }
+  });
+  test('buyer review uses stored bilateral evidence, replaces unsupported conclusions, retries within limits and refuses stale publication', async (t) => {
+    for (const scenario of ['corrected', 'repair', 'rejected', 'changed', 'provider', 'tool']) {
+      const w = await setup(`buyer-review-${scenario}`);
+      const rival = await w.workspace.saveSource(w.owner, {
+        ...w.source,
+        kind: 'competitor',
+        title: 'Prestataire fictif B',
+        text: 'Exemple de projet RH pour 45 salariés : estimation de 5 000 à 12 000 EUR HT. Une méthode en six étapes est annoncée. Aucun résultat mesuré dans cet extrait.',
+      });
+      const excluded = await w.workspace.saveSource(w.owner, {
+        ...w.source,
+        text: 'Unselected private fixture.',
+      });
+      const ownRef = `source:${w.source.id}:r1`;
+      const rivalRef = `source:${rival.id}:r1`;
+      const initial: WorkflowResult = {
+        ...pendingWorkflow(
+          'buyer',
+          [],
+          'Notre service est moins cher et le concurrent prouve ses résultats avec sa méthode.',
+        ),
+        outcome: 'draft',
+        findings: [{ topic: 'Offre', analysis: 'Prix inconnu.', references: [ownRef] }],
+        benchmark: [
+          {
+            topic: rival.title,
+            analysis:
+              'Le concurrent vend des forfaits de 5 000 à 12 000 EUR; notre offre est moins coûteuse.',
+            references: [rivalRef],
+          },
+        ],
+        uniqueness: {
+          verdict: 'not_differentiated',
+          reason: 'Sans prix ni résultats, aucune différenciation.',
+          references: [rivalRef],
+        },
+      };
+      const corrected: WorkflowResult = {
+        ...initial,
+        summary:
+          'L’extrait concurrent contient une estimation pour un exemple RH, pas un forfait comparable à notre offre.',
+        benchmark: [
+          {
+            topic: rival.title,
+            analysis:
+              'Projet RH de 45 salariés estimé à 5 000–12 000 EUR HT. Le tarif de notre offre est inconnu dans les extraits : classement impossible. La méthode annoncée ne démontre pas un gain mesuré.',
+            references: [ownRef, rivalRef],
+          },
+        ],
+        uniqueness: {
+          verdict: 'insufficient_evidence',
+          reason: 'Les extraits ne permettent pas de conclure sur l’unicité.',
+          references: [ownRef, rivalRef],
+        },
+      };
+      let calls = 0;
+      const mock = t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+        calls++;
+        const body = z
+          .object({
+            messages: z.array(z.object({ role: z.string(), content: z.string() })),
+            tools: z.unknown().optional(),
+          })
+          .parse(JSON.parse(z.string().parse(init.body)));
+        assert.equal(body.messages[0]?.content, BUYER_REVIEW_INSTRUCTIONS);
+        assert.equal(body.tools, undefined);
+        assert.equal(
+          body.messages.some((m) => m.role === 'tool'),
+          false,
+        );
+        const bundle = body.messages.find((m) => m.content.startsWith(WORKFLOW_EVIDENCE_PREFIX));
+        assert.ok(bundle);
+        const evidence = z
+          .object({
+            sources: z.array(
+              z.object({ id: z.string(), text: z.string(), untrusted: z.literal(true) }),
+            ),
+            researchCatalog: z.unknown().optional(),
+          })
+          .parse(JSON.parse(bundle.content.slice(WORKFLOW_EVIDENCE_PREFIX.length)));
+        assert.equal(evidence.researchCatalog, undefined);
+        assert.ok(evidence.sources.some((s) => s.id === rival.id && s.text === rival.text));
+        assert.ok(evidence.sources.some((s) => s.id === w.source.id && s.text === w.source.text));
+        assert.ok(!JSON.stringify(body).includes(excluded.text));
+        if (calls === 1)
+          assert.equal(
+            body.messages.some((m) => m.role === 'assistant'),
+            false,
+            'no first-pass reasoning/transcript replayed into a new review',
+          );
+        if (scenario === 'provider' && calls === 1)
+          return new Response('', { status: 429, headers: { 'retry-after': '0' } });
+        if (scenario === 'changed')
+          await w.workspace.saveSource(
+            w.owner,
+            { ...w.source, text: 'Offre modifiée pendant la relecture.' },
+            { id: w.source.id, revision: 1 },
+          );
+        const answer =
+          scenario === 'rejected' || (scenario === 'repair' && calls === 1) ? initial : corrected;
+        return Response.json({
+          choices: [
+            {
+              finish_reason: scenario === 'tool' ? 'tool_calls' : 'stop',
+              message:
+                scenario === 'tool'
+                  ? {
+                      content: null,
+                      tool_calls: [{ function: { name: 'read_company_source', arguments: '{}' } }],
+                    }
+                  : { content: JSON.stringify(answer) },
+            },
+          ],
+          usage: { prompt_tokens: 100, completion_tokens: 20, cost: 0.0001 },
+        });
+      });
+      const engine: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+        execute: async (request) => {
+          await engine.tool(request.capability, 'get_workflow_context', {});
+          await engine.tool(request.capability, 'read_company_source', {
+            sourceIds: [w.source.id, rival.id],
+          });
+          return initial;
+        },
+      });
+      const id = await w.workspace.create(
+        w.owner,
+        {
+          kind: 'buyer',
+          brief,
+          sourceIds: [w.source.id, rival.id],
+          requestKey: crypto.randomUUID(),
+        },
+        'hermes-live',
+      );
+      await engine.workflows.run(w.ctx, id);
+      const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+      assert.equal(calls, ['repair', 'rejected', 'provider'].includes(scenario) ? 2 : 1);
+      assert.equal(
+        run.status,
+        scenario === 'changed'
+          ? 'obsolete'
+          : ['rejected', 'tool'].includes(scenario)
+            ? 'failed'
+            : 'draft',
+        run.errorCode ?? '',
+      );
+      if (run.status === 'draft') {
+        assert.equal(run.result?.summary, corrected.summary);
+        assert.deepEqual(run.result.benchmark, corrected.benchmark);
+        assert.equal(run.result.uniqueness?.verdict, 'insufficient_evidence');
+      } else assert.equal(run.result, null, 'the unreviewed draft is never silently published');
+      const saved = (
+        await engine.store.transaction(w.ctx, (_tx, sql) =>
+          sql.query(
+            'SELECT snapshot,model_calls,tool_calls,input_tokens,uncertain_calls,committed_usd,reserved_usd FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+            [w.tenantId, run.agentRunId],
+          ),
+        )
+      ).rows[0] as Record<string, unknown>;
+      assert.equal(saved.model_calls, calls);
+      assert.equal(saved.tool_calls, 2);
+      assert.equal(saved.uncertain_calls, scenario === 'provider' ? 1 : 0);
+      assert.equal(saved.input_tokens, (calls - (scenario === 'provider' ? 1 : 0)) * 100);
+      assert.equal(saved.committed_usd, saved.reserved_usd);
+      assert.ok(!JSON.stringify(saved.snapshot).includes('moins cher'));
       mock.mock.restore();
     }
   });
@@ -2965,6 +3168,7 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
           }),
         })
         .parse(JSON.parse(z.string().parse(init.body)));
+      const reviewing = sent.messages[0]?.content === BUYER_REVIEW_INSTRUCTIONS;
       const format = JSON.stringify(sent.response_format);
       const evidenceMessage = sent.messages.find(
         (m) =>
@@ -2973,22 +3177,30 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
       assert.ok(evidenceMessage);
       const evidence = z
         .object({
-          researchCatalog: z.object({
-            previewOnly: z.literal(true),
-            total: z.number(),
-            items: z.array(z.object({ id: z.string(), offers: z.array(z.string()) })),
-          }),
+          researchCatalog: z
+            .object({
+              previewOnly: z.literal(true),
+              total: z.number(),
+              items: z.array(z.object({ id: z.string(), offers: z.array(z.string()) })),
+            })
+            .optional(),
         })
         .parse(
           JSON.parse(z.string().parse(evidenceMessage.content).split('\n').slice(1).join('\n')),
         );
-      assert.ok(evidence.researchCatalog.total >= 2);
-      assert.equal(evidence.researchCatalog.items.length, evidence.researchCatalog.total);
-      assert.ok(
-        evidence.researchCatalog.items.some(
-          (item) => item.id === rivalId && item.offers.length > 0,
-        ),
-      );
+      if (!reviewing) {
+        assert.ok(evidence.researchCatalog);
+        assert.ok(evidence.researchCatalog.total >= 2);
+        assert.equal(evidence.researchCatalog.items.length, evidence.researchCatalog.total);
+        assert.ok(
+          evidence.researchCatalog.items.some(
+            (item) => item.id === rivalId && item.offers.length > 0,
+          ),
+        );
+      } else {
+        assert.equal(evidence.researchCatalog, undefined);
+        assert.ok(JSON.stringify(sent.messages).includes(quote), 'review receives saved text');
+      }
       assert.ok(format.includes(`source:${source.id}:r1`));
       assert.equal(
         format.includes(rivalId),
@@ -3130,7 +3342,7 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     const updated = (await workspace.listWorkflows(w.owner)).find((r) => r.id === second)!;
     assert.equal(updated.researchId, w.id);
     assert.equal(updated.status, 'draft', updated.errorCode ?? '');
-    assert.equal(modelCalls, 4);
+    assert.equal(modelCalls, 6);
     assert.ok(updated.result?.benchmark.length);
     await workspace.review(w.owner, second, updated.revision, 'approve');
     await w.repository.action(w.owner, w.id, (await w.current()).revision, 'cancel');

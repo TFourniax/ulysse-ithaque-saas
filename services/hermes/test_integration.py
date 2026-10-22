@@ -139,6 +139,22 @@ class FinalResponse(unittest.TestCase):
 
 
 class WorkflowEvidence(unittest.TestCase):
+    def test_buyer_stub_exercises_separate_review_before_final_abstention(self):
+        from model_stub import _workflow_step, respond
+        source = {"id": str(uuid4()), "kind": "offer", "text": "Service fictif avec accompagnement.", "reference": "source:fixture:r1"}
+        evidence = {"context": {"kind": "buyer"}, "sources": [source], "untrusted": True}
+        _, draft = _workflow_step([{"name": "list_company_sources", "args": {}, "result": {"items": [source]}}], evidence)
+        self.assertEqual(draft["outcome"], "draft")
+        messages = [{"role": "system", "content": "Relecture fictive"},
+                    {"role": "user", "content": "ULYSSE_WORKFLOW_EVIDENCE_V1\n" + json.dumps(evidence)},
+                    {"role": "user", "content": "ULYSSE_BUYER_DRAFT_TO_REVIEW_V1\n" + json.dumps({"draft": draft, "untrusted": True})}]
+        reviewed = json.loads(respond({"messages": messages})["choices"][0]["message"]["content"])
+        self.assertEqual(reviewed["outcome"], "abstained")
+        self.assertEqual(reviewed["findings"], [])
+        self.assertIn("Relecture séparée exécutée avec les preuves consultées.", reviewed["limits"])
+        with self.assertRaises(ValueError):
+            respond({"messages": messages, "tools": [{"function": {"name": name}} for name in ("get_workflow_context", "list_company_sources", "read_company_source")]})
+
     def test_simulated_429_happens_once_after_tools_and_is_isolated_by_workflow(self):
         from model_stub import transient_workflow_fixture
         for _ in range(2):

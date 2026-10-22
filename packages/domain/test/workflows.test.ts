@@ -164,6 +164,41 @@ test('unread citations, mismatched kinds and mixed output shapes fail closed', (
   );
   assert.deepEqual(validateWorkflowResult(draft), draft);
 });
+test('publication requires both offers in each comparison and affirmative uniqueness', () => {
+  const withRival: WorkflowInput = {
+    ...input,
+    sources: [...input.sources, { ...input.sources[0]!, id: 'rival', kind: 'competitor' }],
+  };
+  const read = new Set(['source:s:r1', 'source:rival:r1']);
+  const row = {
+    topic: 'Concurrent',
+    analysis: 'Besoin similaire',
+    references: ['source:rival:r1'],
+  };
+  assert.throws(
+    () => validateWorkflowPublication({ ...draft, benchmark: [row] }, withRival, read),
+    /comparison offer evidence required/,
+  );
+  const bilateral = { ...row, references: [...read] };
+  validateWorkflowPublication({ ...draft, benchmark: [bilateral] }, withRival, read);
+  assert.throws(
+    () =>
+      validateWorkflowPublication(
+        {
+          ...draft,
+          benchmark: [bilateral],
+          uniqueness: {
+            ...draft.uniqueness!,
+            verdict: 'not_differentiated',
+            references: ['source:rival:r1'],
+          },
+        },
+        withRival,
+        read,
+      ),
+    /uniqueness without benchmark/,
+  );
+});
 test('source, context and linked diagnosis changes invalidate the shared input fingerprint', () => {
   const baseline = workflowInputHash(input);
   assert.notEqual(

@@ -1,5 +1,13 @@
 # ADR-0013 — Trois parcours de novembre et sources communes
 
+## Révision UL-020 du 22 octobre — relecture acheteur sur preuves
+
+Le diagnostic live de 13 h 10 compare davantage d'acteurs mais conserve des inférences non étayées malgré les consignes. Chaque nouveau brouillon buyer en mode Hermes passe donc par une relecture automatique distincte avant publication. Le worker choisit cette étape; un message externe ne peut activer son prompt système. Elle utilise le même modèle/profil/routage, sans outils ni historique de raisonnement, avec le brouillon marqué non fiable et les textes sources reconstruits depuis l'état tenant autorisé : obligatoires, références citées déjà lues et autres sources de l'offre déjà lues. Aucun aperçu concurrentiel ni source non consultée n'est promu en preuve. Les extraits ne sont pas tronqués pour faire entrer la revue; le contrôle de contexte reste appliqué.
+
+La passe réécrit les assertions et comparaisons de prix, de capacité, de résultat et d'unicité, en distinguant inconnue, déclaration vendeur, exemple et résultat mesuré. Les références des deux offres sont exigées dans chaque comparaison et verdict affirmatif, avec possibilité de correction via la réparation bornée existante. Les comptes, droits, fraîcheur et versions sont recontrôlés. Un refus de relecture ne republie pas silencieusement le premier brouillon. La validation humaine reste requise; un contrôle de références et une seconde passe du même modèle ne garantissent pas la vérité sémantique.
+
+Le bail buyer est de 240 secondes (180 pour Hermes puis marge de relecture); content conserve 180 secondes. Huit transmissions au maximum, deux reprises fournisseur partagées, une seule réparation de format/références et mêmes plafonds financiers. Chaque transmission est réservée et comptabilisée. Un marqueur atomique `snapshot.buyerReview` garde version et état, sans données métier ni raisonnement. Pas de migration ou de changement du contrat public, aucun retrait des recherches existantes. Le stub émet un brouillon fictif puis s'abstient à la relecture pour exercer ce circuit dans la vraie stack sans prétendre prouver une qualité métier.
+
 Date : 2026-10-20. Lot : UL-017. Décision produit confirmée par Thomas : la bêta comporte le client synthétique, les contenus contextualisés et la prochaine interaction par affaire.
 
 Le client synthétique simule un acheteur : compréhension de l'offre, bénéfices et preuves, comparaison avec les alternatives documentées, objections, questions et crash test de l'unicité. Une simulation ne prouve ni une demande réelle ni la validation de la valeur par un client. Le verdict d'unicité reste limité au corpus comparé.

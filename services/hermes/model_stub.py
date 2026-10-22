@@ -142,11 +142,17 @@ def _workflow_step(calls, evidence=None):
     if pending:
         return pending, None
     context = evidence.get("context") or next((c["result"] or {} for c in calls if c["name"] == "get_workflow_context"), {})
-    return [], {"version": "november-v1", "kind": context.get("kind", "buyer"), "outcome": "abstained",
+    result = {"version": "november-v1", "kind": context.get("kind", "buyer"), "outcome": "abstained",
         "summary": "Modèle simulé : corpus lu, diagnostic métier et rédaction réservés à la recette avec le modèle réel.",
         "questions": [], "findings": [], "benchmark": [], "buyerQuestions": [], "uniqueness": None,
         "content": None, "limits": ["Simulation technique, aucune preuve de pertinence métier."] +
         (["Sources obligatoires fournies automatiquement."] if evidence else [])}
+    own = next((s for s in evidence.get("sources", []) if s.get("kind") in ("offer", "website") and s.get("reference")), None)
+    if result["kind"] == "buyer" and own:
+        # Exercise the worker's independent review after the actual Hermes loop.
+        result.update(outcome="draft", findings=[{"topic": "Fixture", "analysis": "Offre fictive à relire.", "references": [own["reference"]]}],
+                      uniqueness={"verdict": "insufficient_evidence", "reason": "Aucune qualité métier démontrée par un stub.", "references": [own["reference"]]})
+    return [], result
 
 
 def respond(body):
@@ -165,7 +171,22 @@ def respond(body):
                         next((m.get("content") or "" for m in messages if m.get("role") == "user"), ""))
     pending = []
     workflow_result = None
-    if names == WORKFLOW_TOOLS or "get_workflow_context" in called:
+    review_prefix = "ULYSSE_BUYER_DRAFT_TO_REVIEW_V1\n"
+    review = next((json.loads(m["content"][len(review_prefix):]) for m in messages
+                   if m.get("role") == "user" and isinstance(m.get("content"), str)
+                   and m["content"].startswith(review_prefix)), None)
+    if review:
+        if names or calls or any(m.get("role") == "assistant" for m in messages):
+            raise ValueError("review must be a separate tool-free pass")
+        prefix = "ULYSSE_WORKFLOW_EVIDENCE_V1\n"
+        evidence = next((json.loads(m["content"][len(prefix):]) for m in messages
+                         if isinstance(m.get("content"), str) and m["content"].startswith(prefix)), {})
+        if not any(s.get("text") and s.get("reference") for s in evidence.get("sources", [])):
+            raise ValueError("review has no source text")
+        workflow_result = {**review["draft"], "outcome": "abstained", "findings": [], "benchmark": [], "buyerQuestions": [], "uniqueness": None,
+                           "summary": "Modèle simulé : relecture technique exécutée, aucune validation de pertinence métier.",
+                           "limits": [*review["draft"]["limits"], "Relecture séparée exécutée avec les preuves consultées."]}
+    elif names == WORKFLOW_TOOLS or "get_workflow_context" in called:
         prefix = "ULYSSE_WORKFLOW_EVIDENCE_V1\n"
         evidence = next((json.loads(m["content"][len(prefix):]) for m in messages
                          if m.get("role") == "user" and isinstance(m.get("content"), str)

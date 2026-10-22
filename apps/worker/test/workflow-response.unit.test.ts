@@ -4,6 +4,7 @@ import { pendingWorkflow } from '@ulysse/domain';
 import { z } from 'zod';
 import {
   inspectWorkflowCompletion,
+  inspectBuyerCitations,
   workflowRepairPrompt,
   workflowResponseFormat,
 } from '../src/workflow-response.ts';
@@ -11,6 +12,44 @@ import {
 const base = pendingWorkflow('buyer', [], 'Fixture structurée');
 const completion = (content: unknown, finish_reason = 'stop') => ({
   choices: [{ finish_reason, message: { content } }],
+});
+
+test('review checks each bilateral comparison and affirmative uniqueness, not merely a global own-offer citation', () => {
+  const own = 'source:own:r1';
+  const rival = 'source:rival:r1';
+  const result = {
+    ...base,
+    outcome: 'draft' as const,
+    findings: [{ topic: 'Offre', analysis: 'Documentée', references: [own] }],
+    benchmark: [{ topic: 'Concurrent', analysis: 'Comparaison', references: [rival] }],
+    uniqueness: {
+      verdict: 'not_differentiated' as const,
+      reason: 'Similitude',
+      references: [rival],
+    },
+  };
+  const evidence = {
+    references: [own, rival],
+    offerReferences: [own],
+    competitorReferences: [rival],
+  };
+  const diagnostic = inspectBuyerCitations(result, evidence);
+  assert.equal(diagnostic?.code, 'result_evidence_invalid');
+  assert.deepEqual(
+    diagnostic.issues.map((i) => i.path),
+    ['benchmark.0.references', 'uniqueness.references'],
+  );
+  assert.ok(!JSON.stringify(diagnostic).includes(rival));
+  const corrected = {
+    ...result,
+    benchmark: [{ ...result.benchmark[0]!, references: [own, rival] }],
+    uniqueness: { ...result.uniqueness, references: [own, rival] },
+  };
+  assert.equal(inspectBuyerCitations(corrected, evidence), null);
+  assert.equal(
+    inspectBuyerCitations(corrected, { ...evidence, references: [own] })?.issues[0]?.code,
+    'unretrieved_citation',
+  );
 });
 
 test('native response schema is closed, kind-specific, bounded and restricts citations to supplied evidence', () => {

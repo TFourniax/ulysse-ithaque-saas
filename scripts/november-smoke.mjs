@@ -59,6 +59,10 @@ try {
     assert.ok(result.result.limits.includes('Sources obligatoires fournies automatiquement.'));
     assert.ok(result.result.limits.includes('Schéma natif reçu par le fournisseur simulé.'));
     assert.ok(result.result.limits.includes('Reprise après HTTP 429 du fournisseur simulé.'));
+    if (kind === 'buyer')
+      assert.ok(
+        result.result.limits.includes('Relecture séparée exécutée avec les preuves consultées.'),
+      );
     assert.equal(result.result.content, null);
     assert.equal(result.result.uniqueness, null);
     console.log(`UL017_${kind.toUpperCase()}_HERMES_STUB=passed`);

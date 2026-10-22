@@ -126,6 +126,7 @@ export function workflowFailure(error: unknown, stage: WorkflowStage): string {
         'unretrieved citation': 'unretrieved_citation',
         'offer evidence required': 'offer_evidence_missing',
         'competitor evidence required': 'competitor_evidence_missing',
+        'comparison offer evidence required': 'comparison_evidence_missing',
         'uniqueness without benchmark': 'uniqueness_without_benchmark',
       };
       return Object.hasOwn(reasons, error.detail ?? '')

@@ -10,6 +10,7 @@ import type {
   Opportunity,
   Recommendation,
   TenantTx,
+  WorkflowResult,
 } from '@ulysse/domain';
 import {
   AGENT_RULE_ID,
@@ -36,10 +37,17 @@ import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts'
 import { fetchAgentCompletion, ProviderCallError } from './agent-errors.ts';
 import { workflowRetryDelay } from './workflow-retry.ts';
 import {
+  inspectBuyerCitations,
   inspectWorkflowCompletion,
   workflowRepairPrompt,
   workflowResponseFormat,
 } from './workflow-response.ts';
+import {
+  BUYER_REVIEW_INSTRUCTIONS,
+  BUYER_REVIEW_VERSION,
+  buyerReviewMessages,
+  workflowCitations,
+} from './buyer-review.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
 export const EXECUTION_CONTRACT = 'ulysse-execution-v3';
@@ -261,6 +269,7 @@ export class AgentRuntime {
         },
       },
       executor,
+      (capability, draft, signal) => this.reviewBuyer(capability, draft, signal),
     );
     this.log = log;
   }
@@ -922,7 +931,60 @@ export class AgentRuntime {
     });
   }
 
+  private async reviewBuyer(
+    capability: string,
+    draft: WorkflowResult,
+    signal?: AbortSignal,
+  ): Promise<WorkflowResult> {
+    const ctx = await this.store.resolve(hash(capability));
+    ensure(ctx, 'FORBIDDEN', 'inactive capability');
+    const runId = await this.store.transaction(ctx, async (_tx, sql) => {
+      const claimed = await sql.query<{ id: string }>(
+        "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{buyerReview}',$3::jsonb) WHERE tenant_id=$1 AND capability_hash=$2 AND workflow_kind='buyer' AND status='running' AND expires_at>clock_timestamp() AND NOT (snapshot ? 'buyerReview') RETURNING id",
+        [
+          ctx.tenantId,
+          hash(capability),
+          JSON.stringify({ version: BUYER_REVIEW_VERSION, status: 'running' }),
+        ],
+      );
+      ensure(claimed.rows[0], 'FORBIDDEN', 'review already attempted');
+      await this.store.event(
+        sql,
+        ctx.tenantId,
+        claimed.rows[0].id,
+        'validating',
+        'Relecture du diagnostic à partir des preuves consultées',
+      );
+      return claimed.rows[0].id;
+    });
+    const payload = await this.infer(
+      capability,
+      { messages: buyerReviewMessages(draft) },
+      signal,
+      workflowCitations(draft),
+    );
+    const inspected = inspectWorkflowCompletion(payload, 'buyer');
+    if (!inspected?.result || inspected.diagnostics.code !== 'validated')
+      throw new ProviderCallError('result_evidence_invalid', null);
+    await this.store.transaction(ctx, async (_tx, sql) => {
+      await sql.query(
+        "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{buyerReview,status}','\"completed\"'::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+        [ctx.tenantId, runId],
+      );
+    });
+    return inspected.result;
+  }
+
   async inference(capability: string, input: unknown, signal?: AbortSignal): Promise<unknown> {
+    return this.infer(capability, input, signal, null);
+  }
+
+  private async infer(
+    capability: string,
+    input: unknown,
+    signal: AbortSignal | undefined,
+    review: readonly string[] | null,
+  ): Promise<unknown> {
     signal?.throwIfAborted();
     const ctx = await this.store.resolve(hash(capability));
     ensure(ctx, 'FORBIDDEN', 'inactive capability');
@@ -939,160 +1001,179 @@ export class AgentRuntime {
     const provider = this.provider;
     ensure(provider && this.config.AGENT_MODEL_ID, 'INVALID_INPUT', 'model absent');
     ensure(bytes <= provider.profile.maxContextBytes, 'INVALID_INPUT', 'context limit');
-    const { runId, mode, workflowKind, evidence, preparedMessages, responseFormat, upperCost } =
-      await this.store.transaction(ctx, async (tx, sql) => {
-        const query = await sql.query(
-          'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
-          [ctx.tenantId, hash(capability)],
-        );
-        const run = Run.parse(query.rows[0]);
-        const retry = run.snapshot.providerRetry;
-        ensure(
-          !retry?.notBefore || Date.parse(retry.notBefore) <= Date.now(),
-          'FORBIDDEN',
-          'provider cooldown',
-        );
-        ensure(
-          run.mode !== 'simulated' &&
-            run.mode === this.config.ULYSSE_ANALYSIS_MODE &&
-            run.model === this.config.AGENT_MODEL_ID &&
-            run.snapshot.modelProfileHash === provider.profileHash &&
-            run.status === 'running' &&
-            run.model_calls < 8 &&
-            Date.parse(run.expires_at) > Date.now(),
-          'FORBIDDEN',
-          'model limit',
-        );
-        if (run.workflow_kind === 'deal') {
-          const {
-            opportunity: o,
-            doctrine: d,
-            context: c,
-          } = await this.current(tx, run.subject_id);
-          ensure(agentInputHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
-        }
-        // Deterministic authority over what reaches the provider: the versioned Ulysse
-        // instructions as the only system message, and only the Ulysse tools.
-        const system = messages.filter((m) => m.role === 'system' || m.role === 'developer');
-        ensure(
-          system.length === 1 &&
-            messages[0] === system[0] &&
-            typeof system[0]?.content === 'string' &&
-            sha256(system[0].content) ===
-              (run.workflow_kind === 'deal'
+    const {
+      runId,
+      mode,
+      workflowKind,
+      evidence,
+      preparedMessages,
+      responseFormat,
+      upperCost,
+      remainingMs,
+    } = await this.store.transaction(ctx, async (tx, sql) => {
+      const query = await sql.query(
+        'SELECT * FROM agent_runs WHERE tenant_id=$1 AND capability_hash=$2 FOR UPDATE',
+        [ctx.tenantId, hash(capability)],
+      );
+      const run = Run.parse(query.rows[0]);
+      const retry = run.snapshot.providerRetry;
+      ensure(
+        !retry?.notBefore || Date.parse(retry.notBefore) <= Date.now(),
+        'FORBIDDEN',
+        'provider cooldown',
+      );
+      ensure(
+        run.mode !== 'simulated' &&
+          run.mode === this.config.ULYSSE_ANALYSIS_MODE &&
+          run.model === this.config.AGENT_MODEL_ID &&
+          run.snapshot.modelProfileHash === provider.profileHash &&
+          run.status === 'running' &&
+          run.model_calls < 8 &&
+          Date.parse(run.expires_at) > Date.now(),
+        'FORBIDDEN',
+        'model limit',
+      );
+      if (run.workflow_kind === 'deal') {
+        const { opportunity: o, doctrine: d, context: c } = await this.current(tx, run.subject_id);
+        ensure(agentInputHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
+      }
+      // Deterministic authority over what reaches the provider: the versioned Ulysse
+      // instructions as the only system message, and only the Ulysse tools.
+      const system = messages.filter((m) => m.role === 'system' || m.role === 'developer');
+      ensure(
+        system.length === 1 &&
+          messages[0] === system[0] &&
+          typeof system[0]?.content === 'string' &&
+          sha256(system[0].content) ===
+            (review
+              ? sha256(BUYER_REVIEW_INSTRUCTIONS)
+              : run.workflow_kind === 'deal'
                 ? AGENT_INSTRUCTIONS_SHA256
                 : WORKFLOW_INSTRUCTIONS_SHA256),
-          'FORBIDDEN',
-          'foreign instructions',
-        );
-        const allowedTools = run.workflow_kind === 'deal' ? TOOL_NAMES : WORKFLOW_TOOLS;
-        if (Array.isArray(body.tools)) {
-          const names = body.tools.map((t: unknown) => record(record(t).function).name);
-          ensure(
-            names.length === allowedTools.length &&
-              allowedTools.every((name) => names.includes(name)),
-            'FORBIDDEN',
-            'foreign tools',
-          );
-        }
-        const evidence =
-          run.workflow_kind === 'deal'
-            ? null
-            : await this.workflows.prepareEvidence(
-                ctx,
-                tx,
-                sql,
-                run.subject_id,
-                run.input_hash,
-                // Reserve space for the response schema and tool/envelope serialization.
-                provider.profile.maxContextBytes - Buffer.byteLength(JSON.stringify(body)) - 12000,
-              );
-        // Mandatory evidence is supplied as untrusted data, never as a system instruction
-        // or an invented model/tool message (which could break signed reasoning replay).
-        let preparedMessages = evidence
-          ? [messages[0], evidence.message, ...messages.slice(1)]
-          : messages;
-        const responseFormat =
-          run.workflow_kind !== 'deal' && evidence && provider.profile.capabilities.structuredOutput
-            ? workflowResponseFormat(run.workflow_kind, [...run.retrieved, ...evidence.references])
-            : undefined;
-        let preparedBytes = Buffer.byteLength(
-          JSON.stringify({ ...body, messages: preparedMessages, response_format: responseFormat }),
-        );
-        let catalogCount = evidence?.catalogCount ?? 0;
-        // Discovery metadata is optional: never reject an otherwise valid analysis
-        // merely because its catalog does not fit beside the transcript/schema.
-        if (evidence && preparedBytes > provider.profile.maxContextBytes) {
-          preparedMessages = [messages[0], evidence.messageWithoutCatalog, ...messages.slice(1)];
-          preparedBytes = Buffer.byteLength(
-            JSON.stringify({
-              ...body,
-              messages: preparedMessages,
-              response_format: responseFormat,
-            }),
-          );
-          catalogCount = 0;
-        }
+        'FORBIDDEN',
+        'foreign instructions',
+      );
+      if (review)
         ensure(
-          preparedMessages.length <= 32 && preparedBytes <= provider.profile.maxContextBytes,
-          'INVALID_INPUT',
-          'context limit',
+          run.workflow_kind === 'buyer' &&
+            body.tools === undefined &&
+            review.every((ref) => run.retrieved.includes(ref)),
+          'FORBIDDEN',
+          'invalid review evidence',
         );
-        // Include delivered source text and the native schema in the per-call reservation.
-        const upperCost = provider.estimate(
-          preparedBytes + 2048,
-          provider.profile.generation.maxOutputTokens,
+      const allowedTools = run.workflow_kind === 'deal' ? TOOL_NAMES : WORKFLOW_TOOLS;
+      if (Array.isArray(body.tools)) {
+        const names = body.tools.map((t: unknown) => record(record(t).function).name);
+        ensure(
+          names.length === allowedTools.length &&
+            allowedTools.every((name) => names.includes(name)),
+          'FORBIDDEN',
+          'foreign tools',
         );
-        ensure(run.committed_usd + upperCost <= run.reserved_usd, 'FORBIDDEN', 'budget limit');
+      }
+      const evidence =
+        run.workflow_kind === 'deal'
+          ? null
+          : await this.workflows.prepareEvidence(
+              ctx,
+              tx,
+              sql,
+              run.subject_id,
+              run.input_hash,
+              // Reserve space for the response schema and tool/envelope serialization.
+              provider.profile.maxContextBytes - Buffer.byteLength(JSON.stringify(body)) - 12000,
+              review ? { cited: review, read: run.retrieved } : undefined,
+            );
+      // Mandatory evidence is supplied as untrusted data, never as a system instruction
+      // or an invented model/tool message (which could break signed reasoning replay).
+      let preparedMessages = evidence
+        ? [messages[0], evidence.message, ...messages.slice(1)]
+        : messages;
+      const responseFormat =
+        run.workflow_kind !== 'deal' && evidence && provider.profile.capabilities.structuredOutput
+          ? workflowResponseFormat(
+              run.workflow_kind,
+              review ? evidence.references : [...run.retrieved, ...evidence.references],
+            )
+          : undefined;
+      let preparedBytes = Buffer.byteLength(
+        JSON.stringify({ ...body, messages: preparedMessages, response_format: responseFormat }),
+      );
+      let catalogCount = evidence?.catalogCount ?? 0;
+      // Discovery metadata is optional: never reject an otherwise valid analysis
+      // merely because its catalog does not fit beside the transcript/schema.
+      if (evidence && preparedBytes > provider.profile.maxContextBytes) {
+        preparedMessages = [messages[0], evidence.messageWithoutCatalog, ...messages.slice(1)];
+        preparedBytes = Buffer.byteLength(
+          JSON.stringify({
+            ...body,
+            messages: preparedMessages,
+            response_format: responseFormat,
+          }),
+        );
+        catalogCount = 0;
+      }
+      ensure(
+        preparedMessages.length <= 32 && preparedBytes <= provider.profile.maxContextBytes,
+        'INVALID_INPUT',
+        'context limit',
+      );
+      // Include delivered source text and the native schema in the per-call reservation.
+      const upperCost = provider.estimate(
+        preparedBytes + 2048,
+        provider.profile.generation.maxOutputTokens,
+      );
+      ensure(run.committed_usd + upperCost <= run.reserved_usd, 'FORBIDDEN', 'budget limit');
+      await sql.query(
+        "UPDATE agent_runs SET model_calls=model_calls+1,uncertain_calls=uncertain_calls+1,committed_usd=committed_usd+$3,cost_state='unknown' WHERE tenant_id=$1 AND id=$2",
+        [ctx.tenantId, run.id, upperCost],
+      );
+      if (evidence) {
         await sql.query(
-          "UPDATE agent_runs SET model_calls=model_calls+1,uncertain_calls=uncertain_calls+1,committed_usd=committed_usd+$3,cost_state='unknown' WHERE tenant_id=$1 AND id=$2",
-          [ctx.tenantId, run.id, upperCost],
+          "UPDATE agent_runs SET retrieved=ARRAY(SELECT DISTINCT unnest(retrieved || $3::text[])),snapshot=jsonb_set(snapshot,'{workflowEvidence}',$4::jsonb) WHERE tenant_id=$1 AND id=$2",
+          [
+            ctx.tenantId,
+            run.id,
+            evidence.references,
+            JSON.stringify({
+              sourceCount: evidence.sourceCount,
+              catalogCount,
+              referenceCount: evidence.references.length,
+              structuredOutput: responseFormat !== undefined,
+            }),
+          ],
         );
-        if (evidence) {
+        if (retry) {
           await sql.query(
-            "UPDATE agent_runs SET retrieved=ARRAY(SELECT DISTINCT unnest(retrieved || $3::text[])),snapshot=jsonb_set(snapshot,'{workflowEvidence}',$4::jsonb) WHERE tenant_id=$1 AND id=$2",
-            [
-              ctx.tenantId,
-              run.id,
-              evidence.references,
-              JSON.stringify({
-                sourceCount: evidence.sourceCount,
-                catalogCount,
-                referenceCount: evidence.references.length,
-                structuredOutput: responseFormat !== undefined,
-              }),
-            ],
+            "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{providerRetry,phase}','\"retrying\"'::jsonb) WHERE tenant_id=$1 AND id=$2",
+            [ctx.tenantId, run.id],
           );
-          if (retry) {
-            await sql.query(
-              "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{providerRetry,phase}','\"retrying\"'::jsonb) WHERE tenant_id=$1 AND id=$2",
-              [ctx.tenantId, run.id],
-            );
-            await sql.query(
-              "UPDATE workflow_requests SET error_code=NULL,revision=revision+1 WHERE tenant_id=$1 AND agent_run_id=$2 AND status='running' AND error_code='provider_retry_wait'",
-              [ctx.tenantId, run.id],
-            );
-          }
+          await sql.query(
+            "UPDATE workflow_requests SET error_code=NULL,revision=revision+1 WHERE tenant_id=$1 AND agent_run_id=$2 AND status='running' AND error_code='provider_retry_wait'",
+            [ctx.tenantId, run.id],
+          );
         }
-        await this.store.event(
-          sql,
-          ctx.tenantId,
-          run.id,
-          'model',
-          run.mode === 'hermes-live'
-            ? `Appel modèle réservé : ${this.config.AGENT_MODEL_ID}, ${this.config.AGENT_PROVIDER_ROUTE}`
-            : 'Appel au modèle simulé (aucun fournisseur)',
-        );
-        return {
-          runId: run.id,
-          mode: run.mode,
-          workflowKind: run.workflow_kind,
-          evidence,
-          preparedMessages,
-          responseFormat,
-          upperCost,
-        };
-      });
+      }
+      await this.store.event(
+        sql,
+        ctx.tenantId,
+        run.id,
+        'model',
+        run.mode === 'hermes-live'
+          ? `Appel modèle réservé : ${this.config.AGENT_MODEL_ID}, ${this.config.AGENT_PROVIDER_ROUTE}`
+          : 'Appel au modèle simulé (aucun fournisseur)',
+      );
+      return {
+        runId: run.id,
+        mode: run.mode,
+        workflowKind: run.workflow_kind,
+        evidence,
+        preparedMessages,
+        responseFormat,
+        upperCost,
+        remainingMs: Math.max(1, Math.min(45000, Date.parse(run.expires_at) - Date.now())),
+      };
+    });
     const live = mode === 'hermes-live';
     // The provider key only ever leaves for OpenRouter; the stub endpoint receives none.
     let payload: Record<string, unknown>;
@@ -1118,8 +1199,8 @@ export class AgentRuntime {
             provider: provider.provider,
           }),
           signal: signal
-            ? AbortSignal.any([signal, AbortSignal.timeout(45000)])
-            : AbortSignal.timeout(45000),
+            ? AbortSignal.any([signal, AbortSignal.timeout(remainingMs)])
+            : AbortSignal.timeout(remainingMs),
         },
       );
     } catch (error) {
@@ -1133,7 +1214,7 @@ export class AgentRuntime {
             await wait(delay, undefined, { signal });
             // Resume this same turn. Authorization, freshness, deadline, call cap and
             // cost are rechecked; the refused transmission keeps its unknown provision.
-            return this.inference(capability, input, signal);
+            return this.infer(capability, input, signal, review);
           }
         }
         await this.store.transaction(ctx, async (_tx, sql) => {
@@ -1180,7 +1261,10 @@ export class AgentRuntime {
     if (workflowKind !== 'deal') {
       const inspected = inspectWorkflowCompletion(payload, workflowKind);
       if (inspected) {
-        const d = inspected.diagnostics;
+        const d =
+          review && inspected.result && evidence
+            ? (inspectBuyerCitations(inspected.result, evidence) ?? inspected.diagnostics)
+            : inspected.diagnostics;
         await this.store.transaction(ctx, async (_tx, sql) => {
           await sql.query(
             "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{workflowFormat}',$3::jsonb) WHERE tenant_id=$1 AND id=$2",
@@ -1226,7 +1310,7 @@ export class AgentRuntime {
             }));
           // The normal gateway rechecks authorization, versions, lease, route and reservation.
           // The persistent marker prevents another repair even across concurrent/replayed requests.
-          if (retry) return this.inference(capability, repairBody, signal);
+          if (retry) return this.infer(capability, repairBody, signal, review);
           await this.store.transaction(ctx, async (_tx, sql) => {
             await sql.query(
               "UPDATE agent_runs SET error_code=coalesce(error_code,$3) WHERE tenant_id=$1 AND id=$2 AND status='running'",

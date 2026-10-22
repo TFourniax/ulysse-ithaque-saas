@@ -60,6 +60,9 @@ const WORKFLOW_ERRORS: Record<string, string> = {
   hermes_http_422: 'Le moteur d’analyse n’a pas pu retourner une réponse exploitable.',
   result_invalid: 'La réponse produite ne respecte pas le format attendu.',
   result_schema_invalid: 'Les champs de la réponse ne respectent pas le format attendu.',
+  result_evidence_invalid:
+    'La relecture n’a pas pu produire un diagnostic avec des références valides. Les sources collectées sont conservées.',
+  comparison_evidence_missing: 'Une comparaison ne cite pas les deux offres nécessaires.',
   result_json_invalid: 'Le modèle n’a pas fourni un résultat JSON lisible.',
   result_truncated: 'La réponse du modèle est incomplète. Aucun diagnostic n’a été publié.',
   result_too_large: 'La réponse du modèle dépasse la taille autorisée.',

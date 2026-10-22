@@ -275,12 +275,19 @@ export function validateWorkflowPublication(
     'INVALID_INPUT',
     'competitor evidence required',
   );
+  ensure(
+    result.benchmark.every((f) => f.references.some((r) => offerRefs.has(r))),
+    'INVALID_INPUT',
+    'comparison offer evidence required',
+  );
   if (
     result.uniqueness?.verdict !== undefined &&
     result.uniqueness.verdict !== 'insufficient_evidence'
   ) {
     ensure(
-      result.benchmark.length > 0 && result.uniqueness.references.some((r) => competitors.has(r)),
+      result.benchmark.length > 0 &&
+        result.uniqueness.references.some((r) => competitors.has(r)) &&
+        result.uniqueness.references.some((r) => offerRefs.has(r)),
       'INVALID_INPUT',
       'uniqueness without benchmark',
     );

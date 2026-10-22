@@ -25,6 +25,7 @@ import { z } from 'zod';
 import { workflowFailure, type WorkflowStage } from './agent-errors.ts';
 import { WORKFLOW_TIMEOUT_MS } from './workflow-retry.ts';
 import { researchPreview, workflowResearchCatalog } from './workflow-catalog.ts';
+import { workflowCitations } from './buyer-review.ts';
 
 export const WORKFLOW_TOOLS = [
   'get_workflow_context',
@@ -87,10 +88,21 @@ export class WorkflowRuntime {
   readonly store: PgWorkspaceStore;
   readonly settings: Settings;
   readonly executor: AgentExecutor;
-  constructor(pool: Pool, settings: Settings, executor: AgentExecutor) {
+  readonly reviewBuyer: (
+    capability: string,
+    draft: WorkflowResult,
+    signal?: AbortSignal,
+  ) => Promise<WorkflowResult>;
+  constructor(
+    pool: Pool,
+    settings: Settings,
+    executor: AgentExecutor,
+    reviewBuyer: WorkflowRuntime['reviewBuyer'],
+  ) {
     this.store = new PgWorkspaceStore(pool);
     this.settings = settings;
     this.executor = executor;
+    this.reviewBuyer = reviewBuyer;
   }
   async prepareEvidence(
     ctx: Context,
@@ -99,13 +111,22 @@ export class WorkflowRuntime {
     subjectId: string,
     inputHash: string,
     maxEvidenceBytes: number,
+    review?: { cited: readonly string[]; read: readonly string[] },
   ) {
     const run = await this.store.get(sql, ctx.tenantId, subjectId);
     const input = await this.store.input(tx, sql, run);
     this.store.assertFresh(input);
     ensure(run.status === 'running' && workflowInputHash(input) === inputHash, 'STALE_EVIDENCE');
     const context = workflowContext(input, subjectId);
-    const sources = requiredSources(input, run).map((s) => ({
+    const selected = review
+      ? input.sources.filter(
+          (s) =>
+            run.sourceIds.includes(s.id) ||
+            review.cited.includes(sourceReference(s)) ||
+            (['offer', 'website'].includes(s.kind) && review.read.includes(sourceReference(s))),
+        )
+      : requiredSources(input, run);
+    const sources = selected.map((s) => ({
       ...s,
       reference: sourceReference(s),
       untrusted: true,
@@ -119,13 +140,18 @@ export class WorkflowRuntime {
       0,
       maxEvidenceBytes - Buffer.byteLength(JSON.stringify(payload)) - 512,
     );
-    const researchCatalog = input.research
-      ? workflowResearchCatalog(input.sources, Math.min(24000, Math.floor(remaining / 2)))
-      : undefined;
+    const researchCatalog =
+      input.research && !review
+        ? workflowResearchCatalog(input.sources, Math.min(24000, Math.floor(remaining / 2)))
+        : undefined;
     return {
       references: [...context.references, ...sources.map((s) => s.reference)],
       sourceCount: sources.length,
       catalogCount: researchCatalog?.items.length ?? 0,
+      offerReferences: selected
+        .filter((s) => s.kind === 'offer' || s.kind === 'website')
+        .map(sourceReference),
+      competitorReferences: selected.filter((s) => s.kind === 'competitor').map(sourceReference),
       messageWithoutCatalog: {
         role: 'user',
         content: WORKFLOW_EVIDENCE_PREFIX + JSON.stringify(payload),
@@ -243,7 +269,7 @@ export class WorkflowRuntime {
           WORKFLOW_VERSION,
           ctx.correlationId,
           kind,
-          WORKFLOW_TIMEOUT_MS,
+          WORKFLOW_TIMEOUT_MS + (kind === 'buyer' ? 60000 : 0),
         ],
       );
       await sql.query(
@@ -294,7 +320,32 @@ export class WorkflowRuntime {
               signal,
             );
       stage = 'result';
-      const result = validateWorkflowResult(raw);
+      let result = validateWorkflowResult(raw);
+      if (
+        result.kind === 'buyer' &&
+        result.outcome === 'draft' &&
+        this.settings.mode !== 'simulated'
+      ) {
+        // Do not let review turn an unread/invented citation into a newly authorized read.
+        stage = 'publication';
+        await this.store.transaction(ctx, async (_tx, sql) => {
+          const run = Run.parse(
+            (
+              await sql.query('SELECT * FROM agent_runs WHERE tenant_id=$1 AND id=$2', [
+                ctx.tenantId,
+                agentId,
+              ])
+            ).rows[0],
+          );
+          ensure(
+            workflowCitations(result).every((ref) => run.retrieved.includes(ref)),
+            'INVALID_INPUT',
+            'unretrieved citation',
+          );
+        });
+        stage = 'execution';
+        result = await this.reviewBuyer(capability, result, signal);
+      }
       stage = 'publication';
       await this.store.transaction(ctx, async (tx, sql) => {
         await tx.lock('analysis');
