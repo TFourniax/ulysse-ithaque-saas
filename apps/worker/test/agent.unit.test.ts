@@ -64,7 +64,7 @@ test('GLM keeps reasoning enabled, reserves its full output allowance and has a 
     reasoning: { enabled: true, effort: 'low' },
   });
   assert.deepEqual(route.provider.only, ['inceptron/fp8']);
-  assert.equal(route.estimate(10000, 2000), 0.00313);
+  assert.equal(route.estimate(10000, 2000), 0.0036);
   assert.ok(route.estimate(MAX_AGENT_CONTEXT_BYTES + 2048, 8192) * 8 < 0.25);
   const profile = structuredClone(route.profile);
   // A model unknown to this release needs configuration only, not another code allowlist.
@@ -157,7 +157,7 @@ test('GLM preflight checks reasoning support, ZDR, parameters and pinned prices 
     model_id: p.profile.model,
     tag: 'inceptron/fp8',
     status: 0,
-    pricing: { prompt: '0.000000175', completion: '0.00000069' },
+    pricing: { prompt: '0.00000018', completion: '0.00000069' },
     supported_parameters: [...p.requiredParameters],
   };
   const request: typeof fetch = async (url, init) => {
@@ -174,16 +174,16 @@ test('GLM preflight checks reasoning support, ZDR, parameters and pinned prices 
     p.profileHash,
   );
   // Reproduce the VPS refusal with the previous administrator profile. A deployed override
-  // must stay explicit, even when the bundled profile has been updated to the verified price.
+  // must stay explicit, even when the bundled profile has been given a price margin.
   const oldProfile = JSON.stringify({
     ...p.profile,
-    prices: { ...p.prices, prompt: 0.1 },
+    prices: { prompt: 0.175, completion: 0.69 },
   });
   await assert.rejects(
     checkEuropeanProvider(p.profile.model, 'fake-key', request, oldProfile),
     (error: unknown) => {
       assert.ok(error instanceof Error);
-      assert.match(error.message, /entree 0\.175 \(plafond 0\.1\)/);
+      assert.match(error.message, /entree 0\.18 \(plafond 0\.175\)/);
       assert.match(error.message, /sortie 0\.69 \(plafond 0\.69\)/);
       assert.ok(!error.message.includes('fake-key'));
       return true;
@@ -192,11 +192,13 @@ test('GLM preflight checks reasoning support, ZDR, parameters and pinned prices 
   // Both price dimensions remain hard routing limits, rather than being raised automatically.
   for (const field of ['prompt', 'completion'] as const) {
     const previous = endpoint.pricing[field];
-    endpoint.pricing[field] = field === 'prompt' ? '0.000000176' : '0.0000007';
+    endpoint.pricing[field] = String(p.prices[field] / 1_000_000);
+    await checkEuropeanProvider(p.profile.model, 'fake-key', request);
+    endpoint.pricing[field] = String((p.prices[field] + 0.001) / 1_000_000);
     await assert.rejects(checkEuropeanProvider(p.profile.model, 'fake-key', request), /Tarif/);
     endpoint.pricing[field] = previous;
   }
-  assert.deepEqual(p.provider.max_price, { prompt: 0.175, completion: 0.69 });
+  assert.deepEqual(p.provider.max_price, { prompt: 0.2, completion: 0.8 });
   for (const missing of ['tools', 'response_format', 'structured_outputs']) {
     endpoint.supported_parameters = p.requiredParameters.filter((x) => x !== missing);
     await assert.rejects(checkEuropeanProvider(p.profile.model, 'fake-key', request), /parametres/);

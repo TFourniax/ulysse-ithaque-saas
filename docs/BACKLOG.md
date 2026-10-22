@@ -28,6 +28,8 @@ UL-010 n'est pas un prérequis d'alpha si les règles suffisent au périmètre c
 
 ## Prochain lot à prendre
 
+Le relevé VPS du **22 octobre à 18 h 15 (Europe/Paris)** confirme `1d1836c` déployé, trois refus 429 sur Mistral et aucun secours actif. La commande `fallback auto` échoue ensuite avant bascule : GLM/inceptron annonce 0,18/0,69 USD par million de tokens, contre un plafond inclus de 0,175/0,69. Codex prend **DEBT-037** : marge explicite GLM de 0,20/0,80, mêmes contraintes Europe/ZDR et mêmes budgets globaux, procédure de profil externe applicable sans rebuild. Le contrôle de catalogue ne démontre pas la disponibilité d’inférence. [Journal](journal/2026-10-22-UL-020-fallback-price-margin.md).
+
 Suivi UL-020 après diagnostic VPS de l’essai du 22 octobre à 16 h 53 : la version `c5618617c51a` est déployée, mais cinq lignes comparatives échouent au contrôle bilatéral sans tentative de correction. Codex prend **DEBT-036** : remplacer le brouillon précédent lors de la réparation de relecture, fournir les rôles des citations et tracer la décision de réparation sans texte métier. Recette avec corpus volumineux, cinq lignes unilatérales, persistance des coûts et refus sur modification de source. [Journal](journal/2026-10-22-UL-020-review-context.md).
 
 Suivi UL-020 du 22 octobre à 13 h 10 : quatre acteurs nommés et limites visibles, mais comparaisons tarifaires et conclusions non étayées. Codex prend DEBT-034 : relecture séparée avec preuves réelles, références bilatérales contrôlées et coûts/fraîcheur préservés. Code `fbb44c480ac0a72ff1f7dded7c093d4ea1dac48e` publié : 11 contrôles CI réussis, 130 tests unitaires et 50 worker, 15 navigateur. [Journal](journal/2026-10-22-UL-020-buyer-evidence-review.md).
@@ -57,6 +59,7 @@ Priorité de cette branche : assembler et vérifier UL-017, puis terminer la rec
 
 | Dette | Impact | État / clôture |
 | --- | --- | --- |
+| DEBT-037 | Un plafond égal au dernier tarif observé empêche l’activation du secours pour une faible variation | prise par Codex le 22 octobre — plafonds GLM 0,20/0,80 USD/M avec marge explicite, test du refus historique et des deux bornes, procédure sans rebuild. Clôture restante : activation effective puis diagnostic live avec secours et qualité des preuves revues. |
 | DEBT-036 | La duplication des brouillons peut empêcher une correction de citations sur un corpus volumineux; le motif d’inéligibilité n’était pas enregistré | prise par Codex le 22 octobre — correction compacte de la relecture, références typées dans les preuves et diagnostic technique des limites. Code `1d1836ca0ef00d2e4fa2050608b5fe16917a63b6` publié : 11 contrôles CI réussis, worker 53/53, vraie boucle Hermes et stacks neuve/mise à niveau. Clôture restante : diagnostic réel relu avec la campagne conservée. La taille historique du run échoué reste inconnue. |
 | DEBT-001 | Aucun tsc/lint | fermée (UL-002) |
 | DEBT-002 | Adaptateur mémoire non durable | fermée (UL-003, adaptateur PostgreSQL ; la mémoire reste l'oracle de tests) |

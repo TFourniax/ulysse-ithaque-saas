@@ -4,7 +4,7 @@
 
 Les correctifs précédents de reprise 429/503, schéma natif, preuves obligatoires, réservations et pause restent inclus. La configuration autorisée conserve **2 USD/analyse, 20 USD/session et 100 USD/entreprise/mois**; nouvelles campagnes proposées à 3 USD (maximum configurable 10 USD). Ce sont des plafonds, pas des coûts attendus. Le modèle, son profil et le corpus restent conservés.
 
-Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue réel le 21 octobre. Le correctif remet le plafond à 0,175 USD/M, tarif officiel constaté, sans modifier les budgets. La tentative a été arrêtée avant migration et arrêt des services; pas de rollback à effectuer pour ce refus. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
+Le tarif d’entrée du profil GLM de `375bfe5` a été refusé par le catalogue réel le 21 octobre. Le correctif historique remettait le plafond à 0,175 USD/M. Le 22 octobre, un nouveau refus à 0,18 USD/M a empêché l’activation du secours : la procédure ci-dessous ajoute une marge explicite de 0,20/0,80 USD/M, sans modifier les budgets. La tentative a été arrêtée avant migration et arrêt des services; pas de rollback à effectuer pour ce refus. [Incident et correctif](journal/2026-10-21-UL-020-glm-price-drift.md).
 
 ## Préparer et déployer
 
@@ -36,6 +36,40 @@ Pour la démo déjà configurée, ce déploiement conserve la clé Brave, le mod
 **Reprendre la collecte** reste une action distincte, sans hausse du plafond après une erreur. Un appel déjà transmis lors de l’interruption peut encore être facturé, sans publication tardive de ses données. Les anciennes interruptions manuelles sont également réutilisables si l’autorisation et les versions restent valides. L’étape de branchement ci-dessous concerne une première configuration ou un remplacement de clé.
 
 Le diagnostic `diagnose` affiche désormais `automatically_supplied_sources` et `automatically_supplied_references` pour les nouveaux appels. Un nombre d’outils nul ne signifie plus que les sources obligatoires ont été omises : leurs textes sont fournis par la passerelle. Les lectures supplémentaires de concurrents restent tracées comme outils. Ces compteurs ne prouvent pas la justesse de la comparaison. Le champ `buyer_evidence_review` affiche la version et l’état de la nouvelle relecture. Il indique son exécution, pas une validation indépendante de la véracité des conclusions.
+
+## Activer le secours après le refus tarifaire du 22 octobre
+
+Sur la version `1d1836c` déjà installée, `fallback auto` conserve encore le plafond inclus de 0,175/0,69 USD/M. Le registre contrôlé depuis le VPS annonce 0,18/0,69. Le bloc suivant dérive le profil GLM de l’image active et lui donne des plafonds explicites de **0,20/0,80 USD/M**, avec une marge modérée. Il conserve tous les autres paramètres du profil, le principal Mistral, les clés, le corpus, les dépenses et les budgets globaux. Le fichier temporaire ne contient pas de secret; le script copie son contenu dans la configuration durable avant sa suppression. Le contrôle catalogue/région/ZDR reste actif. Prévoir un bref redémarrage API/worker, sans rebuild, migration ni inférence de test.
+
+```bash
+sudo -Hu ulysse bash <<'FALLBACK'
+set -Eeuo pipefail
+set +x
+umask 077
+cd /
+[[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
+
+ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-research.sh
+bash -n "$ULYSSE_SCRIPT"
+ULYSSE_PROFILE=$(mktemp /var/lib/ulysse/home/private/ulysse-glm-fallback.XXXXXX)
+trap 'rm -f -- "$ULYSSE_PROFILE"' EXIT
+
+docker --host unix:///run/user/10002/docker.sock exec --workdir /app ulysse-worker-1 \
+  node --input-type=module -e '
+    import {modelProfiles,parseModelProfile} from "./apps/worker/dist/src/agent-provider.js";
+    if(process.env.AGENT_MODEL_ID!=="mistralai/mistral-small-2603" || process.env.AGENT_PROVIDER_ROUTE!=="openrouter-eu-zdr") throw new Error("Configuration principale inattendue");
+    const p=modelProfiles().find(p=>p.model==="z-ai/glm-5.3-flash");
+    if(!p || p.endpoint!=="inceptron/fp8") throw new Error("Profil GLM inattendu");
+    p.prices={prompt:0.20,completion:0.80};
+    process.stdout.write(JSON.stringify(parseModelProfile(JSON.stringify(p))));
+  ' > "$ULYSSE_PROFILE"
+
+bash "$ULYSSE_SCRIPT" fallback "$ULYSSE_PROFILE"
+bash "$ULYSSE_SCRIPT" status
+FALLBACK
+```
+
+La sortie finale doit afficher `AGENT_FALLBACK_MODEL_ID=z-ai/glm-5.3-flash`, API/worker prêts et contrat Hermes compatible. Après réussite : **Reprendre ce brief** avec la campagne conservée, puis relancer une analyse. Un échec de précontrôle arrête le bloc et laisse la configuration précédente en place. Ce réglage autorise le secours; il ne prouve pas que les deux endpoints seront disponibles ni que les conclusions seront correctes. Éviter `fallback auto` sur l’ancienne image après cette configuration, car il réutiliserait son ancien profil inclus.
 
 ## Secours natif Hermes
 

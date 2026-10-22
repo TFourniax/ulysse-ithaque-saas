@@ -6,8 +6,8 @@
     "route": "openrouter-eu-zdr",
     "endpoint": "inceptron/fp8",
     "prices": {
-      "prompt": 0.175,
-      "completion": 0.69
+      "prompt": 0.2,
+      "completion": 0.8
     },
     "generation": {
       "maxOutputTokens": 8192,

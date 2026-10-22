@@ -669,9 +669,9 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     assert.equal(calls, 1);
     const run = (await runner.store.list(w.owner))[0]!;
     assert.equal(run.status, 'abstained');
-    // (1000 * 0.175 + 2000 * 0.69) / 1M; the 1800 reasoning tokens are already
+    // (1000 * 0.2 + 2000 * 0.8) / 1M at the configured ceilings; the 1800 reasoning tokens are already
     // included in completion_tokens. Assert outside execute so a mismatch remains visible.
-    assert.equal(Number(run.committed_usd), 0.001555);
+    assert.equal(Number(run.committed_usd), 0.0018);
     assert.equal(run.cost_state, 'estimated');
     const snapshot = z
       .object({ modelProfileHash: z.string(), modelProfile: z.unknown() })
