@@ -2382,11 +2382,15 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
         ...pendingWorkflow('buyer', [], 'FIRST_DRAFT_ONLY'),
         outcome: 'draft',
         findings: [
-          { topic: 'Own offer', analysis: 'Fictional offer. '.repeat(70), references: ownRefs },
+          {
+            topic: 'Own offer',
+            analysis: 'Fictional offer. '.repeat(70).trim(),
+            references: ownRefs,
+          },
         ],
         benchmark: rivals.map((s, i) => ({
           topic: s.title,
-          analysis: 'Fictional comparison requiring evidence from both offers. '.repeat(28),
+          analysis: 'Fictional comparison requiring evidence from both offers. '.repeat(28).trim(),
           references: [rivalRefs[i]!],
         })),
         uniqueness: {
@@ -2492,12 +2496,11 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
         {
           execute: async (request) => {
             await engine.tool(request.capability, 'get_workflow_context', {});
-            await engine.tool(request.capability, 'read_company_source', {
-              sourceIds: own.map((s) => s.id),
-            });
-            await engine.tool(request.capability, 'read_company_source', {
-              sourceIds: rivals.map((s) => s.id),
-            });
+            const all = [...own, ...rivals];
+            for (let offset = 0; offset < all.length; offset += 4)
+              await engine.tool(request.capability, 'read_company_source', {
+                sourceIds: all.slice(offset, offset + 4).map((s) => s.id),
+              });
             return initial;
           },
         },
