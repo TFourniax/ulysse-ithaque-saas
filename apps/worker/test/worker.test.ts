@@ -2178,9 +2178,8 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
           assert.equal(saved.snapshot.contextLimit, undefined);
           assert.equal(run.result?.benchmark.length, 3);
           assert.equal(
-            z
-              .object({ status: z.literal('completed') })
-              .safeParse(saved.snapshot.buyerEvidenceReview).success,
+            z.object({ status: z.literal('completed') }).safeParse(saved.snapshot.buyerReview)
+              .success,
             true,
           );
         } else {
@@ -2471,7 +2470,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
         execute: async (request) => {
           await assert.rejects(
             engine.inference(request.capability, body),
-            scenario === 'budget' ? /budget limit/ : /context limit/,
+            scenario === 'budget' ? /budget limit/ : /context_limit/,
           );
           return pendingWorkflow('buyer', [], 'Aucune transmission');
         },
@@ -2483,18 +2482,29 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       );
       await engine.workflows.run(w.ctx, id);
       const run = (await w.workspace.listWorkflows(w.owner))[0]!;
-      assert.equal(run.errorCode, 'required_source_unread');
+      assert.equal(
+        run.errorCode,
+        scenario === 'context' ? 'context_limit' : 'required_source_unread',
+      );
       const trace = await engine.store.transaction(w.ctx, async (_tx, sql) =>
         sql.query<{
           retrieved: string[];
           model_calls: number;
           committed_usd: string;
+          snapshot: Record<string, unknown>;
         }>(
-          'SELECT retrieved,model_calls,committed_usd FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+          'SELECT retrieved,model_calls,committed_usd,snapshot FROM agent_runs WHERE tenant_id=$1 AND id=$2',
           [w.tenantId, run.agentRunId],
         ),
       );
       const saved = trace.rows[0];
+      if (scenario === 'context') {
+        const limit = z
+          .object({ phase: z.literal('prepared'), actual: z.number(), maximum: z.literal(80000) })
+          .strict()
+          .parse(saved?.snapshot.contextLimit);
+        assert.ok(limit.actual > limit.maximum);
+      }
       assert.ok(saved);
       assert.deepEqual(saved.retrieved, []);
       assert.equal(saved.model_calls, 0);
