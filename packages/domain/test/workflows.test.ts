@@ -100,10 +100,16 @@ test('research coverage counts distinct cited actors, retained partial data and 
     },
     researchInput,
   );
-  assert.match(result.limits[0]!, /1 alternative.*sur 3 fiches/u);
-  assert.match(result.limits[0]!, /1 fiche.*revue humaine/u);
-  assert.match(result.limits[0]!, /Collecte partielle/u);
-  assert.match(result.limits[0]!, /ne représente pas tout le marché/u);
+  assert.match(result.limits[0]!, /alternatives citées dans ce diagnostic : 1.*disponibles : 3/u);
+  assert.match(result.limits[0]!, /à vérifier : 1 ; relues et approuvées : 0/u);
+  assert.match(result.limits[0]!, /Recherche partielle/u);
+  assert.match(result.limits[0]!, /pas toutes les fiches examinées ni l’ensemble du marché/u);
+  const approved = withResearchCoverage(result, {
+    ...researchInput,
+    research: { ...researchInput.research!, status: 'completed', pendingReferences: [] },
+  });
+  assert.match(approved.limits[0]!, /à vérifier : 0 ; relues et approuvées : 1/u);
+  assert.match(approved.limits[0]!, /Recherche terminée/u);
   assert.deepEqual(validateWorkflowResult(result), result);
   assert.equal(withResearchCoverage(draft, input), draft);
 });

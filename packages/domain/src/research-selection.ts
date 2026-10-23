@@ -56,9 +56,16 @@ export function rankResearchCandidates(
   const geography = terms(profile.geography);
   const priority = (c: ResearchCandidate) => {
     const evidence = terms(c.facts.map((f) => `${f.offer} ${f.value} ${f.quote}`).join(' '));
+    const documentedTarget = terms(
+      c.facts
+        .filter((f) => f.dimension === 'target')
+        .map((f) => `${f.value} ${f.quote}`)
+        .join(' '),
+    );
     return (
       4 * overlap(offer, evidence) +
       2 * overlap(target, evidence) +
+      6 * overlap(target, documentedTarget) +
       3 * overlap(geography, evidence)
     );
   };
@@ -84,6 +91,6 @@ export function withResearchCoverage(result: WorkflowResult, input: WorkflowInpu
     result.benchmark.flatMap((f) => f.references).filter((r) => available.has(r)),
   );
   const pending = [...cited].filter((r) => input.research?.pendingReferences.includes(r)).length;
-  const coverage = `Couverture de cette synthèse : ${cited.size} alternative(s) de recherche citée(s) sur ${available.size} fiches qualifiées disponibles. ${pending} fiche(s) citée(s) attendent une revue humaine. ${input.research.status === 'completed' ? 'Collecte terminée dans le périmètre configuré.' : 'Collecte partielle.'} Ce corpus ne représente pas tout le marché ; une qualification automatique peut encore être corrigée.`;
+  const coverage = `Périmètre de la comparaison : alternatives citées dans ce diagnostic : ${cited.size} ; fiches concurrentes avec des informations disponibles : ${available.size}. Parmi les fiches citées, à vérifier : ${pending} ; relues et approuvées : ${cited.size - pending}. Ces nombres comptent les fiches citées, pas toutes les fiches examinées ni l’ensemble du marché. ${input.research.status === 'completed' ? 'Recherche terminée dans le périmètre prévu.' : 'Recherche partielle : les informations déjà recueillies sont conservées.'} Une fiche approuvée ne constitue pas une vérification indépendante des promesses du prestataire.`;
   return { ...result, limits: [coverage, ...result.limits.slice(0, 9)] };
 }

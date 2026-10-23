@@ -195,6 +195,28 @@ test('reading priority promotes documented need and geography beyond the first a
   assert.equal(ranked.length, 32);
   assert.equal(alphabetical[0]?.id, 'a0.example');
   assert.equal(local.review, 'pending', 'reading order must not approve evidence');
+  const enterprise = candidate('enterprise.example', 'Automatisation métier et intégration');
+  enterprise.facts.push({
+    ...enterprise.facts[0]!,
+    id: 'enterprise-target',
+    dimension: 'target',
+    value: 'ETI et grandes entreprises',
+    quote: 'ETI et grandes entreprises',
+  });
+  const sme = candidate('sme.example', 'Automatisation métier et intégration');
+  sme.facts.push({
+    ...sme.facts[0]!,
+    id: 'sme-target',
+    dimension: 'target',
+    value: 'PME',
+    quote: 'PME',
+  });
+  assert.equal(
+    rankResearchCandidates([enterprise, sme], profile)[0]?.id,
+    sme.id,
+    'documented audience fit prioritizes a comparable offer, without excluding others',
+  );
+  assert.equal(rankResearchCandidates([enterprise, sme], profile).length, 2);
 });
 
 test('bounded digests include comparison dimensions before repeated offer copy and preserve exact quotations', () => {

@@ -40,6 +40,10 @@ La route directe ne garantit pas Europe/ZDR; cette propriété reste propre au r
 
 ## Vérification et limites
 
+### UL-022 — Qualité du diagnostic
+
+La priorité de lecture tient aussi compte des faits décrivant la clientèle. Ce signal lexical ne qualifie pas automatiquement un concurrent. Hermes et sa relecture expliquent la sélection et proposent une décision conditionnelle sourcée dans les champs existants, sans modifier le contrat JSON ni ajouter de boucle. Le bilan déterministe compte les fiches distinctes citées, disponibles et à vérifier; il ne prétend pas compter toutes les lectures ou couvrir statistiquement le marché. Les identifiants de référence restent inchangés, avec des libellés lisibles côté interface. Les diagnostics historiques conservent leur contenu.
+
 Tests des formats, coûts/cache, refus de fuite de secret, protocole/scope/empreinte, recherche, boucle Hermes épinglée et stacks neuve/mise à niveau. Fournisseurs scriptés en CI. La validation réelle exige un diagnostic relu, un contenu lié et une proposition d’action sur le VPS avec la clé de Thomas. Pas de promesse de fiabilité live sur la base des tests CI.
 
 Références officielles consultées le 23 octobre 2026 : [Hermes](https://github.com/NousResearch/hermes-agent/tree/e76fb951a1d207c9596032426e7e0eadfb197bea), [Sonnet 5.5](https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide), [sorties structurées](https://platform.claude.com/docs/en/build-with-claude/structured-outputs), [prix](https://platform.claude.com/docs/en/about-claude/pricing), [versions API](https://platform.claude.com/docs/en/api/versioning). Prix profil USD/M : entrée 2, sortie 10, écriture cache 5 min 2,5, lecture cache 0,1. Ces prix sont versionnés, non déduits du catalogue de modèles.

@@ -1,5 +1,9 @@
 # Backlog canonique
 
+## UL-022 — Diagnostic utile à la décision
+
+En cours — Codex, demandé par Thomas le 23 octobre. Sélection expliquée des alternatives, priorité à la clientèle documentée, recommandation conditionnelle et prochaine étape sourcées, couverture calculée et vocabulaire compréhensible. Aucun ROI inventé ni nouveau schéma bloquant. Clôture : contrôles automatisés et relecture d'un nouveau diagnostic live avant le parcours contenu. [Journal](journal/2026-10-23-UL-022-diagnostic-decision.md).
+
 ## UL-021 — Anthropic natif
 
 **DEBT-039 — prise par Codex le 23 octobre** : premier lot de fiches concurrentes transmis avec les sources propres; politique commune relecture/publication; omission de benchmark corrigible et motif explicite. Périmètre : domaine workflows, worker, UI, instructions/fixture Hermes, tests et script VPS. Vérification en cours. Clôture : scénario natif avec liste seule, correction et publication sourcée, puis diagnostic réel et contenu lié relus. [Journal](journal/2026-10-23-UL-021-benchmark-publication.md).

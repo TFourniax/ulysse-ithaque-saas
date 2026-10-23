@@ -41,7 +41,7 @@ cd /
 [[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
 
 ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
-ULYSSE_REVISION=6d4882c29782f37a1113946325e5a28c363724f8
+ULYSSE_REVISION=697ecfe6ad87193e2c4f3eb94a57c1e11c39d755
 ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-anthropic.sh
 
 git -C "$ULYSSE_REPO" fetch origin \

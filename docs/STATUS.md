@@ -1,5 +1,9 @@
 # État actuel
 
+## UL-022 — Diagnostic utile à la décision
+
+En cours, responsable Codex, 23 octobre 2026. Thomas transmet un diagnostic live abouti à 20 h 12 (Europe/Paris), avec trois alternatives citées sur quarante fiches disponibles. Ce résultat confirme un essai, sans valider tous les prix ni une fiabilité répétée. Demande suivante : améliorer la sélection expliquée, la recommandation commerciale et le langage du diagnostic avant la recette du contenu lié. Le lot conserve le contrat JSON et la boucle Hermes, renforce la priorité de lecture selon la cible documentée et distingue couverture citée, fiches disponibles et revue humaine. [Journal](journal/2026-10-23-UL-022-diagnostic-decision.md).
+
 ## UL-021 — Anthropic natif
 
 **Suivi DEBT-039, 23 octobre** — Thomas confirme `6d4882c` déployé. Le nouvel essai aboutit côté fournisseur (trois appels, aucun incertain) mais finit `publication_refused` après relecture, sans preuve concurrente ni lecture de fiche. Codex corrige la préparation d'un premier lot de preuves concurrentes et l'écart entre contrôles de relecture et publication. Les omissions déclenchent une correction; les motifs de refus deviennent explicites. Vérification en cours, aucune réussite live annoncée. [Journal](journal/2026-10-23-UL-021-benchmark-publication.md).
