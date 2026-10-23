@@ -147,6 +147,9 @@ class ModelSettings(unittest.TestCase):
         cached = copy.deepcopy(continuation)
         cached['messages'][0]['content'][0]['cache_control'] = {'type': 'ephemeral'}
         native_to_fixture(cached)
+        shorthand = copy.deepcopy(continuation)
+        shorthand['messages'][0]['content'] = 'Immutable evidence'
+        native_to_fixture(shorthand)
         for target in ('system', 'tools', 'messages'):
             changed = copy.deepcopy(continuation)
             if target == 'system': changed['system'] += 'Changed'

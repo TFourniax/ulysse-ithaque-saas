@@ -268,7 +268,13 @@ def native_prefix(body, length=None):
         if isinstance(value, dict): return {k: clean(v) for k, v in value.items() if k != 'cache_control'}
         return value
     prefix = {k: body.get(k) for k in ('system', 'tools')}
-    prefix['messages'] = body.get('messages', [])[:length]
+    # Messages accepts a string as shorthand for one text block. Hermes switches
+    # between these equivalent representations when moving cache breakpoints.
+    prefix['messages'] = [
+        {**message, 'content': [{'type': 'text', 'text': message['content']}]}
+        if isinstance(message.get('content'), str) else message
+        for message in body.get('messages', [])[:length]
+    ]
     return hashlib.sha256(json.dumps(clean(prefix), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 

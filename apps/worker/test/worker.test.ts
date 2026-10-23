@@ -1979,7 +1979,16 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
     const result = (await w.workspace.listWorkflows(w.owner))[0]!;
     assert.equal(result.status, 'abstained', result.errorCode ?? '');
     assert.equal(calls, 3);
-    const run = (await engine.store.list(w.owner))[0]!;
+    const run = await engine.store.transaction(
+      w.ctx,
+      async (_tx, sql) =>
+        (
+          await sql.query<{ model_calls: number; tool_calls: number; snapshot: unknown }>(
+            'SELECT model_calls,tool_calls,snapshot FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+            [w.ctx.tenantId, result.agentRunId],
+          )
+        ).rows[0]!,
+    );
     assert.equal(run.model_calls, 3);
     assert.equal(run.tool_calls, 1);
     assert.ok(!JSON.stringify(run).includes('prefix-signature'));
