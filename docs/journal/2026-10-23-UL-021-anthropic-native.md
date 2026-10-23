@@ -1,6 +1,6 @@
 # UL-021 — Fournisseur Anthropic natif dans Hermes/Ulysse
 
-Responsable : Codex. État : partial, intégration en vérification. Objectif demandé par Thomas : utiliser sa clé API Anthropic et les crédits de son organisation dans les trois parcours, avec Hermes comme moteur. Aucun secret ni donnée client ajouté au dépôt.
+Responsable : Codex. État : partial, intégration vérifiée en CI, recette fournisseur réelle restante. Objectif demandé par Thomas : utiliser sa clé API Anthropic et les crédits de son organisation dans les trois parcours, avec Hermes comme moteur. Aucun secret ni donnée client ajouté au dépôt.
 
 ## Changement
 
@@ -12,7 +12,13 @@ Fichiers : worker fournisseur/runtime/recherche/précontrôle, contrats partagé
 
 ## Vérifications
 
-À ce stade : 47 tests unitaires worker et 14 tests de transformation VPS réussis; syntaxe Python et Bash contrôlée. `npm run verify` complet et contrôles CI de la vraie boucle Hermes, PostgreSQL et stacks neuve/mise à niveau sont en cours. Les tests utilisent uniquement des données et fournisseurs fictifs. La première CI a détecté l’absence de l’extra Anthropic dans l’image de base : le SDK natif était verrouillé mais pas installé. Ajout de `--extra anthropic --sealed` et d’un contrôle d’import/version à la construction. Le nouveau test PostgreSQL oubliait de lire les sources obligatoires avant publication; la fixture est corrigée sans modifier le contrôle métier. Les résultats finaux seront consignés après exécution.
+Révision déployable **`35e1113384ab59c03157686efae5af166ce9a99a`**, [PR #9](https://github.com/TFourniax/ulysse-ithaque-saas/pull/9). Deux workflows terminés avec succès sur cette révision : [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39948259246) et [Hermes/mises à niveau 8/8](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39948259249).
+
+- `npm run verify` réussi : format, lint, TypeScript, cycles, OpenAPI, contrôle documentaire et 141 tests unitaires, dont 47 worker. Quatorze tests de transformation VPS réussis; syntaxe Python, script VPS et blocs opérateur Bash contrôlée.
+- CI avec infrastructure réelle : PostgreSQL 50/50, API 18/18, worker 54/54, navigateur 15/15; quatorze tests dans l’image Hermes épinglée avec sa vraie boucle et le SDK Anthropic installé.
+- Stacks neuves et mises à niveau UL-016 : parcours prochaine action, diagnostic comparatif avec relecture/correction, contenu lié, droits/isolation et persistance après redémarrage. Les routes OpenRouter existante et Anthropic native passent chacune la recette. Sauvegarde/restauration, session, historique et décisions sont conservés dans les scénarios vérifiés.
+
+Les données et réponses fournisseurs sont fictives/scriptées; ces contrôles démontrent l’intégration, pas la qualité sémantique ni la disponibilité d’Anthropic réel. La première CI a détecté l’absence de l’extra Anthropic dans l’image de base : le SDK natif était verrouillé mais pas installé. Ajout de `--extra anthropic --sealed` et d’un contrôle d’import/version à la construction. Les fixtures lisent les sources obligatoires et vérifient le comportement de secours attendu pour chaque route, sans modifier les contrôles métier.
 
 ## Limites et suite
 

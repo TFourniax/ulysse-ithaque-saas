@@ -30,9 +30,20 @@ KEY
 
 ## 2. Déployer et activer
 
-Prendre la révision UL-021 publiée après validation CI dans le journal; employer son SHA complet, pas une branche mobile. Avec les variables `ULYSSE_REPO`, `ULYSSE_REVISION`, `ULYSSE_SCRIPT` de la procédure VPS existante :
+La révision ci-dessous a passé les 13 contrôles CI, dont la vraie boucle Hermes et les stacks Anthropic neuve/mise à niveau avec fournisseur scripté. Depuis le même compte `hermesadmin` :
 
 ```bash
+sudo -Hu ulysse bash <<'UPDATE'
+set -Eeuo pipefail
+set +x
+umask 077
+cd /
+[[ $(hostname) == hermes-prospection-prod && $(id -u) == 10002 ]] || exit 1
+
+ULYSSE_REPO=/var/lib/ulysse/home/projects/ulysse-ul016
+ULYSSE_REVISION=35e1113384ab59c03157686efae5af166ce9a99a
+ULYSSE_SCRIPT=/var/lib/ulysse/home/private/ulysse-anthropic.sh
+
 git -C "$ULYSSE_REPO" fetch origin \
   refs/heads/codex/ul-021-anthropic-native:refs/remotes/origin/codex/ul-021-anthropic-native
 git -C "$ULYSSE_REPO" show \
@@ -41,9 +52,12 @@ bash -n "$ULYSSE_SCRIPT"
 bash "$ULYSSE_SCRIPT" deploy "$ULYSSE_REVISION" \
   --anthropic /var/lib/ulysse/home/private/anthropic.key
 bash "$ULYSSE_SCRIPT" status
+UPDATE
 ```
 
 Le script construit les images, vérifie l’accès au modèle, sauvegarde et reprend la procédure de bascule. Il conserve recherches, corpus, historique et session. Il configure `AGENT_PROVIDER_ROUTE=anthropic`, `AGENT_MODEL_ID=claude-sonnet-5-5`, aucun secours OpenRouter et les enveloppes autorisées 2/20/100 USD. Une connexion au catalogue ne consomme pas d’inférence et ne prouve pas un solde de crédits positif. Ne pas poursuivre après une erreur.
+
+La démo reste disponible pendant la construction; une courte interruption intervient à la bascule. [Preuves CI et limites](journal/2026-10-23-UL-021-anthropic-native.md).
 
 ## 3. Vérifier les parcours
 
