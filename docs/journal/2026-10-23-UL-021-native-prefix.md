@@ -16,7 +16,12 @@ Fichiers : contrat domaine, runtime workflow et passerelle, adaptateur Anthropic
 
 ## Vérification
 
-`npm run verify` réussit : format, lint typé, TypeScript, cycles, OpenAPI, 143 tests unitaires et contrôle documentaire. Les 14 tests du script VPS et les 5 tests Python du contrat et des signatures passent localement. Les 16 tests Hermes passent ensuite localement avec le commit amont épinglé et ses dépendances scellées (Python 3.14.8, chemin de checkout adapté uniquement dans le lanceur de test). PostgreSQL et les stacks complètes restent à revérifier en CI. Les tests utilisent des données et signatures fictives; ils ne prouvent pas la qualité du modèle réel. Le fournisseur scripté rejette une modification du système, des outils ou des preuves avant un bloc signé et tolère les marqueurs de cache. La recette couvre aussi le raisonnement omis, le résultat d’outil, la correction et les limites du contrat privé.
+`npm run verify` réussit : format, lint typé, TypeScript, cycles, OpenAPI, 143 tests unitaires et contrôle documentaire. Les 14 tests du script VPS et les 5 tests Python du contrat et des signatures passent localement. Les 16 tests Hermes passent ensuite localement avec le commit amont épinglé et ses dépendances scellées (Python 3.14.8, chemin de checkout adapté uniquement dans le lanceur de test). Code de déploiement : `6d4882c29782f37a1113946325e5a28c363724f8`.
+
+- [CI applicative](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39966656734) : 5/5 réussis, dont PostgreSQL 50/50, API 18/18, worker 55/55 et navigateur 15/15.
+- [Hermes et mises à niveau](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39966656636) : 8/8 réussis, y compris la compatibilité OpenRouter et les mises à niveau historiques. Les 16 tests dans l’image Hermes passent. Les stacks Anthropic neuve et mise à niveau UL-016 aboutissent au diagnostic comparatif cité, à sa relecture/correction et au contenu lié; décisions, session et données survivent au redémarrage.
+
+Les tests utilisent des données et signatures fictives; ils ne prouvent pas la qualité du modèle réel. Le fournisseur scripté rejette une modification du système, des outils ou des preuves avant un bloc signé et tolère les marqueurs de cache. La recette couvre aussi le raisonnement omis, le résultat d’outil, la correction et les limites du contrat privé.
 
 ## Limites et suite
 
