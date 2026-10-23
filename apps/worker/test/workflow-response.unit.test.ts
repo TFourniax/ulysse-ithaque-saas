@@ -15,6 +15,57 @@ const completion = (content: unknown, finish_reason = 'stop') => ({
   choices: [{ finish_reason, message: { content } }],
 });
 
+test('review detects an omitted research benchmark before publication and accepts only a repaired comparison or explicit abstention', () => {
+  const draft = {
+    ...base,
+    outcome: 'draft' as const,
+    findings: [{ topic: 'Own offer', analysis: 'Described service', references: ['own'] }],
+    uniqueness: {
+      verdict: 'insufficient_evidence' as const,
+      reason: 'No comparison',
+      references: ['own'],
+    },
+  };
+  const evidence = {
+    references: ['own', 'rival'],
+    offerReferences: ['own'],
+    competitorReferences: ['rival'],
+    benchmarkRequired: true,
+  };
+  const diagnostic = inspectBuyerCitations(draft, evidence);
+  assert.deepEqual(diagnostic?.issues, [{ path: 'benchmark', code: 'benchmark_missing' }]);
+  assert.ok(diagnostic);
+  assert.match(
+    workflowRepairPrompt(diagnostic, 'buyer', evidence),
+    /Ne retourne pas un draft sans benchmark/,
+  );
+  assert.equal(
+    inspectBuyerCitations(
+      {
+        ...draft,
+        benchmark: [
+          { topic: 'Rival', analysis: 'Comparable service', references: ['own', 'rival'] },
+        ],
+      },
+      evidence,
+    ),
+    null,
+  );
+  assert.equal(inspectBuyerCitations(base, evidence), null);
+  assert.equal(inspectBuyerCitations(draft, { ...evidence, benchmarkRequired: false }), null);
+  assert.equal(
+    inspectBuyerCitations(
+      {
+        ...draft,
+        findings: [{ ...draft.findings[0]!, references: ['rival'] }],
+        uniqueness: { ...draft.uniqueness, references: ['rival'] },
+      },
+      evidence,
+    )?.issues[1]?.code,
+    'offer_evidence_missing',
+  );
+});
+
 test('partial review keeps bilateral rows, removes dependent conclusions and never invents a missing citation', () => {
   const evidence = {
     references: ['own', 'rival'],

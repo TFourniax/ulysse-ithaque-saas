@@ -3829,6 +3829,220 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     assert.equal(await w.engine.reserve(w.ctx, retry.task, 'model', 0.001), null);
     assert.equal(await w.engine.store.claim(w.ctx, w.id), null);
   });
+  test('native buyer seeds research texts after a list-only turn and repairs an omitted benchmark before publication', async (t) => {
+    const w = await setup('native-benchmark-seed');
+    const workspace = new PgWorkspaceStore(appPool);
+    const source = await workspace.saveSource(w.owner, {
+      kind: 'offer',
+      title: 'Offre fictive',
+      text: quote,
+      url: 'https://own.example/',
+      origin: 'company',
+      observedAt: new Date().toISOString(),
+    });
+    for (let i = 0; i < 150 && (await w.current()).qualifiedCount < 2; i++)
+      await w.engine.run(w.ctx, w.id);
+    const campaign = await w.current();
+    assert.ok(campaign.qualifiedCount >= 2);
+    await w.repository.action(w.owner, w.id, campaign.revision, 'pause');
+    await w.engine.run(w.ctx, w.id);
+    const instructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    for (const scenario of ['corrected', 'unchanged', 'abstained']) {
+      let calls = 0;
+      let generationCalls = 0;
+      let reviewCalls = 0;
+      let generated: WorkflowResult | undefined;
+      const blocks = [
+        { type: 'tool_use', id: 'list_fixture', name: 'list_company_sources', input: {} },
+      ];
+      const mock = t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
+        calls++;
+        const sent = z
+          .object({
+            system: z.string(),
+            messages: z.array(z.object({ role: z.string(), content: z.unknown() })),
+          })
+          .parse(JSON.parse(z.string().parse(init.body)));
+        const reviewing = sent.system === BUYER_REVIEW_INSTRUCTIONS;
+        const bundle = sent.messages.find(
+          (m) => typeof m.content === 'string' && m.content.startsWith(WORKFLOW_EVIDENCE_PREFIX),
+        );
+        assert.ok(bundle);
+        const evidence = z
+          .object({
+            sources: z.array(
+              z.object({
+                kind: z.string(),
+                reference: z.string(),
+                text: z.string(),
+                untrusted: z.literal(true),
+              }),
+            ),
+            publicationRequirements: z.object({ benchmarkRequired: z.literal(true) }),
+          })
+          .parse(
+            JSON.parse(z.string().parse(bundle.content).slice(WORKFLOW_EVIDENCE_PREFIX.length)),
+          );
+        const own = evidence.sources.find((s) => s.kind === 'offer');
+        const rivals = evidence.sources.filter((s) => s.kind === 'competitor');
+        assert.ok(own);
+        assert.ok(rivals.length >= 2 && rivals.length <= 4);
+        for (const rival of rivals)
+          assert.ok(rival.text.includes(quote), 'saved quotation, not a preview');
+        const missing: WorkflowResult = {
+          ...pendingWorkflow('buyer', [], 'Offre décrite sans comparaison'),
+          outcome: 'draft',
+          findings: [{ topic: 'Offre', analysis: quote, references: [own.reference] }],
+          uniqueness: {
+            verdict: 'insufficient_evidence',
+            reason: 'Comparaison omise',
+            references: [own.reference],
+          },
+        };
+        let result = missing;
+        if (reviewing) {
+          reviewCalls++;
+          if (reviewCalls === 2) {
+            assert.ok(JSON.stringify(sent).includes('benchmark_missing'));
+            if (scenario === 'corrected')
+              result = {
+                ...missing,
+                benchmark: rivals.map((r, i) => ({
+                  topic: `Alternative fictive ${i}`,
+                  analysis: 'Les deux offres décrivent une intégration. Prix non comparés.',
+                  references: [own.reference, r.reference],
+                })),
+              };
+            if (scenario === 'abstained')
+              result = pendingWorkflow(
+                'buyer',
+                [],
+                'Ces extraits ne permettent pas une comparaison pertinente.',
+              );
+          }
+        } else {
+          generationCalls++;
+          generated = missing;
+        }
+        return Promise.resolve(
+          Response.json({
+            type: 'message',
+            role: 'assistant',
+            content:
+              !reviewing && generationCalls === 1
+                ? blocks
+                : [{ type: 'text', text: JSON.stringify(result) }],
+            stop_reason: !reviewing && generationCalls === 1 ? 'tool_use' : 'end_turn',
+            usage: { input_tokens: 200, output_tokens: 100 },
+          }),
+        );
+      });
+      const engine: AgentRuntime = new AgentRuntime(
+        workerPool,
+        {
+          ...liveTestConfig(),
+          AGENT_PROVIDER_ROUTE: 'anthropic',
+          AGENT_MODEL_ID: 'claude-sonnet-5-5',
+          ANTHROPIC_API_KEY: 'sk-ant-fixture-only',
+          AGENT_RUN_BUDGET_USD: 2,
+        },
+        {
+          execute: async (request) => {
+            assert.ok(request.initialEvidence);
+            const body = {
+              model: request.model,
+              system: instructions,
+              max_tokens: 16384,
+              tools: WORKFLOW_TOOLS.map((name) => ({
+                name,
+                input_schema: { type: 'object', properties: {} },
+              })),
+              messages: [{ role: 'user', content: request.initialEvidence }],
+            };
+            await engine.anthropicInference(request.capability, body);
+            const list = await engine.tool(request.capability, 'list_company_sources', {});
+            await engine.anthropicInference(request.capability, {
+              ...body,
+              messages: [
+                ...body.messages,
+                { role: 'assistant', content: blocks },
+                {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'tool_result',
+                      tool_use_id: 'list_fixture',
+                      content: JSON.stringify(list),
+                    },
+                  ],
+                },
+              ],
+            });
+            assert.ok(generated);
+            return generated;
+          },
+        },
+      );
+      const id = await workspace.create(
+        w.owner,
+        {
+          kind: 'buyer',
+          brief: {
+            offer: 'Intégration',
+            target: 'PME',
+            phase: 'comparison',
+            objective: 'Comparer',
+            channel: '',
+            constraints: '',
+            buyerRunId: null,
+          },
+          sourceIds: [source.id],
+          requestKey: crypto.randomUUID(),
+        },
+        'hermes-live',
+      );
+      await engine.workflows.run(w.ctx, id);
+      const run = (await workspace.listWorkflows(w.owner)).find((r) => r.id === id)!;
+      assert.equal(
+        run.status,
+        scenario === 'corrected' ? 'draft' : scenario === 'unchanged' ? 'failed' : 'abstained',
+        run.errorCode ?? '',
+      );
+      assert.equal(run.errorCode, scenario === 'unchanged' ? 'benchmark_missing' : null);
+      if (scenario === 'corrected') assert.ok((run.result?.benchmark.length ?? 0) >= 2);
+      assert.equal(calls, 4);
+      assert.equal(reviewCalls, 2);
+      const saved = (
+        await engine.store.transaction(w.ctx, (_tx, sql) =>
+          sql.query<{
+            model_calls: number;
+            tool_calls: number;
+            snapshot: unknown;
+            committed_usd: string;
+            reserved_usd: string;
+          }>(
+            'SELECT model_calls,tool_calls,snapshot,committed_usd,reserved_usd FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+            [w.ctx.tenantId, run.agentRunId],
+          ),
+        )
+      ).rows[0]!;
+      assert.equal(saved.model_calls, 4);
+      assert.equal(saved.tool_calls, 1, 'no model-selected source reads');
+      assert.equal(saved.committed_usd, saved.reserved_usd);
+      const snapshot = z
+        .object({
+          reviewRepairAttempted: z.literal(true),
+          initialWorkflowFormat: z.object({ issues: z.array(z.object({ code: z.string() })) }),
+        })
+        .parse(saved.snapshot);
+      assert.ok(snapshot.initialWorkflowFormat.issues.some((i) => i.code === 'benchmark_missing'));
+      assert.ok(!JSON.stringify(saved.snapshot).includes(quote));
+      mock.mock.restore();
+    }
+  });
   test('buyer generates a structured benchmark from paused research and keeps explicit selection and evidence review mandatory', async (t) => {
     const w = await setup('research-buyer');
     const workspace = new PgWorkspaceStore(appPool);
@@ -3910,11 +4124,7 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
         assert.ok(JSON.stringify(sent.messages).includes(quote), 'review receives saved text');
       }
       assert.ok(format.includes(`source:${source.id}:r1`));
-      assert.equal(
-        format.includes(rivalId),
-        nextResult !== undefined,
-        'listing alone must not authorize a citation',
-      );
+      assert.ok(format.includes(rivalId), 'the complete seeded text authorizes its citation');
       return Promise.resolve(
         Response.json({
           choices: [

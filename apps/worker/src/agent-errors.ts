@@ -179,6 +179,9 @@ export function workflowFailure(error: unknown, stage: WorkflowStage): string {
         'competitor evidence required': 'competitor_evidence_missing',
         'comparison offer evidence required': 'comparison_evidence_missing',
         'uniqueness without benchmark': 'uniqueness_without_benchmark',
+        'available research benchmark ignored': 'benchmark_missing',
+        'incomplete brief': 'brief_incomplete',
+        'workflow kind mismatch': 'result_kind_invalid',
       };
       return Object.hasOwn(reasons, error.detail ?? '')
         ? (reasons[error.detail ?? ''] ?? 'publication_refused')

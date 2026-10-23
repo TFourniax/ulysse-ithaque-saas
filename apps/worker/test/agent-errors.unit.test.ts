@@ -227,6 +227,17 @@ test('transport and timeout errors are classified without leaking exception deta
   }
 });
 test('workflow diagnostics distinguish execution, schema and evidence without arbitrary details', () => {
+  assert.equal(
+    workflowFailure(
+      new DomainError('INVALID_INPUT', 'available research benchmark ignored'),
+      'publication',
+    ),
+    'benchmark_missing',
+  );
+  assert.equal(
+    workflowFailure(new DomainError('INVALID_INPUT', 'incomplete brief'), 'publication'),
+    'brief_incomplete',
+  );
   assert.equal(workflowFailure(new Error('hermes_http_504'), 'execution'), 'hermes_http_504');
   assert.equal(workflowFailure(new Error('private-key'), 'execution'), 'hermes_execution_failed');
   assert.equal(workflowFailure(new Error('private-output'), 'result'), 'result_invalid');

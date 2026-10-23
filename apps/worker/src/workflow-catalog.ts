@@ -1,4 +1,32 @@
 import type { WorkspaceSource } from '@ulysse/domain';
+import { sourceReference } from '@ulysse/domain';
+
+/** Start with actual evidence from the already ranked, authorized corpus. A preview
+ * never becomes evidence, and no excerpt is truncated or synthesized to fit.
+ */
+export function seedResearchEvidence(
+  selected: readonly WorkspaceSource[],
+  candidates: readonly WorkspaceSource[],
+  maxBytes: number,
+): WorkspaceSource[] {
+  const result = [...selected];
+  let added = selected.filter((s) => s.kind === 'competitor').length;
+  let bytes = 0;
+  for (const source of candidates) {
+    if (added >= 4) break;
+    if (source.kind !== 'competitor' || !source.research || result.some((s) => s.id === source.id))
+      continue;
+    const size =
+      Buffer.byteLength(
+        JSON.stringify({ ...source, reference: sourceReference(source), untrusted: true }),
+      ) + 1;
+    if (bytes + size > maxBytes) continue;
+    result.push(source);
+    bytes += size;
+    added++;
+  }
+  return result;
+}
 
 export function researchPreview(source: WorkspaceSource) {
   return {

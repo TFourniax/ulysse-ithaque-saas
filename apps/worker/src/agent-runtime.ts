@@ -64,7 +64,7 @@ export const EXECUTION_CONTRACT = 'ulysse-execution-v6';
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
 export const WORKFLOW_INSTRUCTIONS_SHA256 =
-  'cf7db9272ba6297db84b8a562b418d38c7d61555275081f382ffbeaeb2516a8a';
+  '0180b9082263504019c6cffd2584dfbff15deec4fa0c8947f7cc86539c051a3c';
 export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
 /** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
 export const MAX_ATTEMPTS = 2;
@@ -1285,6 +1285,8 @@ export class AgentRuntime {
               referenceCount: evidence.references.length,
               offerReferenceCount: evidence.offerReferences.length,
               competitorReferenceCount: evidence.competitorReferences.length,
+              seededCompetitorCount: evidence.seededCompetitorCount,
+              benchmarkRequired: evidence.publication.benchmarkRequired,
               inputBytes: preparedBytes,
               maxContextBytes: provider.profile.maxContextBytes,
               structuredOutput: responseFormat !== undefined,
@@ -1480,7 +1482,8 @@ export class AgentRuntime {
       if (inspected) {
         const d =
           review && inspected.result && evidence
-            ? (inspectBuyerCitations(inspected.result, evidence) ?? inspected.diagnostics)
+            ? (inspectBuyerCitations(inspected.result, evidence.publication) ??
+              inspected.diagnostics)
             : inspected.diagnostics;
         await this.store.transaction(ctx, async (_tx, sql) => {
           await sql.query(
@@ -1609,14 +1612,17 @@ export class AgentRuntime {
               };
             }
           }
+          const failureCode = d.issues.some((issue) => issue.code === 'benchmark_missing')
+            ? 'benchmark_missing'
+            : d.code;
           await this.store.transaction(ctx, async (_tx, sql) => {
             await sql.query(
               "UPDATE agent_runs SET error_code=coalesce(error_code,$3) WHERE tenant_id=$1 AND id=$2 AND status='running'",
-              [ctx.tenantId, runId, d.code],
+              [ctx.tenantId, runId, failureCode],
             );
-            await this.store.event(sql, ctx.tenantId, runId, 'error', d.code);
+            await this.store.event(sql, ctx.tenantId, runId, 'error', failureCode);
           });
-          throw new ProviderCallError(d.code, null);
+          throw new ProviderCallError(failureCode, null);
         }
       }
     }

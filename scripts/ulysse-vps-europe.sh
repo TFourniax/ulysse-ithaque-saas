@@ -13,7 +13,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-23.anthropic2-prefix
+ULYSSE_SCRIPT_VERSION=2026-10-23.anthropic3-benchmark
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -104,6 +104,9 @@ SELECT r.id,r.workflow_kind,r.model,r.status,r.error_code,r.started_at,
        r.snapshot->'workflowEvidence'->>'structuredOutput' AS native_response_schema,
        r.snapshot->'workflowEvidence'->>'offerReferenceCount' AS offer_reference_count,
        r.snapshot->'workflowEvidence'->>'competitorReferenceCount' AS competitor_reference_count,
+       r.snapshot->'workflowEvidence'->>'seededCompetitorCount' AS automatically_selected_competitors,
+       r.snapshot->'workflowEvidence'->>'benchmarkRequired' AS benchmark_required,
+       r.snapshot->'workflowFailure' AS failure_stage,
        r.snapshot->'workflowEvidence'->>'inputBytes' AS input_bytes,
        r.snapshot->'workflowEvidence'->>'maxContextBytes' AS max_context_bytes,
        r.snapshot->>'providerRetryCount' AS provider_retries,

@@ -26,6 +26,12 @@ Référence officielle : [préservation du raisonnement](https://platform.claude
 
 ## Exploitation et sécurité
 
+### Préparation du benchmark — DEBT-039
+
+Le contexte initial acheteur inclut jusqu'à quatre fiches concurrentes qualifiées issues de la campagne autorisée, classées selon la priorité de lecture existante. Leur texte enregistré est transmis intégralement, dans la place disponible et au plus 24 000 octets supplémentaires. Les sources propres obligatoires ne sont pas retirées. Le catalogue reste une découverte sans autorisation de citation; seuls les textes réellement transmis ou lus autorisent leurs références. Les lectures supplémentaires restent à la disposition d'Hermes.
+
+La sélection native utilise l'enveloppe fixe avant le premier tour; sa reconstruction ultérieure sert au contrôle exact, sans mutation du préfixe. La relecture ne reçoit que des sources déjà fournies ou lues, avec les mêmes versions et droits. Elle partage désormais les critères de publication du domaine : une campagne qualifiée ou des concurrents sélectionnés exigent une comparaison pour un brouillon, mais pas pour une abstention explicite. Le contrôle détecte l'omission et déclenche la correction bornée existante. Aucune citation inventée, approbation automatique ou nouvelle boucle d'agent. La qualification des acteurs et la pertinence des comparaisons demeurent à relire.
+
 La clé est saisie hors historique dans un fichier privé 0600, appartenant au compte Ulysse. Le script refuse symlink, fichier public ou contenu invalide, puis conserve le secret dans la configuration privée du worker. Ce n’est pas un coffre externe : les administrateurs du compte/Docker rootless ont accès au secret. Aucun secret dans le navigateur, Hermes, Git ou les logs.
 
 `deploy SHA --anthropic /chemin/cle` construit, contrôle la clé et l’accès au modèle par le catalogue Anthropic, puis applique la procédure existante de sauvegarde, migrations additives et bascule. Pas de contrôle OpenRouter lors de cette activation. L’historique, les campagnes, les autres clés et la session sont conservés. Les enveloppes déjà autorisées de 2/20/100 USD sont appliquées sans remettre les dépenses à zéro. Un changement de clé ultérieur utilise `anthropic /chemin/cle`. Le rollback restaure la configuration précédente.

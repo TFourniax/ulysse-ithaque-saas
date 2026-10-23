@@ -54,7 +54,7 @@ try {
         phase: 'comparison',
         objective: 'Préparer un cadrage',
         channel: 'Article',
-        constraints: 'Tout est fictif. CI_NATIVE_FALLBACK',
+        constraints: 'Tout est fictif. CI_NATIVE_FALLBACK CI_MISSING_BENCHMARK',
         buyerRunId: buyerId,
       },
     });
@@ -78,6 +78,9 @@ try {
         result.result.limits.includes('Relecture séparée exécutée avec les preuves consultées.'),
       );
       assert.equal(result.result.benchmark.length, 2);
+      assert.ok(
+        result.result.limits.includes('Benchmark omis puis corrigé avec les preuves fournies.'),
+      );
       for (const row of result.result.benchmark) {
         assert.ok(row.references.includes(`source:${source.id}:r1`));
         assert.ok(rivals.some((r) => row.references.includes(`source:${r.id}:r1`)));

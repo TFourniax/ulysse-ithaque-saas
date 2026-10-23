@@ -205,7 +205,17 @@ def respond(body):
         # bilateral references. This is deliberately a fault fixture, never live logic.
         repairing = any(m.get('role') == 'user' and isinstance(m.get('content'), str)
                         and m['content'].startswith('Ulysse a refusé les références du diagnostic') for m in messages)
-        if len(workflow_result['benchmark']) >= 2:
+        missing_benchmark_fixture = 'CI_MISSING_BENCHMARK' in evidence.get('context', {}).get('brief', {}).get('constraints', '')
+        if missing_benchmark_fixture:
+            if repairing:
+                own = next(s['reference'] for s in evidence['sources'] if s.get('kind') in ('offer', 'website'))
+                workflow_result['benchmark'] = [
+                    {'topic': s['title'], 'analysis': 'Comparaison fictive de deux offres documentées, prix non comparés.', 'references': [own, s['reference']]}
+                    for s in evidence['sources'] if s.get('kind') == 'competitor'][:8]
+                workflow_result['limits'].append('Benchmark omis puis corrigé avec les preuves fournies.')
+            else:
+                workflow_result['benchmark'] = []
+        elif len(workflow_result['benchmark']) >= 2:
             if repairing:
                 own = next(s['reference'] for s in evidence['sources'] if s.get('kind') in ('offer', 'website'))
                 rivals = {s['reference'] for s in evidence['sources'] if s.get('kind') == 'competitor'}

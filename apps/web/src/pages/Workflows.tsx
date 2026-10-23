@@ -65,6 +65,12 @@ const WORKFLOW_ERRORS: Record<string, string> = {
   result_evidence_invalid:
     'La relecture n’a pas pu produire un diagnostic avec des références valides. Les sources collectées sont conservées.',
   comparison_evidence_missing: 'Une comparaison ne cite pas les deux offres nécessaires.',
+  benchmark_missing:
+    'La comparaison demandée n’a pas été produite malgré les fiches disponibles. Vos sources sont conservées ; vous pouvez reprendre ce brief.',
+  brief_incomplete:
+    'Le brief ne contient pas encore les informations nécessaires. Reprenez-le pour le compléter.',
+  publication_refused:
+    'Le résultat n’a pas satisfait le contrôle final. Vos sources et votre brief sont conservés.',
   result_json_invalid: 'Le modèle n’a pas fourni un résultat JSON lisible.',
   result_truncated: 'La réponse du modèle est incomplète. Aucun diagnostic n’a été publié.',
   result_too_large: 'La réponse du modèle dépasse la taille autorisée.',
