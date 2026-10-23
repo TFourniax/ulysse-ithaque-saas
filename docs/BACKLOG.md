@@ -1,5 +1,10 @@
 # Backlog canonique
 
+## UL-021 — Anthropic natif
+
+**Partial**, responsable Codex. Thomas demande l’usage de sa clé API Anthropic dans Hermes/Ulysse. Nouvelle route directe, protocole Messages natif Hermes derrière la passerelle privée, recherche et relecture raccordées, comptabilité incluant le cache, procédure de déploiement/activation et rotation de clé. Aucun changement de données ni secours OpenRouter automatique; Europe/ZDR non attesté pour cette route. Vérifications locales/CI en cours; aucun appel fournisseur réel ni déploiement VPS effectué ici. [ADR](adr/0017-anthropic-native.md), [activation](ANTHROPIC.md), [journal](journal/2026-10-23-UL-021-anthropic-native.md). Clôture : trois parcours réels relus, collecte vérifiée et coût/durée observés après activation.
+
+
 Mis à jour le 22 octobre 2026. Ce fichier fait foi tant qu'un passage documenté vers GitHub Issues n'a pas eu lieu. Pas de calendrier client implicite. Responsable non attribué = un contributeur doit prendre la tâche avant de modifier.
 
 États : **done** (livrable vérifiable + preuve + limites), **partial** (une partie vérifiée, le reste nommé), **blocked** (dépend d'un accès, d'une donnée ou d'un arbitrage absent), **proposed** (proposition non engagée).

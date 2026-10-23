@@ -43,7 +43,7 @@ function providerError(
   return new ProviderCallError(
     code >= 400 ? `provider_http_${code}` : 'provider_response_error',
     status,
-    [429, 503].includes(code) ? retryAfterSeconds(retryAfter) : null,
+    [429, 503, 529].includes(code) ? retryAfterSeconds(retryAfter) : null,
   );
 }
 function retryAfterSeconds(raw: string | null): number | null {
@@ -126,12 +126,17 @@ export function providerGatewayFailure(error: unknown) {
     provider_http_502: 502,
     provider_http_503: 503,
     provider_http_504: 504,
+    provider_http_529: 529,
     provider_timeout: 504,
     provider_transport_error: 502,
   };
   const status = error instanceof ProviderCallError ? (statuses[error.code] ?? 403) : 403;
   const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (error instanceof ProviderCallError && status === 429 && error.retryAfterSeconds !== null)
+  if (
+    error instanceof ProviderCallError &&
+    [429, 503, 529].includes(status) &&
+    error.retryAfterSeconds !== null
+  )
     headers['retry-after'] = String(error.retryAfterSeconds);
   return {
     status,

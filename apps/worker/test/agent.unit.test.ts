@@ -89,7 +89,7 @@ test('GLM keeps reasoning enabled, reserves its full output allowance and has a 
       .profileHash,
     route.profileHash,
   );
-  assert.ok(modelProfiles().every((p) => p.route === 'openrouter-eu-zdr'));
+  assert.ok(modelProfiles().every((p) => ['openrouter-eu-zdr', 'anthropic'].includes(p.route)));
   profile.capabilities.structuredOutput = false;
   const unstructured = agentProvider(profile.model, profile.route, JSON.stringify(profile));
   assert.ok(!unstructured.requiredParameters.includes('response_format'));

@@ -260,6 +260,55 @@ def respond(body):
     }
 
 
+def native_to_fixture(body):
+    """Test-only bridge into shared scripted business fixtures, never a live adapter."""
+    if body.get('stream') or 'provider' in body or 'response_format' in body:
+        raise ValueError('unexpected native request')
+    messages = [{'role': 'system', 'content': body.get('system', '')}]
+    for message in body.get('messages', []):
+        content = message.get('content')
+        if isinstance(content, str):
+            messages.append(message)
+            continue
+        if message['role'] == 'assistant':
+            uses = [b for b in content if b.get('type') == 'tool_use']
+            if uses:
+                expected = []
+                for use in uses:
+                    expected.extend([{'type': 'thinking', 'thinking': 'Fixture only', 'signature': 'signed-' + use['id']},
+                                     {k: use[k] for k in ('type', 'id', 'name', 'input')}])
+                actual = [{k: v for k, v in b.items() if k != 'cache_control'} for b in content]
+                if actual != expected:
+                    raise ValueError('native signed block order lost')
+            messages.append({'role': 'assistant', 'content': ''.join(b['text'] for b in content if b['type'] == 'text'),
+                             'tool_calls': [{'id': b['id'], 'type': 'function', 'function': {'name': b['name'], 'arguments': json.dumps(b['input'])}} for b in uses]})
+        else:
+            for block in content:
+                if block['type'] == 'tool_result':
+                    value = block['content']
+                    if isinstance(value, list): value = ''.join(b['text'] for b in value)
+                    messages.append({'role': 'tool', 'tool_call_id': block['tool_use_id'], 'content': value})
+                elif block['type'] == 'text':
+                    messages.append({'role': 'user', 'content': block['text']})
+    schema = body.get('output_config', {}).get('format', {}).get('schema')
+    return {'model': body.get('model'), 'messages': messages,
+            'tools': [{'type': 'function', 'function': {'name': t['name'], 'parameters': t['input_schema']}} for t in body.get('tools', [])],
+            **({'response_format': {'type': 'json_schema', 'json_schema': {'strict': True, 'schema': schema}}} if schema else {})}
+
+
+def native_response(response):
+    message = response['choices'][0]['message']
+    blocks = []
+    for call in message.get('tool_calls', []):
+        blocks.extend([{'type': 'thinking', 'thinking': 'Fixture only', 'signature': 'signed-' + call['id']},
+                       {'type': 'tool_use', 'id': call['id'], 'name': call['function']['name'], 'input': json.loads(call['function']['arguments'])}])
+    if message.get('content'):
+        blocks.append({'type': 'text', 'text': message['content']})
+    return {'id': 'msg_fixture', 'type': 'message', 'role': 'assistant', 'model': response.get('model'), 'content': blocks,
+            'stop_reason': 'tool_use' if message.get('tool_calls') else 'end_turn', 'stop_sequence': None,
+            'usage': {'input_tokens': 0, 'output_tokens': 0, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0}}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
@@ -268,7 +317,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200 if self.path == "/health" else 404, {"status": "ok"})
 
     def do_POST(self):
-        if self.path != "/v1/chat/completions":
+        if self.path not in ("/v1/chat/completions", "/v1/messages"):
             self._send(404, {"error": "not_found"})
             return
         try:
@@ -276,10 +325,16 @@ class Handler(BaseHTTPRequestHandler):
             if size <= 0 or size > 100000:
                 raise ValueError("request_size")
             body = json.loads(self.rfile.read(size))
+            native = self.path == '/v1/messages'
+            if native:
+                if self.headers.get('x-api-key') != 'none':
+                    raise ValueError('a provider credential reached the stub')
+                body = native_to_fixture(body)
             if transient_workflow_fixture(body):
                 self._send(429, {"error": {"code": 429, "message": "simulated temporary rate limit"}}, retry_after="1")
             else:
-                self._send(200, respond(body))
+                response = respond(body)
+                self._send(200, native_response(response) if native else response)
         except Exception:
             self._send(400, {"error": {"message": "invalid simulated request", "type": "invalid_request_error"}})
 

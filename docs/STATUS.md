@@ -1,5 +1,10 @@
 # État actuel
 
+## UL-021 — Anthropic natif
+
+**Partial**, responsable Codex. Thomas demande l’usage de sa clé API Anthropic dans Hermes/Ulysse. Nouvelle route directe, protocole Messages natif Hermes derrière la passerelle privée, recherche et relecture raccordées, comptabilité incluant le cache, procédure de déploiement/activation et rotation de clé. Aucun changement de données ni secours OpenRouter automatique; Europe/ZDR non attesté pour cette route. Vérifications locales/CI en cours; aucun appel fournisseur réel ni déploiement VPS effectué ici. [ADR](adr/0017-anthropic-native.md), [activation](ANTHROPIC.md), [journal](journal/2026-10-23-UL-021-anthropic-native.md). Clôture : trois parcours réels relus, collecte vérifiée et coût/durée observés après activation.
+
+
 ## UL-020 — recherche et benchmark autonomes
 
 Thomas transmet un **brouillon acheteur abouti à 18 h 59 le 22 octobre (Europe/Paris)**, lié à la même campagne : trois alternatives citées sur quarante fiches qualifiées, limites visibles et montants présentés comme non directement comparables. Le texte distingue mieux méthode annoncée, exemple hypothétique et résultat client mesuré. C’est une réussite rapportée d’un essai, pas une mesure de disponibilité ou une validation des sources. Le modèle effectif, la bascule, le coût et la durée ne figurent pas dans cette pièce. La justification de sélection, les références de certaines affirmations et la revue humaine restent à qualifier. Le tableau comparatif n’est pas reproduit dans le texte collé; aucun défaut de rendu n’est établi. Aucun contenu client brut n’est ajouté au dépôt. Code `06f028baf7d8264eb1c2a12e676024d44db4b6aa` : [CI applicative 5/5](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39815490606) et [Hermes/mises à niveau 6/6](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/39815490581) terminées avec succès. Les fournisseurs restent scriptés dans ces preuves.

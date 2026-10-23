@@ -84,7 +84,53 @@ class Endpoint(BaseHTTPRequestHandler):
             raise AssertionError(f"unexpected tools: {names}")
 
 
+class NativeEndpoint(BaseHTTPRequestHandler):
+    calls = []
+    bodies = []
+    failures = []
+
+    def log_message(self, *_args):
+        pass
+
+    def do_POST(self):
+        from model_stub import native_to_fixture, native_response
+        body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        self.calls.append((self.path, self.headers.get('x-api-key'), self.headers.get('Authorization')))
+        try:
+            if self.path.startswith('/agent/tools/'):
+                output = {'state': 'present', 'reference': 'fixture:native', 'content': 'Native fixture'}
+            else:
+                if self.path != '/agent/v1/messages': raise ValueError('wrong protocol path')
+                self.bodies.append(body)
+                adapted = native_to_fixture(body)  # asserts exact signed interleaving on replay
+                names = [t['name'] for t in body.get('tools', [])]
+                Endpoint.assert_tools(self, names)
+                workflow = 'get_workflow_context' in names
+                if not any(m['role'] == 'tool' for m in adapted['messages']):
+                    selected = ['get_workflow_context', 'list_company_sources'] if workflow else ['get_company_context', 'get_active_doctrine']
+                    message = {'tool_calls': [{'id': f'fixture_{i}', 'function': {'name': n, 'arguments': '{}'}} for i, n in enumerate(selected)]}
+                else:
+                    message = {'content': json.dumps({'version': 'november-v1' if workflow else 'ulysse-agent-v1', 'outcome': 'abstained', 'summary': 'Native fixture', 'proposals': []})}
+                output = native_response({'model': body['model'], 'choices': [{'message': message}]})
+            status = 200
+        except Exception as error:
+            self.failures.append(type(error).__name__)
+            output = {'error': {'type': 'invalid_request_error', 'message': 'native fixture rejected'}}
+            status = 400
+        data = json.dumps(output).encode()
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
 class ModelSettings(unittest.TestCase):
+    def test_native_anthropic_settings_reject_cross_protocol_fallback(self):
+        request = {'model': 'claude-sonnet-5-5', 'modelSettings': {'protocol': 'anthropic-messages', 'maxOutputTokens': 16384, 'reasoning': 'medium'}}
+        self.assertEqual(model_settings(request), request['modelSettings'])
+        for extra in ({'fallbackModel': 'example/backup', 'workflow': 'buyer'}, {'model': 'example/other'}):
+            with self.assertRaises(ValueError): model_settings({**request, **extra})
     def test_execution_deadlines_are_bounded_and_workflows_allow_provider_backoff(self):
         from server import execution_timeout_ms
         for workflow, maximum in (("deal", 90000), ("buyer", 300000), ("content", 300000)):
@@ -235,6 +281,33 @@ class WorkflowEvidence(unittest.TestCase):
 
 
 class HermesIntegration(unittest.TestCase):
+    def test_native_anthropic_loop_preserves_signed_order_and_private_capabilities_for_all_workflows(self):
+        NativeEndpoint.calls, NativeEndpoint.bodies, NativeEndpoint.failures = [], [], []
+        server = ThreadingHTTPServer(('127.0.0.1', 0), NativeEndpoint)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        os.environ['ULYSSE_GATEWAY_URL'] = f'http://127.0.0.1:{server.server_port}/agent'
+        try:
+            for workflow in ('deal', 'buyer', 'content'):
+                token = workflow[0] * 43
+                request = {'runId': str(uuid4()), 'subjectId': str(uuid4()), 'capability': token,
+                           'mode': 'hermes-stub', 'model': 'claude-sonnet-5-5', 'timeoutMs': 60000,
+                           'modelSettings': {'protocol': 'anthropic-messages', 'maxOutputTokens': 16384, 'reasoning': 'medium'}}
+                if workflow != 'deal': request['workflow'] = workflow
+                result = isolated_run(request)
+                self.assertEqual(result['outcome'], 'abstained')
+                native_calls = [c for c in NativeEndpoint.calls if c[1] == token]
+                self.assertEqual(len(native_calls), 2)
+                self.assertTrue(all(c[0] == '/agent/v1/messages' and c[2] is None for c in native_calls))
+                self.assertEqual(sum(c[2] == 'Bearer ' + token for c in NativeEndpoint.calls), 2)
+                expected = Path(__file__).with_name('instructions.txt' if workflow == 'deal' else 'workflows.txt').read_text()
+                self.assertTrue(all(b['system'] == expected for b in NativeEndpoint.bodies[-2:]))
+                self.assertTrue(all(b['output_config']['effort'] == 'medium' for b in NativeEndpoint.bodies[-2:]))
+            self.assertEqual(NativeEndpoint.failures, [])
+        finally:
+            server.shutdown()
+            server.server_close()
+            os.environ.pop('ULYSSE_GATEWAY_URL', None)
+
     def setUp(self):
         Endpoint.calls = []
         Endpoint.systems = []

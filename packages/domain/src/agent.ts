@@ -153,6 +153,7 @@ export interface AgentExecutor {
       fallbackModel?: string;
       /** Normalized execution settings; no URL, credential, tool or provider policy. */
       modelSettings?: Readonly<{
+        protocol?: 'anthropic-messages';
         maxOutputTokens: number;
         reasoning: 'omit' | 'disabled' | 'low' | 'medium' | 'high' | 'max';
       }>;

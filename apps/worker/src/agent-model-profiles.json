@@ -123,5 +123,31 @@
       "structuredOutput": true
     },
     "maxContextBytes": 80000
+  },
+  {
+    "version": 1,
+    "id": "claude-sonnet55-direct",
+    "model": "claude-sonnet-5-5",
+    "protocol": "anthropic-messages",
+    "route": "anthropic",
+    "endpoint": "anthropic",
+    "prices": {
+      "prompt": 2,
+      "completion": 10,
+      "cacheWrite": 2.5,
+      "cacheRead": 0.1
+    },
+    "capabilities": {
+      "input": ["text"],
+      "output": ["text"],
+      "tools": true,
+      "structuredOutput": true
+    },
+    "generation": {
+      "maxOutputTokens": 16384,
+      "tokenParameter": "max_tokens",
+      "reasoning": "medium"
+    },
+    "maxContextBytes": 80000
   }
 ]

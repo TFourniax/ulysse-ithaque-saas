@@ -12,7 +12,7 @@ export function workflowRetryDelay(
   remainingMs: number,
 ): number | null {
   if (
-    !['provider_http_429', 'provider_http_503'].includes(error.code) ||
+    !['provider_http_429', 'provider_http_503', 'provider_http_529'].includes(error.code) ||
     retries >= WORKFLOW_PROVIDER_RETRIES
   )
     return null;

@@ -68,6 +68,9 @@ def _ulysse_system_prompt(**kwargs):
     request whose system prompt differs from these instructions.
     """
     request = dict(kwargs["request"])
+    if run_state.NATIVE_ANTHROPIC:
+        request["system"] = run_state.INSTRUCTIONS
+        return {"request": request, "source": "ulysse", "reason": "ulysse_instructions_only"}
     messages = request.get("messages")
     if not isinstance(messages, list):
         return None
@@ -81,5 +84,6 @@ def register(ctx):
         schema = {"name": name, "description": DESCRIPTIONS[name], "parameters": _parameters(name)}
         ctx.register_tool(name=name, toolset=TOOLSET, schema=schema, handler=_handler(name))
     ctx.register_middleware("llm_request", _ulysse_system_prompt)
-    run_state.REASONING_REPLAY = ReasoningReplay()
-    ctx.register_middleware("llm_execution", run_state.REASONING_REPLAY.__call__)
+    if not run_state.NATIVE_ANTHROPIC:
+        run_state.REASONING_REPLAY = ReasoningReplay()
+        ctx.register_middleware("llm_execution", run_state.REASONING_REPLAY.__call__)

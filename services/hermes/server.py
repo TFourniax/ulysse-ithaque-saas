@@ -15,7 +15,7 @@ from uuid import UUID
 
 SLOTS = threading.BoundedSemaphore(2)
 MODES = {"hermes-live", "hermes-stub"}
-EXECUTION_CONTRACT = "ulysse-execution-v4"
+EXECUTION_CONTRACT = "ulysse-execution-v5"
 
 
 def execution_timeout_ms(request):
@@ -29,7 +29,7 @@ def execution_timeout_ms(request):
 def model_settings(request):
     """Provider-neutral settings from the authenticated worker, never from business input."""
     model = request.get("model")
-    if not isinstance(model, str) or len(model) > 160 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*", model):
+    if not isinstance(model, str) or len(model) > 160 or not re.fullmatch(r"(?:[a-zA-Z0-9][a-zA-Z0-9_.-]*/)?[a-zA-Z0-9][a-zA-Z0-9_.-]*", model):
         raise ValueError("invalid_model_id")
     fallback = request.get("fallbackModel")
     if fallback is not None and (request.get("workflow") not in ("buyer", "content") or
@@ -37,8 +37,14 @@ def model_settings(request):
                                 not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*", fallback)):
         raise ValueError("invalid_fallback_model")
     settings = request.get("modelSettings", {"maxOutputTokens": 3000, "reasoning": "disabled"})
-    if not isinstance(settings, dict) or set(settings) != {"maxOutputTokens", "reasoning"}:
+    if not isinstance(settings, dict) or set(settings) not in ({"maxOutputTokens", "reasoning"}, {"maxOutputTokens", "reasoning", "protocol"}):
         raise ValueError("invalid_model_settings")
+    if "protocol" in settings:
+        if (settings["protocol"] != "anthropic-messages" or not re.fullmatch(r"claude-[a-z0-9-]+", model)
+                or fallback is not None or settings["reasoning"] not in ("low", "medium", "high", "max")):
+            raise ValueError("invalid_model_settings")
+    elif "/" not in model:
+        raise ValueError("invalid_model_id")
     tokens = settings["maxOutputTokens"]
     if type(tokens) is not int or not 256 <= tokens <= 16384:
         raise ValueError("invalid_model_settings")

@@ -34,6 +34,14 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
 import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts';
+import {
+  acceptAnthropicRequest,
+  assertAnthropicMessages,
+  anthropicRequest,
+  anthropicHeaders,
+  anthropicCompletion,
+  nativeResult,
+} from './anthropic-provider.ts';
 import { fetchAgentCompletion, ProviderCallError, providerGatewayFailure } from './agent-errors.ts';
 import { workflowRetryDelay, WORKFLOW_MODEL_CALLS } from './workflow-retry.ts';
 import {
@@ -51,7 +59,7 @@ import {
 } from './buyer-review.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
-export const EXECUTION_CONTRACT = 'ulysse-execution-v4';
+export const EXECUTION_CONTRACT = 'ulysse-execution-v5';
 /** sha256 of services/hermes/instructions.txt (LF); a unit test keeps both identical. */
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
@@ -76,11 +84,14 @@ const Config = z.object({
   HERMES_URL: z.url().default('http://hermes:8090'),
   HERMES_SERVICE_TOKEN: z.string().min(32).optional(),
   OPENROUTER_API_KEY: z.string().min(16).optional(),
+  ANTHROPIC_API_KEY: z.string().min(16).optional(),
   AGENT_MODEL_ID: ModelId.optional(),
   AGENT_MODEL_PROFILE_JSON: z.string().optional(),
   AGENT_FALLBACK_MODEL_ID: ModelId.optional(),
   AGENT_FALLBACK_MODEL_PROFILE_JSON: z.string().optional(),
-  AGENT_PROVIDER_ROUTE: z.enum(['openrouter', 'openrouter-eu-zdr']).default('openrouter'),
+  AGENT_PROVIDER_ROUTE: z
+    .enum(['openrouter', 'openrouter-eu-zdr', 'anthropic'])
+    .default('openrouter'),
   AGENT_RUN_BUDGET_USD: z.coerce.number().positive().max(2).optional(),
   AGENT_SESSION_BUDGET_USD: z.coerce.number().positive().max(20).optional(),
   AGENT_MONTH_BUDGET_USD: z.coerce.number().positive().max(100).optional(),
@@ -102,7 +113,8 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
     const live = c.ULYSSE_ANALYSIS_MODE === 'hermes-live';
     if (
       !c.HERMES_SERVICE_TOKEN ||
-      (live && !c.OPENROUTER_API_KEY) ||
+      (live &&
+        !(c.AGENT_PROVIDER_ROUTE === 'anthropic' ? c.ANTHROPIC_API_KEY : c.OPENROUTER_API_KEY)) ||
       !c.AGENT_MODEL_ID ||
       !c.AGENT_RUN_BUDGET_USD ||
       !c.AGENT_SESSION_BUDGET_USD ||
@@ -117,7 +129,7 @@ export function agentConfig(env: NodeJS.ProcessEnv = process.env): AgentConfig {
     const url = new URL(c.HERMES_URL);
     if (url.hostname !== 'hermes' || url.port !== '8090' || url.protocol !== 'http:')
       throw new Error('Hermes must use the private stack endpoint');
-    // A live run can only reach OpenRouter; a simulated endpoint is never labelled live.
+    // A live run can only reach the configured provider; a simulated endpoint is never labelled live.
     if (live && c.AGENT_STUB_PROVIDER_URL)
       throw new Error('AGENT_STUB_PROVIDER_URL is reserved to hermes-stub');
     if (!live) {
@@ -1010,7 +1022,19 @@ export class AgentRuntime {
   }
 
   async inference(capability: string, input: unknown, signal?: AbortSignal): Promise<unknown> {
+    ensure(this.config.AGENT_PROVIDER_ROUTE !== 'anthropic', 'FORBIDDEN', 'wrong protocol');
     return this.infer(capability, input, signal, null);
+  }
+
+  async anthropicInference(
+    capability: string,
+    input: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    ensure(this.config.AGENT_PROVIDER_ROUTE === 'anthropic', 'FORBIDDEN', 'wrong protocol');
+    return nativeResult(
+      record(await this.infer(capability, acceptAnthropicRequest(input), signal, null)),
+    );
   }
 
   private async infer(
@@ -1030,7 +1054,9 @@ export class AgentRuntime {
       'INVALID_INPUT',
     );
     const messages = body.messages.map((m: unknown) => record(m));
-    assertTextMessages(messages);
+    const native = this.config.AGENT_PROVIDER_ROUTE === 'anthropic';
+    if (native) assertAnthropicMessages(messages);
+    else assertTextMessages(messages);
     const bytes = Buffer.byteLength(JSON.stringify(body));
     const requestedModel = body.model ?? this.config.AGENT_MODEL_ID;
     const provider =
@@ -1194,7 +1220,7 @@ export class AgentRuntime {
         'context limit',
       );
       // Include delivered source text and the native schema in the per-call reservation.
-      const upperCost = provider.estimate(
+      const upperCost = provider.reserve(
         preparedBytes + 2048,
         provider.profile.generation.maxOutputTokens,
       );
@@ -1280,7 +1306,7 @@ export class AgentRuntime {
       };
     });
     const live = mode === 'hermes-live';
-    // The provider key only ever leaves for OpenRouter; the stub endpoint receives none.
+    // Each credential is sent only to its fixed provider URL; the private stub gets none.
     let payload: Record<string, unknown>;
     try {
       payload = await fetchAgentCompletion(
@@ -1289,25 +1315,38 @@ export class AgentRuntime {
           method: 'POST',
           // A regional request must never follow a redirect to another region or host.
           redirect: 'error',
-          headers: {
-            authorization: live ? `Bearer ${this.config.OPENROUTER_API_KEY ?? ''}` : 'Bearer none',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: provider.profile.model,
-            messages: preparedMessages,
-            response_format: responseFormat,
-            tools: body.tools,
-            tool_choice: body.tools === undefined ? undefined : 'auto',
-            stream: false,
-            ...provider.parameters,
-            provider: provider.provider,
-          }),
+          headers: native
+            ? anthropicHeaders(live ? (this.config.ANTHROPIC_API_KEY ?? '') : 'none')
+            : {
+                authorization: live
+                  ? `Bearer ${this.config.OPENROUTER_API_KEY ?? ''}`
+                  : 'Bearer none',
+                'content-type': 'application/json',
+              },
+          body: JSON.stringify(
+            native
+              ? anthropicRequest(provider.profile, {
+                  messages: preparedMessages.map((m) => record(m)),
+                  tools: body.tools,
+                  schema: responseFormat?.json_schema.schema,
+                })
+              : {
+                  model: provider.profile.model,
+                  messages: preparedMessages,
+                  response_format: responseFormat,
+                  tools: body.tools,
+                  tool_choice: body.tools === undefined ? undefined : 'auto',
+                  stream: false,
+                  ...provider.parameters,
+                  provider: provider.provider,
+                },
+          ),
           signal: signal
             ? AbortSignal.any([signal, AbortSignal.timeout(remainingMs)])
             : AbortSignal.timeout(remainingMs),
         },
       );
+      if (native) payload = anthropicCompletion(payload, provider.profile);
     } catch (error) {
       if (error instanceof ProviderCallError) {
         const nativeFallback =
@@ -1320,6 +1359,7 @@ export class AgentRuntime {
             'provider_http_502',
             'provider_http_503',
             'provider_http_504',
+            'provider_http_529',
             'provider_timeout',
             'provider_transport_error',
           ].includes(error.code);
@@ -1343,7 +1383,7 @@ export class AgentRuntime {
         if (
           !nativeFallback &&
           workflowKind !== 'deal' &&
-          ['provider_http_429', 'provider_http_503'].includes(error.code)
+          ['provider_http_429', 'provider_http_503', 'provider_http_529'].includes(error.code)
         ) {
           const delay = await this.deferWorkflowProvider(ctx, runId, error, upperCost);
           if (delay !== null) {
@@ -1385,11 +1425,13 @@ export class AgentRuntime {
         prompt_tokens: z.number().int().nonnegative(),
         completion_tokens: z.number().int().nonnegative(),
         cost: z.number().nonnegative().optional(),
+        estimated_cost: z.number().nonnegative().optional(),
       })
       .safeParse(payload.usage);
     if (usage.success) {
       const u = usage.data;
-      const actual = u.cost ?? provider.estimate(u.prompt_tokens, u.completion_tokens);
+      const actual =
+        u.cost ?? u.estimated_cost ?? provider.estimate(u.prompt_tokens, u.completion_tokens);
       // Record what was charged even above the bound, then refuse to continue.
       await this.store.transaction(ctx, async (_tx, sql) => {
         await sql.query(
@@ -1429,7 +1471,15 @@ export class AgentRuntime {
               // larger than the context limit even when the review itself fits.
               ...(review
                 ? buyerReviewMessages(inspected.result ?? inspected.text)
-                : [...continuationMessages, inspected.assistant]),
+                : [
+                    ...continuationMessages,
+                    native
+                      ? {
+                          role: 'assistant',
+                          content: inspected.assistant.anthropic_content ?? inspected.text,
+                        }
+                      : inspected.assistant,
+                  ]),
               {
                 role: 'user',
                 content: workflowRepairPrompt(d, workflowKind, evidence ?? undefined),
@@ -1448,7 +1498,7 @@ export class AgentRuntime {
               response_format: responseFormat,
             }),
           );
-          const repairCost = provider.estimate(
+          const repairCost = provider.reserve(
             repairBytes + 2048,
             provider.profile.generation.maxOutputTokens,
           );
@@ -1549,12 +1599,14 @@ export class AgentRuntime {
     const disconnected = () => controller.abort();
     res.once('close', disconnected);
     try {
+      const credential =
+        req.url === '/agent/v1/messages' ? req.headers['x-api-key'] : req.headers.authorization;
       ensure(
-        req.method === 'POST' && typeof req.headers.authorization === 'string',
+        req.method === 'POST' && typeof credential === 'string',
         'FORBIDDEN',
         'method or credential',
       );
-      const token = req.headers.authorization.replace(/^Bearer /, '');
+      const token = credential.replace(/^Bearer /, '');
       let size = 0;
       const chunks: Buffer[] = [];
       for await (const raw of req) {
@@ -1567,11 +1619,13 @@ export class AgentRuntime {
       const tool = req.url?.match(/^\/agent\/tools\/([a-z_]+)$/)?.[1];
       const output = tool
         ? await this.tool(token, tool, body)
-        : req.url === '/agent/v1/chat/completions'
-          ? await this.inference(token, body, controller.signal)
-          : (() => {
-              throw new Error('not_found');
-            })();
+        : req.url === '/agent/v1/messages'
+          ? await this.anthropicInference(token, body, controller.signal)
+          : req.url === '/agent/v1/chat/completions'
+            ? await this.inference(token, body, controller.signal)
+            : (() => {
+                throw new Error('not_found');
+              })();
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(output));
     } catch (error) {

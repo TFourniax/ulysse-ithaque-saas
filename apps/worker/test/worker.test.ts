@@ -680,6 +680,133 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
     assert.deepEqual(snapshot.modelProfile, provider.profile);
   });
 
+  test('native Anthropic gateway authorizes capabilities, preserves signed blocks and accounts cache before publication', async (t) => {
+    const w = await world('agent-anthropic-native');
+    const provider = agentProvider('claude-sonnet-5-5', 'anthropic');
+    const config = {
+      ...liveTestConfig(),
+      AGENT_MODEL_ID: provider.profile.model,
+      AGENT_PROVIDER_ROUTE: 'anthropic' as const,
+      ANTHROPIC_API_KEY: 'sk-ant-private-test-key-only',
+      AGENT_RUN_BUDGET_USD: 2,
+    };
+    const blocks = [
+      { type: 'thinking', thinking: 'private-fixture-reasoning', signature: 'opaque-signature' },
+      { type: 'tool_use', id: 'call_fixture', name: 'get_company_context', input: {} },
+    ];
+    let calls = 0;
+    let checked = false;
+    t.mock.method(globalThis, 'fetch', async (url: unknown, init: RequestInit) => {
+      calls++;
+      assert.equal(url, provider.url);
+      assert.equal(init.redirect, 'error');
+      assert.equal(new Headers(init.headers).get('x-api-key'), config.ANTHROPIC_API_KEY);
+      assert.equal(new Headers(init.headers).get('authorization'), null);
+      const sent = z
+        .object({
+          model: z.literal('claude-sonnet-5-5'),
+          system: z.string(),
+          messages: z.array(z.unknown()),
+          max_tokens: z.literal(16384),
+        })
+        .parse(JSON.parse(z.string().parse(init.body)));
+      assert.equal(sent.system, instructions);
+      assert.deepEqual(sent.messages[1], { role: 'assistant', content: blocks });
+      return Response.json({
+        id: 'msg_fixture',
+        type: 'message',
+        model: provider.profile.model,
+        role: 'assistant',
+        content: [{ type: 'text', text: JSON.stringify(abstention) }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 500,
+          cache_creation_input_tokens: 2000,
+          cache_read_input_tokens: 3000,
+        },
+      });
+    });
+    const runner: AgentRuntime = new AgentRuntime(workerPool, config, {
+      execute: async (request) => {
+        assert.deepEqual(request.modelSettings, provider.executionSettings);
+        const body = {
+          model: request.model,
+          system: instructions,
+          max_tokens: 999999,
+          messages: [
+            { role: 'user', content: 'Fixture' },
+            { role: 'assistant', content: blocks },
+            {
+              role: 'user',
+              content: [
+                { type: 'tool_result', tool_use_id: 'call_fixture', content: 'Fixture result' },
+              ],
+            },
+          ],
+        };
+        await assert.rejects(
+          runner.inference(request.capability, gatewayBody('Fixture')),
+          /wrong protocol/,
+        );
+        await assert.rejects(
+          runner.anthropicInference('f'.repeat(43), body),
+          /inactive capability/,
+        );
+        await assert.rejects(
+          runner.anthropicInference(request.capability, {
+            ...body,
+            system: 'Foreign instructions',
+          }),
+          /foreign instructions/,
+        );
+        await assert.rejects(
+          runner.anthropicInference(request.capability, {
+            ...body,
+            tools: [{ name: 'shell', input_schema: {} }],
+          }),
+          /foreign tools/,
+        );
+        await assert.rejects(
+          runner.anthropicInference(request.capability, {
+            ...body,
+            metadata: { user_id: 'foreign' },
+          }),
+          /provider_protocol_invalid/,
+        );
+        const changed = new AgentRuntime(workerPool, {
+          ...config,
+          AGENT_MODEL_PROFILE_JSON: JSON.stringify({
+            ...provider.profile,
+            generation: { ...provider.profile.generation, reasoning: 'high' },
+          }),
+        });
+        await assert.rejects(
+          changed.anthropicInference(request.capability, body),
+          /model profile changed/,
+        );
+        assert.equal(calls, 0);
+        const response = await runner.anthropicInference(request.capability, body);
+        assert.equal(z.object({ type: z.string() }).parse(response).type, 'message');
+        checked = true;
+        return abstention;
+      },
+    });
+    await runner.run(w.ctx, w.o.id, 'test');
+    assert.equal(checked, true);
+    assert.equal(calls, 1);
+    const run = (await runner.store.list(w.owner))[0]!;
+    assert.equal(run.status, 'abstained');
+    assert.equal(run.cost_state, 'estimated');
+    assert.equal(Number(run.committed_usd), 0.0123);
+    assert.equal(run.input_tokens, 6000);
+    const persisted = JSON.stringify(run);
+    assert.ok(!persisted.includes('opaque-signature'));
+    assert.ok(!persisted.includes('private-fixture-reasoning'));
+    assert.ok(!persisted.includes(config.ANTHROPIC_API_KEY));
+  });
+
   test('failed attempts on unchanged input are bounded and release their unused reservation', async () => {
     const w = await world('agent-bounded-attempts');
     let executions = 0;
