@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import run_state
-from server import model_settings, execution_timeout_ms
+from server import model_settings, execution_timeout_ms, initial_evidence, MAX_REQUEST_BYTES
 
 DEAL_NAMES = (
     "get_opportunity", "list_activities", "search_documents", "read_document_excerpt",
@@ -40,6 +40,7 @@ def parse_final(final):
 
 def execute(request):
     settings = model_settings(request)
+    evidence = initial_evidence(request)
     native = settings.get("protocol") == "anthropic-messages"
     run_state.NATIVE_ANTHROPIC = native
     reasoning = settings["reasoning"]
@@ -91,6 +92,7 @@ def execute(request):
         # Hermes' own prompt carried the date; the Ulysse-only prompt does not, so state it here.
         today = datetime.now(timezone.utc).date().isoformat()
         result = agent.run_conversation(
+            evidence if evidence is not None else
             f"Parcours {workflow}, sujet autorisé {request['subjectId']}, le {today} (UTC). "
             "Exploite les preuves obligatoires fournies automatiquement et consulte les sources supplémentaires par les outils."
         )
@@ -103,7 +105,7 @@ def execute(request):
 
 
 if __name__ == "__main__":
-    request = json.loads(sys.stdin.read(8192))
+    request = json.loads(sys.stdin.read(MAX_REQUEST_BYTES))
     logging.disable(logging.CRITICAL)
     try:
         with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):

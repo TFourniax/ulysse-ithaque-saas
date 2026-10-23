@@ -15,7 +15,21 @@ from uuid import UUID
 
 SLOTS = threading.BoundedSemaphore(2)
 MODES = {"hermes-live", "hermes-stub"}
-EXECUTION_CONTRACT = "ulysse-execution-v5"
+EXECUTION_CONTRACT = "ulysse-execution-v6"
+MAX_REQUEST_BYTES = 262144
+
+
+def initial_evidence(request):
+    value = request.get("initialEvidence")
+    required = (request.get("modelSettings", {}).get("protocol") == "anthropic-messages"
+                and request.get("workflow") in ("buyer", "content"))
+    if required:
+        if (not isinstance(value, str) or not value.startswith("ULYSSE_WORKFLOW_EVIDENCE_V1\n")
+                or len(value.encode("utf-8")) > 80000):
+            raise ValueError("invalid_initial_evidence")
+    elif value is not None:
+        raise ValueError("invalid_initial_evidence")
+    return value
 
 
 def execution_timeout_ms(request):
@@ -94,6 +108,7 @@ def isolated_run(request):
     if request["mode"] not in MODES:
         raise ValueError("unsupported_execution")
     model_settings(request)
+    initial_evidence(request)
     if not isinstance(request["capability"], str) or len(request["capability"]) != 43:
         raise ValueError("invalid_capability")
     with tempfile.TemporaryDirectory(prefix="ulysse-run-") as home:
@@ -159,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if size <= 0 or size > 8192:
+            if size <= 0 or size > MAX_REQUEST_BYTES:
                 raise ValueError("request_size")
             request = json.loads(self.rfile.read(size))
             self.send(200, isolated_run(request))

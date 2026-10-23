@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from uuid import uuid4
 
-from server import isolated_run, model_settings
+from server import isolated_run, model_settings, initial_evidence
 
 
 class Endpoint(BaseHTTPRequestHandler):
@@ -111,7 +111,7 @@ class NativeEndpoint(BaseHTTPRequestHandler):
                     message = {'tool_calls': [{'id': f'fixture_{i}', 'function': {'name': n, 'arguments': '{}'}} for i, n in enumerate(selected)]}
                 else:
                     message = {'content': json.dumps({'version': 'november-v1' if workflow else 'ulysse-agent-v1', 'outcome': 'abstained', 'summary': 'Native fixture', 'proposals': []})}
-                output = native_response({'model': body['model'], 'choices': [{'message': message}]})
+                output = native_response({'model': body['model'], 'choices': [{'message': message}]}, body)
             status = 200
         except Exception as error:
             self.failures.append(type(error).__name__)
@@ -126,6 +126,34 @@ class NativeEndpoint(BaseHTTPRequestHandler):
 
 
 class ModelSettings(unittest.TestCase):
+    def test_initial_native_evidence_is_required_bounded_and_not_available_to_other_routes(self):
+        request = {'workflow': 'buyer', 'modelSettings': {'protocol': 'anthropic-messages'}}
+        evidence = 'ULYSSE_WORKFLOW_EVIDENCE_V1\n' + json.dumps({'untrusted': True})
+        self.assertEqual(initial_evidence({**request, 'initialEvidence': evidence}), evidence)
+        for value in (None, 1, 'instruction', evidence + 'x' * 80000):
+            with self.assertRaises(ValueError): initial_evidence({**request, 'initialEvidence': value})
+        with self.assertRaises(ValueError): initial_evidence({'initialEvidence': evidence})
+
+    def test_native_fixture_rejects_prefix_edits_but_accepts_cache_hints(self):
+        from model_stub import native_to_fixture, native_response
+        import copy
+        request = {'model': 'claude-sonnet-5-5', 'system': 'Instructions',
+                   'tools': [{'name': 'list_company_sources', 'input_schema': {'type': 'object'}}],
+                   'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': 'Immutable evidence'}]}]}
+        response = native_response({'choices': [{'message': {'tool_calls': [{'id': 'fixture', 'function': {'name': 'list_company_sources', 'arguments': '{}'}}]}}]}, request)
+        continuation = {**request, 'messages': [*request['messages'], {'role': 'assistant', 'content': response['content']},
+                        {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'fixture', 'content': 'New data'}]}]}
+        native_to_fixture(continuation)
+        cached = copy.deepcopy(continuation)
+        cached['messages'][0]['content'][0]['cache_control'] = {'type': 'ephemeral'}
+        native_to_fixture(cached)
+        for target in ('system', 'tools', 'messages'):
+            changed = copy.deepcopy(continuation)
+            if target == 'system': changed['system'] += 'Changed'
+            elif target == 'tools': changed['tools'] = []
+            else: changed['messages'][0]['content'][0]['text'] = 'Shrunk evidence catalog'
+            with self.assertRaises(ValueError): native_to_fixture(changed)
+
     def test_native_anthropic_settings_reject_cross_protocol_fallback(self):
         request = {'model': 'claude-sonnet-5-5', 'modelSettings': {'protocol': 'anthropic-messages', 'maxOutputTokens': 16384, 'reasoning': 'medium'}}
         self.assertEqual(model_settings(request), request['modelSettings'])
@@ -292,7 +320,9 @@ class HermesIntegration(unittest.TestCase):
                 request = {'runId': str(uuid4()), 'subjectId': str(uuid4()), 'capability': token,
                            'mode': 'hermes-stub', 'model': 'claude-sonnet-5-5', 'timeoutMs': 60000,
                            'modelSettings': {'protocol': 'anthropic-messages', 'maxOutputTokens': 16384, 'reasoning': 'medium'}}
-                if workflow != 'deal': request['workflow'] = workflow
+                if workflow != 'deal':
+                    request['workflow'] = workflow
+                    request['initialEvidence'] = 'ULYSSE_WORKFLOW_EVIDENCE_V1\n' + json.dumps({'context': {'kind': workflow}, 'sources': [{'text': 'fixture ' * 1500}], 'untrusted': True})
                 try:
                     result = isolated_run(request)
                 except RuntimeError as error:
@@ -305,6 +335,9 @@ class HermesIntegration(unittest.TestCase):
                 expected = Path(__file__).with_name('instructions.txt' if workflow == 'deal' else 'workflows.txt').read_text()
                 self.assertTrue(all(b['system'] == expected for b in NativeEndpoint.bodies[-2:]))
                 self.assertTrue(all(b['output_config']['effort'] == 'medium' for b in NativeEndpoint.bodies[-2:]))
+                if workflow != 'deal':
+                    first = NativeEndpoint.bodies[-2]['messages'][0]['content']
+                    self.assertEqual(first if isinstance(first, str) else first[0]['text'], request['initialEvidence'])
             self.assertEqual(NativeEndpoint.failures, [])
         finally:
             server.shutdown()

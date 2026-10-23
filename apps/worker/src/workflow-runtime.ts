@@ -34,6 +34,8 @@ export const WORKFLOW_TOOLS = [
 ] as const;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export const WORKFLOW_EVIDENCE_PREFIX = 'ULYSSE_WORKFLOW_EVIDENCE_V1\n';
+// Stable across turns: leave room for Hermes' instructions, tools and response schema.
+export const nativeEvidenceBudget = (maxContextBytes: number) => maxContextBytes - 24000;
 function workflowContext(input: WorkflowInput, id: string) {
   const references = [
     `workflow:${id}`,
@@ -79,6 +81,7 @@ type Settings = {
   providerRoute: string;
   modelProfile?: object;
   modelProfileHash?: string;
+  maxContextBytes?: number;
   modelSettings?: Parameters<AgentExecutor['execute']>[0]['modelSettings'];
   fallbackModel?: string;
   fallbackProfileHash?: string;
@@ -134,7 +137,8 @@ export class WorkflowRuntime {
       untrusted: true,
     }));
     // Deliver the actual versioned text, not just an identifier marked as read.
-    // Rebuild for every provider call so Hermes need not retain an extra transcript.
+    // Native execution seeds this message once; later checks rebuild it only to
+    // verify authorization/freshness, without modifying Hermes' signed history.
     const citationRoles = {
       offerReferences: selected
         .filter((s) => s.kind === 'offer' || s.kind === 'website')
@@ -317,6 +321,26 @@ export class WorkflowRuntime {
     if (!accepted) return;
     let stage: WorkflowStage = 'execution';
     try {
+      const initialEvidence =
+        this.settings.providerRoute === 'anthropic' && this.settings.mode !== 'simulated'
+          ? await this.store.transaction(ctx, async (tx, sql) => {
+              const request = await this.store.get(sql, ctx.tenantId, id);
+              const evidence = await this.prepareEvidence(
+                ctx,
+                tx,
+                sql,
+                id,
+                request.inputHash ?? '',
+                nativeEvidenceBudget(this.settings.maxContextBytes ?? 80000),
+              );
+              ensure(
+                Buffer.byteLength(evidence.message.content) <= 80000,
+                'INVALID_INPUT',
+                'context limit',
+              );
+              return evidence.message.content;
+            })
+          : undefined;
       const raw =
         this.settings.mode === 'simulated'
           ? await this.simulate(capability, kind)
@@ -331,6 +355,7 @@ export class WorkflowRuntime {
                 fallbackModel: this.settings.fallbackModel,
                 timeoutMs: WORKFLOW_TIMEOUT_MS,
                 workflow: kind,
+                initialEvidence,
               },
               signal,
             );

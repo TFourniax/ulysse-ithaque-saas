@@ -13,7 +13,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-23.anthropic1
+ULYSSE_SCRIPT_VERSION=2026-10-23.anthropic2-prefix
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'

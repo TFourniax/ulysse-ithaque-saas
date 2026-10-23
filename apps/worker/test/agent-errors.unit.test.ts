@@ -8,6 +8,27 @@ import {
   providerGatewayFailure,
 } from '../src/agent-errors.ts';
 
+test('a native prefix signature refusal has a fixed diagnostic without upstream client text', async () => {
+  await assert.rejects(
+    fetchAgentCompletion('https://example.invalid', {}, async () =>
+      Response.json(
+        {
+          error: {
+            message:
+              'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. private fixture',
+          },
+        },
+        { status: 400 },
+      ),
+    ),
+    (error: unknown) =>
+      error instanceof ProviderCallError &&
+      error.code === 'provider_signature_mismatch' &&
+      error.httpStatus === 400 &&
+      !JSON.stringify(error).includes('private fixture'),
+  );
+});
+
 test('Hermes receives real transient statuses and sanitized Retry-After; permission failures stay closed', () => {
   for (const status of [429, 500, 502, 503, 504]) {
     const failure = providerGatewayFailure(

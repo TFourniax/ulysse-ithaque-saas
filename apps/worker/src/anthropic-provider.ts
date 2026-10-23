@@ -174,6 +174,7 @@ export function anthropicRequest(
     messages: Record<string, unknown>[];
     tools?: unknown;
     schema?: unknown;
+    disableTools?: boolean;
   },
 ): Record<string, unknown> {
   assertAnthropicMessages(conversation.messages);
@@ -202,7 +203,9 @@ export function anthropicRequest(
         ? { format: { type: 'json_schema', schema: anthropicSchema(conversation.schema) } }
         : {}),
     },
-    ...(tools?.length ? { tools, tool_choice: { type: 'auto' } } : {}),
+    ...(tools?.length
+      ? { tools, tool_choice: { type: conversation.disableTools ? 'none' : 'auto' } }
+      : {}),
   };
 }
 

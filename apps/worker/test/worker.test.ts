@@ -1854,6 +1854,137 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       mock.mock.restore();
     }
   });
+  test('native workflow keeps its evidence prefix through tools and signed format repair, rejecting altered initial data', async (t) => {
+    const w = await setup('native-prefix-continuity');
+    const instructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    const provider = agentProvider('claude-sonnet-5-5', 'anthropic');
+    const answer = pendingWorkflow('buyer', [], 'Fixture terminée après outil et réparation.');
+    const tools = ['get_workflow_context', 'list_company_sources', 'read_company_source'].map(
+      (name) => ({ name, input_schema: { type: 'object', properties: {} } }),
+    );
+    const toolBlocks = [
+      { type: 'thinking', thinking: '', signature: 'first-prefix-signature' },
+      { type: 'tool_use', id: 'tool_fixture', name: 'list_company_sources', input: {} },
+    ];
+    const malformed = [
+      { type: 'thinking', thinking: '', signature: 'second-prefix-signature' },
+      { type: 'text', text: 'malformed output' },
+    ];
+    let calls = 0;
+    let original: Record<string, unknown> | undefined;
+    let previous: Record<string, unknown>[] = [];
+    t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
+      const sent = z
+        .object({
+          system: z.string(),
+          tools: z.array(z.unknown()),
+          messages: z.array(z.record(z.string(), z.unknown())),
+          tool_choice: z.unknown(),
+        })
+        .parse(JSON.parse(z.string().parse(init.body)));
+      if (calls === 0) {
+        original = { system: sent.system, tools: sent.tools };
+        assert.equal(sent.messages.length, 1, 'no gateway-only prefix insertion');
+        assert.ok(JSON.stringify(sent.messages[0]).includes(w.source.text));
+      } else {
+        assert.deepEqual({ system: sent.system, tools: sent.tools }, original);
+        assert.deepEqual(
+          sent.messages.slice(0, previous.length),
+          previous,
+          'prefix must be immutable',
+        );
+        assert.deepEqual(sent.messages.at(-2)?.content, calls === 1 ? toolBlocks : malformed);
+      }
+      assert.deepEqual(sent.tool_choice, { type: calls === 2 ? 'none' : 'auto' });
+      previous = sent.messages;
+      const content =
+        calls === 0
+          ? toolBlocks
+          : calls === 1
+            ? malformed
+            : [{ type: 'text', text: JSON.stringify(answer) }];
+      calls++;
+      return Promise.resolve(
+        Response.json({
+          type: 'message',
+          role: 'assistant',
+          content,
+          stop_reason: calls === 1 ? 'tool_use' : 'end_turn',
+          usage: { input_tokens: 200, output_tokens: 40 },
+        }),
+      );
+    });
+    const engine: AgentRuntime = new AgentRuntime(
+      workerPool,
+      {
+        ...liveTestConfig(),
+        AGENT_PROVIDER_ROUTE: 'anthropic',
+        AGENT_MODEL_ID: provider.profile.model,
+        ANTHROPIC_API_KEY: 'sk-ant-fixture-only',
+        AGENT_RUN_BUDGET_USD: 2,
+      },
+      {
+        execute: async (request) => {
+          assert.ok(request.initialEvidence);
+          assert.ok(request.initialEvidence.startsWith(WORKFLOW_EVIDENCE_PREFIX));
+          const body = {
+            model: request.model,
+            system: instructions,
+            max_tokens: 16384,
+            tools,
+            messages: [
+              { role: 'user', content: [{ type: 'text', text: request.initialEvidence }] },
+            ],
+          };
+          await assert.rejects(
+            engine.anthropicInference(request.capability, {
+              ...body,
+              messages: [{ role: 'user', content: request.initialEvidence + ' altered' }],
+            }),
+            /initial evidence changed/,
+          );
+          assert.equal(calls, 0);
+          await engine.anthropicInference(request.capability, body);
+          const listed = await engine.tool(request.capability, 'list_company_sources', {});
+          await engine.anthropicInference(request.capability, {
+            ...body,
+            messages: [
+              ...body.messages,
+              { role: 'assistant', content: toolBlocks },
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: 'tool_fixture',
+                    content: JSON.stringify(listed) + ' fixture context growth'.repeat(500),
+                  },
+                ],
+              },
+            ],
+          });
+          return answer;
+        },
+      },
+    );
+    const id = await w.workspace.create(
+      w.owner,
+      { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    await engine.workflows.run(w.ctx, id);
+    const result = (await w.workspace.listWorkflows(w.owner))[0]!;
+    assert.equal(result.status, 'abstained', result.errorCode ?? '');
+    assert.equal(calls, 3);
+    const run = (await engine.store.list(w.owner))[0]!;
+    assert.equal(run.model_calls, 3);
+    assert.equal(run.tool_calls, 1);
+    assert.ok(!JSON.stringify(run).includes('prefix-signature'));
+  });
+
   test('an optional research catalog cannot block a model call whose mandatory evidence fits', async (t) => {
     const w = await setup('workflow-catalog-overflow');
     const instructions = await readFile(

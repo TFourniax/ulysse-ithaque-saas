@@ -35,6 +35,13 @@ function providerError(
       : status;
   // Recognize this documented refusal without storing or returning the upstream message.
   if (
+    code === 400 &&
+    typeof error?.message === 'string' &&
+    error.message.includes('Invalid `signature` in `thinking` block') &&
+    error.message.includes('bound to a different conversation')
+  )
+    return new ProviderCallError('provider_signature_mismatch', status);
+  if (
     code === 403 &&
     typeof error?.message === 'string' &&
     error.message.startsWith('Regional routing requires a Business or Enterprise plan.')

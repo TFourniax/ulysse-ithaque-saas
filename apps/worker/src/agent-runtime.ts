@@ -32,7 +32,7 @@ import {
 import { PgAgentStore } from '@ulysse/database';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { WorkflowRuntime, WORKFLOW_TOOLS } from './workflow-runtime.ts';
+import { WorkflowRuntime, WORKFLOW_TOOLS, nativeEvidenceBudget } from './workflow-runtime.ts';
 import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts';
 import {
   acceptAnthropicRequest,
@@ -59,7 +59,7 @@ import {
 } from './buyer-review.ts';
 
 export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
-export const EXECUTION_CONTRACT = 'ulysse-execution-v5';
+export const EXECUTION_CONTRACT = 'ulysse-execution-v6';
 /** sha256 of services/hermes/instructions.txt (LF); a unit test keeps both identical. */
 export const AGENT_INSTRUCTIONS_SHA256 =
   'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
@@ -301,6 +301,7 @@ export class AgentRuntime {
         providerRoute: config.AGENT_PROVIDER_ROUTE,
         modelProfile: this.provider?.profile,
         modelProfileHash: this.provider?.profileHash,
+        maxContextBytes: this.provider?.profile.maxContextBytes,
         modelSettings: this.provider?.executionSettings,
         fallbackModel: this.fallback?.profile.model,
         fallbackProfileHash: this.fallback?.profileHash,
@@ -1042,6 +1043,7 @@ export class AgentRuntime {
     input: unknown,
     signal: AbortSignal | undefined,
     review: readonly string[] | null,
+    repair = false,
   ): Promise<unknown> {
     signal?.throwIfAborted();
     const ctx = await this.store.resolve(hash(capability));
@@ -1166,7 +1168,11 @@ export class AgentRuntime {
               run.subject_id,
               run.input_hash,
               // Reserve space for the response schema and tool/envelope serialization.
-              provider.profile.maxContextBytes - Buffer.byteLength(JSON.stringify(body)) - 12000,
+              native && !review
+                ? nativeEvidenceBudget(provider.profile.maxContextBytes)
+                : provider.profile.maxContextBytes -
+                    Buffer.byteLength(JSON.stringify(body)) -
+                    12000,
               review ? { cited: review, read: run.retrieved } : undefined,
             );
       // Mandatory evidence is supplied as untrusted data, never as a system instruction
@@ -1183,7 +1189,25 @@ export class AgentRuntime {
             ),
           )
         : messages;
-      let preparedMessages = evidence
+      // Native thinking signatures bind the entire preceding prefix, including
+      // evidence and tool schemas. Hermes owns that prefix from its first turn.
+      // Recheck its exact authorized data without injecting or shrinking it here.
+      const injectEvidence = evidence && (!native || review);
+      if (native && !review && evidence) {
+        const content = messages[1]?.content;
+        const initialText =
+          typeof content === 'string'
+            ? content
+            : Array.isArray(content) && content.length === 1
+              ? record(content[0]).text
+              : undefined;
+        ensure(
+          messages[1]?.role === 'user' && initialText === evidence.message.content,
+          'FORBIDDEN',
+          'initial evidence changed',
+        );
+      }
+      let preparedMessages = injectEvidence
         ? [continuationMessages[0], evidence.message, ...continuationMessages.slice(1)]
         : continuationMessages;
       const responseFormat =
@@ -1199,7 +1223,7 @@ export class AgentRuntime {
       let catalogCount = evidence?.catalogCount ?? 0;
       // Discovery metadata is optional: never reject an otherwise valid analysis
       // merely because its catalog does not fit beside the transcript/schema.
-      if (evidence && preparedBytes > provider.profile.maxContextBytes) {
+      if (injectEvidence && preparedBytes > provider.profile.maxContextBytes) {
         preparedMessages = [
           continuationMessages[0],
           evidence.messageWithoutCatalog,
@@ -1329,6 +1353,7 @@ export class AgentRuntime {
                   messages: preparedMessages.map((m) => record(m)),
                   tools: body.tools,
                   schema: responseFormat?.json_schema.schema,
+                  disableTools: repair,
                 })
               : {
                   model: provider.profile.model,
@@ -1395,6 +1420,7 @@ export class AgentRuntime {
               { ...body, messages: continuationMessages },
               signal,
               review,
+              repair,
             );
           }
         }
@@ -1465,6 +1491,8 @@ export class AgentRuntime {
         if (d.code !== 'validated') {
           const repairBody = {
             model: provider.profile.model,
+            // Disabling tool use must not remove schemas bound to earlier signatures.
+            ...(native && !review ? { tools: body.tools } : {}),
             messages: [
               // The reviewer has no tools or external state: its latest response
               // replaces the original draft. Replaying both can make the repair
@@ -1488,9 +1516,10 @@ export class AgentRuntime {
           };
           // Recursive inference rebuilds the evidence exactly once; eligibility must
           // nevertheless include its bytes and message slot before attempting repair.
-          const repairMessages = evidence
-            ? [repairBody.messages[0], evidence.message, ...repairBody.messages.slice(1)]
-            : repairBody.messages;
+          const repairMessages =
+            evidence && (!native || review)
+              ? [repairBody.messages[0], evidence.message, ...repairBody.messages.slice(1)]
+              : repairBody.messages;
           const repairBytes = Buffer.byteLength(
             JSON.stringify({
               ...repairBody,
@@ -1556,7 +1585,7 @@ export class AgentRuntime {
           });
           // The normal gateway rechecks authorization, versions, lease, route and reservation.
           // The persistent marker prevents another repair even across concurrent/replayed requests.
-          if (retry) return this.infer(capability, repairBody, signal, review);
+          if (retry) return this.infer(capability, repairBody, signal, review, true);
           if (review && inspected.result && evidence && d.code === 'result_evidence_invalid') {
             const partial = retainSupportedBuyerSections(inspected.result, evidence);
             if (partial) {

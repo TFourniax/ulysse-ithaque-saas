@@ -141,7 +141,7 @@ export function inspectWorkflowCompletion(payload: unknown, kind: 'buyer' | 'con
   }
   // Preserve opaque reasoning replay fields for models that require exact continuation.
   const assistant: Record<string, unknown> = { role: 'assistant', content: text };
-  for (const key of ['reasoning', 'reasoning_content', 'reasoning_details'])
+  for (const key of ['reasoning', 'reasoning_content', 'reasoning_details', 'anthropic_content'])
     if (choice.message[key] !== undefined) assistant[key] = choice.message[key];
   return { diagnostics, assistant, repairable: !refused, result, text };
 }

@@ -12,6 +12,7 @@ import {
   anthropicSchema,
 } from '../src/anthropic-provider.ts';
 import { createResearchModel, ResearchModelError } from '../src/research-model.ts';
+import { inspectWorkflowCompletion } from '../src/workflow-response.ts';
 
 const profile = agentProvider('claude-sonnet-5-5', 'anthropic');
 const env = {
@@ -99,6 +100,37 @@ test('native block order and signatures survive authorization normalization, too
       () => acceptAnthropicRequest({ ...native, ...patch }),
       /provider_protocol_invalid/,
     );
+});
+
+test('native format repair keeps empty signed thinking and tool definitions while disabling new tool calls', () => {
+  const content = [
+    { type: 'thinking', thinking: '', signature: 'prefix-bound-fixture' },
+    { type: 'text', text: 'invalid-json', citations: null },
+  ];
+  const inspected = inspectWorkflowCompletion(
+    anthropicCompletion(
+      {
+        content,
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 10 },
+      },
+      profile.profile,
+    ),
+    'buyer',
+  );
+  assert.equal(inspected?.diagnostics.code, 'result_json_invalid');
+  assert.deepEqual(
+    inspected.assistant.anthropic_content,
+    content.map(({ citations: _ignored, ...b }) => b),
+  );
+  const normalized = acceptAnthropicRequest(native);
+  const sent = anthropicRequest(profile.profile, {
+    messages: z.array(z.record(z.string(), z.unknown())).parse(normalized.messages),
+    tools: normalized.tools,
+    disableTools: true,
+  });
+  assert.deepEqual(sent.tool_choice, { type: 'none' });
+  assert.deepEqual(JSON.parse(JSON.stringify(sent.tools)), native.tools);
 });
 
 test('native usage accounts input/output and both cache operations without claiming API-reported USD', () => {

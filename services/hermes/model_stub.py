@@ -6,6 +6,7 @@ to end. Ulysse labels every result of this mode as simulated: it is never live e
 says nothing about the relevance of a real model.
 """
 import json
+import hashlib
 import re
 import sys
 import threading
@@ -260,12 +261,23 @@ def respond(body):
     }
 
 
+def native_prefix(body, length=None):
+    """Fixture signature binds system, tools and preceding messages, excluding cache hints."""
+    def clean(value):
+        if isinstance(value, list): return [clean(v) for v in value]
+        if isinstance(value, dict): return {k: clean(v) for k, v in value.items() if k != 'cache_control'}
+        return value
+    prefix = {k: body.get(k) for k in ('system', 'tools')}
+    prefix['messages'] = body.get('messages', [])[:length]
+    return hashlib.sha256(json.dumps(clean(prefix), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
 def native_to_fixture(body):
     """Test-only bridge into shared scripted business fixtures, never a live adapter."""
     if body.get('stream') or 'provider' in body or 'response_format' in body:
         raise ValueError('unexpected native request')
     messages = [{'role': 'system', 'content': body.get('system', '')}]
-    for message in body.get('messages', []):
+    for index, message in enumerate(body.get('messages', [])):
         content = message.get('content')
         if isinstance(content, str):
             messages.append(message)
@@ -275,7 +287,7 @@ def native_to_fixture(body):
             if uses:
                 expected = []
                 for use in uses:
-                    expected.extend([{'type': 'thinking', 'thinking': 'Fixture only', 'signature': 'signed-' + use['id']},
+                    expected.extend([{'type': 'thinking', 'thinking': '', 'signature': native_prefix(body, index) + ':' + use['id']},
                                      {k: use[k] for k in ('type', 'id', 'name', 'input')}])
                 actual = [{k: v for k, v in b.items() if k != 'cache_control'} for b in content]
                 if actual != expected:
@@ -296,11 +308,11 @@ def native_to_fixture(body):
             **({'response_format': {'type': 'json_schema', 'json_schema': {'strict': True, 'schema': schema}}} if schema else {})}
 
 
-def native_response(response):
+def native_response(response, request):
     message = response['choices'][0]['message']
     blocks = []
     for call in message.get('tool_calls', []):
-        blocks.extend([{'type': 'thinking', 'thinking': 'Fixture only', 'signature': 'signed-' + call['id']},
+        blocks.extend([{'type': 'thinking', 'thinking': '', 'signature': native_prefix(request) + ':' + call['id']},
                        {'type': 'tool_use', 'id': call['id'], 'name': call['function']['name'], 'input': json.loads(call['function']['arguments'])}])
     if message.get('content'):
         blocks.append({'type': 'text', 'text': message['content']})
@@ -325,6 +337,7 @@ class Handler(BaseHTTPRequestHandler):
             if size <= 0 or size > 100000:
                 raise ValueError("request_size")
             body = json.loads(self.rfile.read(size))
+            original = body
             native = self.path == '/v1/messages'
             if native:
                 if self.headers.get('x-api-key') != 'none':
@@ -334,7 +347,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(429, {"error": {"code": 429, "message": "simulated temporary rate limit"}}, retry_after="1")
             else:
                 response = respond(body)
-                self._send(200, native_response(response) if native else response)
+                self._send(200, native_response(response, original) if native else response)
         except Exception:
             self._send(400, {"error": {"message": "invalid simulated request", "type": "invalid_request_error"}})
 

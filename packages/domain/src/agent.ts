@@ -148,6 +148,8 @@ export interface AgentExecutor {
       subjectId: string;
       mode: 'simulated' | 'hermes-live' | 'hermes-stub';
       workflow?: 'buyer' | 'content';
+      /** Authorized, versioned data seeded once into the native conversation, never instructions. */
+      initialEvidence?: string;
       model: string;
       /** One administrator-approved backup; Hermes owns the in-conversation switch. */
       fallbackModel?: string;
