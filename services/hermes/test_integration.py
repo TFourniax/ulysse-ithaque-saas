@@ -88,6 +88,7 @@ class NativeEndpoint(BaseHTTPRequestHandler):
     calls = []
     bodies = []
     failures = []
+    large_tool_result = False
 
     def log_message(self, *_args):
         pass
@@ -98,7 +99,7 @@ class NativeEndpoint(BaseHTTPRequestHandler):
         self.calls.append((self.path, self.headers.get('x-api-key'), self.headers.get('Authorization')))
         try:
             if self.path.startswith('/agent/tools/'):
-                output = {'state': 'present', 'reference': 'fixture:native', 'content': 'Native fixture'}
+                output = {'state': 'present', 'reference': 'fixture:native', 'content': 'é' * 30000 if self.large_tool_result else 'Native fixture'}
             else:
                 if self.path != '/agent/v1/messages': raise ValueError('wrong protocol path')
                 self.bodies.append(body)
@@ -312,6 +313,34 @@ class WorkflowEvidence(unittest.TestCase):
 
 
 class HermesIntegration(unittest.TestCase):
+    def test_native_long_tool_results_preserve_the_signed_conversation(self):
+        NativeEndpoint.calls, NativeEndpoint.bodies, NativeEndpoint.failures = [], [], []
+        NativeEndpoint.large_tool_result = True
+        server = ThreadingHTTPServer(('127.0.0.1', 0), NativeEndpoint)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        os.environ['ULYSSE_GATEWAY_URL'] = f'http://127.0.0.1:{server.server_port}/agent'
+        evidence = 'ULYSSE_WORKFLOW_EVIDENCE_V1\n' + json.dumps({'context': {'kind': 'buyer'}, 'sources': [{'text': 'fixture ' * 5000}], 'untrusted': True})
+        try:
+            result = isolated_run({'runId': str(uuid4()), 'subjectId': str(uuid4()), 'capability': 'l' * 43,
+                                   'mode': 'hermes-stub', 'workflow': 'buyer', 'model': 'claude-sonnet-5-5', 'timeoutMs': 60000,
+                                   'initialEvidence': evidence,
+                                   'modelSettings': {'protocol': 'anthropic-messages', 'maxOutputTokens': 16384, 'reasoning': 'medium'}})
+            self.assertEqual(result['outcome'], 'abstained')
+            self.assertEqual(NativeEndpoint.failures, [])
+            self.assertEqual(len(NativeEndpoint.bodies), 2)
+            sizes = [len(json.dumps(b, ensure_ascii=False).encode()) for b in NativeEndpoint.bodies]
+            self.assertLess(sizes[0], 80000)
+            self.assertGreater(sizes[1], 100000)
+            self.assertLess(sizes[1], 256000)
+            for body in NativeEndpoint.bodies:
+                first = body['messages'][0]['content']
+                self.assertEqual(first if isinstance(first, str) else first[0]['text'], evidence)
+        finally:
+            NativeEndpoint.large_tool_result = False
+            server.shutdown()
+            server.server_close()
+            os.environ.pop('ULYSSE_GATEWAY_URL', None)
+
     def test_native_anthropic_loop_preserves_signed_order_and_private_capabilities_for_all_workflows(self):
         NativeEndpoint.calls, NativeEndpoint.bodies, NativeEndpoint.failures = [], [], []
         server = ThreadingHTTPServer(('127.0.0.1', 0), NativeEndpoint)

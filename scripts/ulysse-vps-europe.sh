@@ -13,7 +13,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-23.anthropic3-benchmark
+ULYSSE_SCRIPT_VERSION=2026-10-23.anthropic4-context
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -53,7 +53,7 @@ audit() {
     try {
       const {agentProvider}=await import("./apps/worker/dist/src/agent-provider.js");
       const p=agentProvider(process.env.AGENT_MODEL_ID,process.env.AGENT_PROVIDER_ROUTE||"openrouter",process.env.AGENT_MODEL_PROFILE_JSON||undefined);
-      if(p.profile) console.log("profil="+p.profile.id+" | empreinte="+p.profileHash+" | sortie_max="+p.profile.generation.maxOutputTokens+" | raisonnement="+p.profile.generation.reasoning);
+      if(p.profile) console.log("profil="+p.profile.id+" | empreinte="+p.profileHash+" | sortie_max="+p.profile.generation.maxOutputTokens+" | raisonnement="+p.profile.generation.reasoning+" | contexte_max_octets="+p.profile.maxContextBytes);
     } catch { console.log("profil_declaratif=indisponible"); }
   '
   if [[ -f "$ULYSSE_ACTIVE" ]]; then say "Configuration active : $(cat "$ULYSSE_ACTIVE")"; fi
@@ -107,6 +107,7 @@ SELECT r.id,r.workflow_kind,r.model,r.status,r.error_code,r.started_at,
        r.snapshot->'workflowEvidence'->>'seededCompetitorCount' AS automatically_selected_competitors,
        r.snapshot->'workflowEvidence'->>'benchmarkRequired' AS benchmark_required,
        r.snapshot->'workflowFailure' AS failure_stage,
+       r.snapshot->'contextLimit' AS context_limit,
        r.snapshot->'workflowEvidence'->>'inputBytes' AS input_bytes,
        r.snapshot->'workflowEvidence'->>'maxContextBytes' AS max_context_bytes,
        r.snapshot->>'providerRetryCount' AS provider_retries,

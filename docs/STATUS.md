@@ -2,6 +2,8 @@
 
 ## UL-022 — Diagnostic utile à la décision
 
+**DEBT-040 — continuation native, 23 octobre, Codex.** Le diagnostic VPS confirme `85736cb` installé et un refus interne `INVALID_INPUT:context limit` après une lecture de source à 19 h 59 UTC. Le premier appel avait réussi; le plafond de conversation de 80 000 octets bloquait sa continuation. Correctif : profil Anthropic à 256 000 octets, allocation initiale de découverte conservée à 56 000, transport privé borné à 320 000 et motif `context_limit` conservé avec tailles numériques. Historique signé, droits, fraîcheur et budgets inchangés. Tests de croissance HTTP, refus borné et vraie boucle Hermes ajoutés; recette live encore requise. [Journal](journal/2026-10-23-UL-022-context-continuation.md).
+
 En cours, responsable Codex, 23 octobre 2026. Thomas transmet un diagnostic live abouti à 20 h 12 (Europe/Paris), avec trois alternatives citées sur quarante fiches disponibles. Ce résultat confirme un essai, sans valider tous les prix ni une fiabilité répétée. Demande suivante : améliorer la sélection expliquée, la recommandation commerciale et le langage du diagnostic avant la recette du contenu lié. Le lot conserve le contrat JSON et la boucle Hermes, renforce la priorité de lecture selon la cible documentée et distingue couverture citée, fiches disponibles et revue humaine. [Journal](journal/2026-10-23-UL-022-diagnostic-decision.md).
 
 ## UL-021 — Anthropic natif

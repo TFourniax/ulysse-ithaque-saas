@@ -33,7 +33,12 @@ import { PgAgentStore } from '@ulysse/database';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { WorkflowRuntime, WORKFLOW_TOOLS, nativeEvidenceBudget } from './workflow-runtime.ts';
-import { ModelId, assertTextMessages, agentProvider } from './agent-provider.ts';
+import {
+  ModelId,
+  assertTextMessages,
+  agentProvider,
+  MAX_AGENT_REQUEST_BYTES,
+} from './agent-provider.ts';
 import {
   acceptAnthropicRequest,
   assertAnthropicMessages,
@@ -42,7 +47,12 @@ import {
   anthropicCompletion,
   nativeResult,
 } from './anthropic-provider.ts';
-import { fetchAgentCompletion, ProviderCallError, providerGatewayFailure } from './agent-errors.ts';
+import {
+  fetchAgentCompletion,
+  ProviderCallError,
+  ContextLimitError,
+  providerGatewayFailure,
+} from './agent-errors.ts';
 import { workflowRetryDelay, WORKFLOW_MODEL_CALLS } from './workflow-retry.ts';
 import {
   inspectBuyerCitations,
@@ -1045,6 +1055,36 @@ export class AgentRuntime {
     review: readonly string[] | null,
     repair = false,
   ): Promise<unknown> {
+    try {
+      return await this.inferWithinLimits(capability, input, signal, review, repair);
+    } catch (error) {
+      if (error instanceof ContextLimitError) await this.recordContextLimit(capability, error);
+      throw error;
+    }
+  }
+
+  private async recordContextLimit(capability: string, error: ContextLimitError): Promise<void> {
+    const ctx = await this.store.resolve(hash(capability));
+    if (!ctx) return;
+    await this.store.transaction(ctx, async (_tx, sql) => {
+      await sql.query(
+        "UPDATE agent_runs SET error_code=coalesce(error_code,'context_limit'),snapshot=jsonb_set(snapshot,'{contextLimit}',$3::jsonb) WHERE tenant_id=$1 AND capability_hash=$2 AND status='running'",
+        [
+          ctx.tenantId,
+          hash(capability),
+          JSON.stringify({ phase: error.phase, actual: error.actual, maximum: error.maximum }),
+        ],
+      );
+    });
+  }
+
+  private async inferWithinLimits(
+    capability: string,
+    input: unknown,
+    signal: AbortSignal | undefined,
+    review: readonly string[] | null,
+    repair: boolean,
+  ): Promise<unknown> {
     signal?.throwIfAborted();
     const ctx = await this.store.resolve(hash(capability));
     ensure(ctx, 'FORBIDDEN', 'inactive capability');
@@ -1068,7 +1108,8 @@ export class AgentRuntime {
           ? this.fallback
           : undefined;
     ensure(provider && this.config.AGENT_MODEL_ID, 'INVALID_INPUT', 'model absent');
-    ensure(bytes <= provider.profile.maxContextBytes, 'INVALID_INPUT', 'context limit');
+    if (bytes > provider.profile.maxContextBytes)
+      throw new ContextLimitError('input', bytes, provider.profile.maxContextBytes);
     const {
       runId,
       mode,
@@ -1238,11 +1279,10 @@ export class AgentRuntime {
         );
         catalogCount = 0;
       }
-      ensure(
-        preparedMessages.length <= 32 && preparedBytes <= provider.profile.maxContextBytes,
-        'INVALID_INPUT',
-        'context limit',
-      );
+      if (preparedMessages.length > 32)
+        throw new ContextLimitError('messages', preparedMessages.length, 32);
+      if (preparedBytes > provider.profile.maxContextBytes)
+        throw new ContextLimitError('prepared', preparedBytes, provider.profile.maxContextBytes);
       // Include delivered source text and the native schema in the per-call reservation.
       const upperCost = provider.reserve(
         preparedBytes + 2048,
@@ -1631,6 +1671,7 @@ export class AgentRuntime {
   }
   async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const controller = new AbortController();
+    let capability: string | undefined;
     const disconnected = () => controller.abort();
     res.once('close', disconnected);
     try {
@@ -1642,12 +1683,18 @@ export class AgentRuntime {
         'method or credential',
       );
       const token = credential.replace(/^Bearer /, '');
+      capability = token;
       let size = 0;
       const chunks: Buffer[] = [];
-      for await (const raw of req) {
+      // Keep the socket long enough to return a bounded refusal, then close it.
+      for await (const raw of req.iterator({ destroyOnReturn: false })) {
         const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw));
         size += chunk.length;
-        ensure(size <= 100000, 'INVALID_INPUT');
+        if (size > MAX_AGENT_REQUEST_BYTES) {
+          res.setHeader('connection', 'close');
+          req.resume();
+          throw new ContextLimitError('transport', size, MAX_AGENT_REQUEST_BYTES);
+        }
         chunks.push(chunk);
       }
       const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -1664,6 +1711,8 @@ export class AgentRuntime {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(output));
     } catch (error) {
+      if (error instanceof ContextLimitError && error.phase === 'transport' && capability)
+        await this.recordContextLimit(capability, error);
       if (res.destroyed) return;
       // Hermes probes local-provider metadata with GET (/api/tags, /v1/props…): refused
       // like any non-inference call, but not logged, so real refusals stay visible.

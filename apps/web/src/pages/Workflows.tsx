@@ -36,6 +36,8 @@ const STATES: Record<WorkflowRunDto['status'], string> = {
   failed: 'Analyse interrompue',
 };
 const WORKFLOW_ERRORS: Record<string, string> = {
+  context_limit:
+    'Le volume d’informations dépasse la capacité de cette analyse. Les sources collectées sont conservées. Reprenez le brief avec un périmètre plus ciblé.',
   provider_retry_wait:
     'Le fournisseur demande une pause. Ulysse attend puis reprend automatiquement l’appel en cours.',
   budget_reached:

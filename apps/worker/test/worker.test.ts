@@ -11,6 +11,7 @@ import { ProviderCallError } from '../src/agent-errors.ts';
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import type { ModelSettings } from '@ulysse/ai';
 import { ModelError, ScriptedProvider } from '@ulysse/ai';
@@ -53,7 +54,7 @@ import { AgentRuntime, agentConfig, MAX_ATTEMPTS, TOOL_NAMES } from '../src/agen
 import { WORKFLOW_EVIDENCE_PREFIX, WORKFLOW_TOOLS } from '../src/workflow-runtime.ts';
 import { BUYER_REVIEW_INSTRUCTIONS, BUYER_REVIEW_PREFIX } from '../src/buyer-review.ts';
 import { inspectBuyerCitations, workflowRepairPrompt } from '../src/workflow-response.ts';
-import { agentProvider } from '../src/agent-provider.ts';
+import { agentProvider, MAX_AGENT_REQUEST_BYTES } from '../src/agent-provider.ts';
 import type { FaultHooks } from '../src/runtime.ts';
 import { noCredentialStore, WorkerRuntime } from '../src/runtime.ts';
 
@@ -1992,6 +1993,216 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
     assert.equal(run.model_calls, 3);
     assert.equal(run.tool_calls, 1);
     assert.ok(!JSON.stringify(run).includes('prefix-signature'));
+  });
+
+  test('native HTTP continuation grows past old caps, publishes reviewed evidence and records bounded refusals', async (t) => {
+    const instructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    for (const scenario of ['complete', 'profile-limit', 'transport-limit']) {
+      const w = await setup(`native-context-${scenario}`);
+      const sources = [];
+      for (let i = 0; i < 4; i++)
+        sources.push(
+          await w.workspace.saveSource(w.owner, {
+            kind: i === 0 ? 'offer' : 'competitor',
+            title: `Fixture ${i}`,
+            text: 'private-context-fixture ' + 'é'.repeat(5800),
+            url: null,
+            observedAt: new Date().toISOString(),
+            origin: i === 0 ? 'company' : 'observed',
+          }),
+        );
+      const ids = sources.map((s) => s.id);
+      const refs = sources.map((s) => `source:${s.id}:r1`);
+      const answer: WorkflowResult = {
+        ...pendingWorkflow('buyer', [], 'Comparaison fictive relue.'),
+        outcome: 'draft',
+        findings: [
+          { topic: 'Offre', analysis: 'Offre documentée dans la fixture.', references: [refs[0]!] },
+        ],
+        benchmark: sources.slice(1).map((s, i) => ({
+          topic: s.title,
+          analysis: 'Périmètre fictif comparable; résultats non établis.',
+          references: [refs[0]!, refs[i + 1]!],
+        })),
+        uniqueness: {
+          verdict: 'insufficient_evidence',
+          reason: 'Fixture sans résultats mesurés.',
+          references: refs,
+        },
+      };
+      const toolBlocks = [
+        { type: 'thinking', thinking: '', signature: 'private-context-signature' },
+        {
+          type: 'tool_use',
+          id: 'read_fixture',
+          name: 'read_company_source',
+          input: { sourceIds: ids },
+        },
+      ];
+      const realFetch = globalThis.fetch;
+      let calls = 0;
+      let firstMessages: unknown[] = [];
+      let gateway = '';
+      const mock = t.mock.method(globalThis, 'fetch', (url: unknown, init: RequestInit) => {
+        if (typeof url === 'string' && url.startsWith(gateway)) return realFetch(url, init);
+        assert.equal(url, 'https://api.anthropic.com/v1/messages');
+        const sent = z
+          .object({ messages: z.array(z.record(z.string(), z.unknown())) })
+          .parse(JSON.parse(z.string().parse(init.body)));
+        if (calls === 0) firstMessages = sent.messages;
+        if (calls === 1) {
+          assert.deepEqual(sent.messages.slice(0, 1), firstMessages);
+          assert.deepEqual(sent.messages[1]?.content, toolBlocks);
+        }
+        const content =
+          calls++ === 0 ? toolBlocks : [{ type: 'text', text: JSON.stringify(answer) }];
+        return Promise.resolve(
+          Response.json({
+            type: 'message',
+            role: 'assistant',
+            content,
+            stop_reason: calls === 1 ? 'tool_use' : 'end_turn',
+            usage: { input_tokens: 200, output_tokens: 40 },
+          }),
+        );
+      });
+      const profile = agentProvider('claude-sonnet-5-5', 'anthropic').profile;
+      const engine: AgentRuntime = new AgentRuntime(
+        workerPool,
+        {
+          ...liveTestConfig(),
+          AGENT_PROVIDER_ROUTE: 'anthropic',
+          AGENT_MODEL_ID: profile.model,
+          ANTHROPIC_API_KEY: 'sk-ant-fixture-only',
+          AGENT_RUN_BUDGET_USD: 2,
+          AGENT_SESSION_BUDGET_USD: 20,
+          ...(scenario === 'profile-limit'
+            ? { AGENT_MODEL_PROFILE_JSON: JSON.stringify({ ...profile, maxContextBytes: 80000 }) }
+            : {}),
+        },
+        {
+          execute: async (request) => {
+            assert.ok(request.initialEvidence);
+            const body = {
+              model: request.model,
+              system: instructions,
+              max_tokens: 16384,
+              tools: ['get_workflow_context', 'list_company_sources', 'read_company_source'].map(
+                (name) => ({ name, input_schema: { type: 'object', properties: {} } }),
+              ),
+              messages: [{ role: 'user', content: request.initialEvidence }],
+            };
+            const post = (path: string, payload: unknown) =>
+              globalThis.fetch(gateway + path, {
+                method: 'POST',
+                headers: {
+                  'content-type': 'application/json',
+                  'x-api-key': request.capability,
+                  authorization: `Bearer ${request.capability}`,
+                },
+                body: JSON.stringify(payload),
+              });
+            assert.ok(Buffer.byteLength(JSON.stringify(body)) < 80000);
+            assert.equal((await post('/v1/messages', body)).status, 200);
+            const read = await post('/tools/read_company_source', { sourceIds: ids });
+            assert.equal(read.status, 200);
+            const content =
+              JSON.stringify(await read.json()) +
+              (scenario === 'transport-limit' ? 'x'.repeat(MAX_AGENT_REQUEST_BYTES) : '');
+            const continuation = {
+              ...body,
+              messages: [
+                ...body.messages,
+                { role: 'assistant', content: toolBlocks },
+                {
+                  role: 'user',
+                  content: [{ type: 'tool_result', tool_use_id: 'read_fixture', content }],
+                },
+              ],
+            };
+            assert.ok(Buffer.byteLength(JSON.stringify(continuation)) > 100000);
+            const response = await post('/v1/messages', continuation);
+            if (scenario !== 'complete') {
+              assert.equal(response.status, 403);
+              throw new Error('hermes_http_422');
+            }
+            assert.equal(response.status, 200);
+            return answer;
+          },
+        },
+      );
+      const server = createServer((req, res) => {
+        void engine.handleHttp(req, res);
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      gateway = `http://127.0.0.1:${address.port}/agent`;
+      try {
+        const id = await w.workspace.create(
+          w.owner,
+          { kind: 'buyer', brief, sourceIds: ids, requestKey: crypto.randomUUID() },
+          'hermes-live',
+        );
+        await engine.workflows.run(w.ctx, id);
+        const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+        assert.equal(run.status, scenario === 'complete' ? 'draft' : 'failed', run.errorCode ?? '');
+        assert.equal(run.errorCode, scenario === 'complete' ? null : 'context_limit');
+        assert.equal(calls, scenario === 'complete' ? 3 : 1);
+        const saved = await engine.store.transaction(
+          w.ctx,
+          async (_tx, sql) =>
+            (
+              await sql.query<{
+                snapshot: Record<string, unknown>;
+                model_calls: number;
+                tool_calls: number;
+                uncertain_calls: number;
+                committed_usd: string;
+                reserved_usd: string;
+              }>(
+                'SELECT snapshot,model_calls,tool_calls,uncertain_calls,committed_usd,reserved_usd FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+                [w.tenantId, run.agentRunId],
+              )
+            ).rows[0]!,
+        );
+        assert.equal(saved.model_calls, calls);
+        assert.equal(saved.tool_calls, 1);
+        assert.equal(saved.uncertain_calls, 0);
+        assert.equal(saved.reserved_usd, saved.committed_usd);
+        assert.ok(!JSON.stringify(saved).includes('private-context-'));
+        if (scenario === 'complete') {
+          assert.equal(saved.snapshot.contextLimit, undefined);
+          assert.equal(run.result?.benchmark.length, 3);
+          assert.equal(
+            z
+              .object({ status: z.literal('completed') })
+              .safeParse(saved.snapshot.buyerEvidenceReview).success,
+            true,
+          );
+        } else {
+          const limit = z
+            .object({ phase: z.string(), actual: z.number(), maximum: z.number() })
+            .strict()
+            .parse(saved.snapshot.contextLimit);
+          assert.equal(limit.phase, scenario === 'profile-limit' ? 'input' : 'transport');
+          assert.equal(
+            limit.maximum,
+            scenario === 'profile-limit' ? 80000 : MAX_AGENT_REQUEST_BYTES,
+          );
+          assert.ok(limit.actual > limit.maximum);
+        }
+      } finally {
+        mock.mock.restore();
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    }
   });
 
   test('an optional research catalog cannot block a model call whose mandatory evidence fits', async (t) => {

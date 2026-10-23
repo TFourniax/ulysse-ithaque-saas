@@ -39,8 +39,10 @@ export const WORKFLOW_TOOLS = [
 ] as const;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export const WORKFLOW_EVIDENCE_PREFIX = 'ULYSSE_WORKFLOW_EVIDENCE_V1\n';
-// Stable across turns: leave room for Hermes' instructions, tools and response schema.
-export const nativeEvidenceBudget = (maxContextBytes: number) => maxContextBytes - 24000;
+// Keep the initial evidence stable and bounded even when the conversation envelope
+// grows. The extra capacity belongs to tool replies and signed history, not seeding.
+export const nativeEvidenceBudget = (maxContextBytes: number) =>
+  Math.min(56000, maxContextBytes - 24000);
 function workflowContext(input: WorkflowInput, id: string) {
   const references = [
     `workflow:${id}`,

@@ -148,6 +148,6 @@
       "tokenParameter": "max_tokens",
       "reasoning": "medium"
     },
-    "maxContextBytes": 80000
+    "maxContextBytes": 256000
   }
 ]

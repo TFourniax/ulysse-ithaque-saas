@@ -26,6 +26,12 @@ Référence officielle : [préservation du raisonnement](https://platform.claude
 
 ## Exploitation et sécurité
 
+### Place pour les lectures successives — DEBT-040
+
+Le profil Anthropic fourni passe de 80 000 à 256 000 octets de conversation complète. Cette limite applicative en octets n'est pas une mesure de la fenêtre de tokens du modèle. L'allocation initiale de sélection/catalogue reste au plus 56 000 octets, avec les sources obligatoires conservées intégralement et la limite d'entrée Hermes de 80 000 toujours contrôlée. L'enveloppe HTTP des appels de la passerelle passe de 100 000 à 320 000 octets pour la sérialisation; la requête préparée reste soumise au plafond du profil. Un profil personnalisé conserve ses propres valeurs.
+
+Les réponses d'outils et le préfixe signé ne sont ni tronqués ni réécrits. Un dépassement refuse la transmission avant réservation fournisseur et conserve `context_limit` dans le run, avec seulement la phase, la taille observée et le maximum. Une erreur HTTP générique d'Hermes ne masque plus ce motif. Le transport surdimensionné reçoit un refus puis sa connexion est fermée, sans conserver le corps rejeté. Aucun relèvement des budgets monétaires ni nouveau mécanisme de reprise.
+
 ### Préparation du benchmark — DEBT-039
 
 Le contexte initial acheteur inclut jusqu'à quatre fiches concurrentes qualifiées issues de la campagne autorisée, classées selon la priorité de lecture existante. Leur texte enregistré est transmis intégralement, dans la place disponible et au plus 24 000 octets supplémentaires. Les sources propres obligatoires ne sont pas retirées. Le catalogue reste une découverte sans autorisation de citation; seuls les textes réellement transmis ou lus autorisent leurs références. Les lectures supplémentaires restent à la disposition d'Hermes.

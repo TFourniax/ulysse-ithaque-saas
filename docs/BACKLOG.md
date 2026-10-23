@@ -2,6 +2,8 @@
 
 ## UL-022 — Diagnostic utile à la décision
 
+**DEBT-040**, prise par Codex le 23 octobre : conversation native trop petite après lecture d'une source et cause masquée par `hermes_http_422`. Périmètre : profil, passerelle HTTP, enveloppe initiale, diagnostic, message UI et tests. Clôture : continuation dépassant les anciens plafonds avec publication relue, limites toujours appliquées sans appel facturé supplémentaire, puis nouvel essai live. [Journal](journal/2026-10-23-UL-022-context-continuation.md).
+
 En cours — Codex, demandé par Thomas le 23 octobre. Sélection expliquée des alternatives, priorité à la clientèle documentée, recommandation conditionnelle et prochaine étape sourcées, couverture calculée et vocabulaire compréhensible. Aucun ROI inventé ni nouveau schéma bloquant. Clôture : contrôles automatisés et relecture d'un nouveau diagnostic live avant le parcours contenu. [Journal](journal/2026-10-23-UL-022-diagnostic-decision.md).
 
 ## UL-021 — Anthropic natif

@@ -14,6 +14,22 @@ export class ProviderCallError extends Error {
     this.retryAfterSeconds = retryAfterSeconds;
   }
 }
+/** Fixed phase and numeric counts only; never retain the rejected conversation. */
+export class ContextLimitError extends ProviderCallError {
+  readonly phase: 'transport' | 'input' | 'prepared' | 'messages';
+  readonly actual: number;
+  readonly maximum: number;
+  constructor(
+    phase: 'transport' | 'input' | 'prepared' | 'messages',
+    actual: number,
+    maximum: number,
+  ) {
+    super('context_limit', null);
+    this.phase = phase;
+    this.actual = actual;
+    this.maximum = maximum;
+  }
+}
 function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value))
@@ -169,6 +185,8 @@ export function providerGatewayFailure(error: unknown) {
 export type WorkflowStage = 'execution' | 'result' | 'publication';
 export function workflowFailure(error: unknown, stage: WorkflowStage): string {
   if (isDomainError(error, 'STALE_EVIDENCE')) return 'versions_changed';
+  if (isDomainError(error, 'INVALID_INPUT') && error.detail === 'context limit')
+    return 'context_limit';
   if (stage === 'result') return 'result_invalid';
   if (stage === 'publication') {
     if (isDomainError(error)) {

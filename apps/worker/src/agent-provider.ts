@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import profiles from './agent-model-profiles.json' with { type: 'json' };
 
-export const MAX_AGENT_CONTEXT_BYTES = 80000;
+export const MAX_AGENT_CONTEXT_BYTES = 256000;
+// Private HTTP framing has separate overhead; the normalized model request is
+// still bounded by its selected profile before any inference is transmitted.
+export const MAX_AGENT_REQUEST_BYTES = MAX_AGENT_CONTEXT_BYTES + 64000;
 export const MAX_AGENT_OUTPUT_TOKENS = 16384;
 export const ModelId = z
   .string()
