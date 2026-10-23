@@ -104,7 +104,7 @@ class NativeEndpoint(BaseHTTPRequestHandler):
                 self.bodies.append(body)
                 adapted = native_to_fixture(body)  # asserts exact signed interleaving on replay
                 names = [t['name'] for t in body.get('tools', [])]
-                Endpoint.assert_tools(self, names)
+                Endpoint.assert_tools(names)
                 workflow = 'get_workflow_context' in names
                 if not any(m['role'] == 'tool' for m in adapted['messages']):
                     selected = ['get_workflow_context', 'list_company_sources'] if workflow else ['get_company_context', 'get_active_doctrine']
@@ -293,7 +293,10 @@ class HermesIntegration(unittest.TestCase):
                            'mode': 'hermes-stub', 'model': 'claude-sonnet-5-5', 'timeoutMs': 60000,
                            'modelSettings': {'protocol': 'anthropic-messages', 'maxOutputTokens': 16384, 'reasoning': 'medium'}}
                 if workflow != 'deal': request['workflow'] = workflow
-                result = isolated_run(request)
+                try:
+                    result = isolated_run(request)
+                except RuntimeError as error:
+                    self.fail(f"Native fixture failure: {NativeEndpoint.failures}; paths: {[c[0] for c in NativeEndpoint.calls]}; {error}")
                 self.assertEqual(result['outcome'], 'abstained')
                 native_calls = [c for c in NativeEndpoint.calls if c[1] == token]
                 self.assertEqual(len(native_calls), 2)
