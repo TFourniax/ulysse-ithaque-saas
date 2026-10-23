@@ -88,10 +88,17 @@ try {
       assert.ok(result.result.content.references.includes(`buyer:${buyerId}`));
       assert.equal(result.result.uniqueness, null);
     }
-    assert.ok(
+    const expectedModel = process.env.AGENT_FALLBACK_MODEL_ID || process.env.AGENT_MODEL_ID;
+    assert.equal(
       result.result.limits.includes('Modèle de secours simulé utilisé.'),
-      'Hermes selected the configured backup',
+      Boolean(process.env.AGENT_FALLBACK_MODEL_ID),
+      'Hermes uses a backup only when configured',
     );
+    const executed = (await json('/v1/agent-runs')).runs.find(
+      (run) => run.id === result.agentRunId,
+    );
+    assert.ok(executed, 'workflow execution is available in its tenant history');
+    assert.equal(executed.model, expectedModel, 'configured provider/model owns the completed run');
     console.log(`UL017_${kind.toUpperCase()}_HERMES_STUB=passed`);
   }
   // Historical stub runs remain readable after the upgrade; new workflow runs have their own route.
