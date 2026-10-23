@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import { ProviderCallError } from '../src/agent-errors.ts';
 import { workflowRetryDelay, WORKFLOW_TIMEOUT_MS } from '../src/workflow-retry.ts';
 
-test('workflow retries only 429/503, with increasing waits and a global two-retry ceiling', () => {
-  for (const code of [429, 503]) {
+test('workflow retries only 429/503/529, with increasing waits and a global two-retry ceiling', () => {
+  for (const code of [429, 503, 529]) {
     const error = new ProviderCallError(`provider_http_${code}`, code);
     for (const [count, minimum] of [
       [0, 30_000],

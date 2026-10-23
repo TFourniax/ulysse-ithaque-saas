@@ -5,7 +5,8 @@ RUN git init /opt/hermes && cd /opt/hermes && git remote add origin https://gith
 WORKDIR /opt/hermes
 # Official sealed installer consumes upstream pm/lock.json (including artifact hashes).
 # No similarly named PyPI package, editable install or moving dependency resolver.
-RUN python -m pm.build_env --source /opt/hermes --python /usr/local/bin/python3 --out /opt/hermes/.venv --no-install-project --sealed
+RUN python -m pm.build_env --source /opt/hermes --python /usr/local/bin/python3 --out /opt/hermes/.venv --no-install-project --extra anthropic --sealed
+RUN /opt/hermes/.venv/bin/python -c "import anthropic; assert anthropic.__version__ == '0.87.0'"
 COPY services/hermes /opt/ulysse
 ENV PYTHONPATH=/opt/hermes PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN useradd --uid 10001 --no-create-home ulysse

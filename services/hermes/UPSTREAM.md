@@ -17,7 +17,7 @@ Commit : `e76fb951a1d207c9596032426e7e0eadfb197bea` (branche `main`, 2026-10-07)
 
 ## Anthropic direct (UL-021)
 
-La route `anthropic` sélectionne `provider="anthropic"` et `api_mode="anthropic_messages"` dans `AIAgent`. Le SDK Anthropic est celui déjà verrouillé par Hermes. L’URL reste la passerelle privée et la clé du SDK est uniquement la capacité du run. La véritable clé API reste dans le worker. Aucune nouvelle boucle agent, aucun SDK concurrent.
+La route `anthropic` sélectionne `provider="anthropic"` et `api_mode="anthropic_messages"` dans `AIAgent`. Le SDK Anthropic 0.87.0 est celui verrouillé par Hermes, installé à la construction via `--extra anthropic --sealed`, puis importé et vérifié dans l’image. Aucun téléchargement à la première requête. L’URL reste la passerelle privée et la clé du SDK est uniquement la capacité du run. La véritable clé API reste dans le worker. Aucune nouvelle boucle agent, aucun SDK concurrent.
 
 L’amont épinglé assimile une URL privée à un fournisseur tiers et enlève alors les blocs Claude signés. `anthropic_transport.py` utilise le registre public `register_transport` pour dériver `AnthropicTransport` : seule la politique de sérialisation est ajustée, jamais la destination réseau du SDK. Le sérialiseur et la restitution natifs conservent l’ordre et les signatures des blocs. Le middleware OpenRouter de replay n’est pas chargé sur cette route; `llm_request` impose le champ `system` natif.
 

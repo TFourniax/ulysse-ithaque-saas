@@ -787,6 +787,9 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
           /model profile changed/,
         );
         assert.equal(calls, 0);
+        await runner.tool(request.capability, 'get_opportunity', { subjectId: w.o.id });
+        await runner.tool(request.capability, 'get_active_doctrine', {});
+        await runner.tool(request.capability, 'get_company_context', {});
         const response = await runner.anthropicInference(request.capability, body);
         assert.equal(z.object({ type: z.string() }).parse(response).type, 'message');
         checked = true;
