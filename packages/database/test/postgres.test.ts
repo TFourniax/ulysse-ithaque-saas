@@ -365,7 +365,7 @@ describe('definer function privileges', () => {
         `SELECT p.proname AS fn, p.proacl::text[] AS acl FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = 'app' AND p.prosecdef ORDER BY 1`,
       );
-      const expected: Record<string, string> = {
+      const expected: Record<string, string | null> = {
         find_user_by_subject: 'ulysse_app',
         demo_update_source: 'ulysse_app',
         agent_slot_available: 'ulysse_worker',
@@ -374,6 +374,8 @@ describe('definer function privileges', () => {
         reserve_research_call: 'ulysse_worker',
         resolve_agent_capability: 'ulysse_worker',
         purge_agent_artifacts: 'ulysse_worker',
+        purge_crm_previews: 'ulysse_worker',
+        withdraw_crm_imports: null, // Trigger only; no application role may call it directly.
         withdraw_workspace_source: 'ulysse_app',
         due_connections: 'ulysse_worker',
         active_tenants: 'ulysse_worker',
@@ -391,7 +393,11 @@ describe('definer function privileges', () => {
         const grantees = row.acl
           .map((entry) => entry.split('=')[0])
           .filter((g) => g !== 'ulysse_definer');
-        assert.deepEqual(grantees, [expected[row.fn]], `${row.fn}: ${row.acl.join(',')}`);
+        assert.deepEqual(
+          grantees,
+          expected[row.fn] ? [expected[row.fn]] : [],
+          `${row.fn}: ${row.acl.join(',')}`,
+        );
       }
     } finally {
       await client.end();

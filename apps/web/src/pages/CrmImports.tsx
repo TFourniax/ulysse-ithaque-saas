@@ -329,7 +329,7 @@ export function CrmImportsPage() {
             )}
           </details>
           <TableScroll label="Affaires du fichier">
-            <table>
+            <table className="crm-preview">
               <thead>
                 <tr>
                   <th>Ligne et affaire</th>
