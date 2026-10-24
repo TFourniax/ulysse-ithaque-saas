@@ -16,7 +16,7 @@ Le contenu live transmis par Thomas à 15 h 35 (Europe/Paris) aboutit, mais son 
 
 ## Vérification
 
-Vérification locale réussie : `npm run verify` (146 tests unitaires et contrôles statiques/documentaires), construction web, `bash -n` et les 14 tests du script VPS. Recette navigateur CI encore en attente au moment de cette entrée. L'environnement local ne dispose pas de navigateur installé; son téléchargement Playwright échoue. La CI vérifiera le rendu et conservera des captures fictives. Aucun appel fournisseur, publication externe ou déploiement VPS depuis cet environnement.
+Vérification locale réussie : `npm run verify` (146 tests unitaires et contrôles statiques/documentaires), construction web, `bash -n` et les 14 tests du script VPS. Les cinq contrôles de [CI sur 9afb255](https://github.com/TFourniax/ulysse-ithaque-saas/actions/runs/40099566268) passent, dont 19 tests navigateur (les quatre scénarios de copie et repli ordinateur/mobile inclus). Le nom des captures est ensuite aligné sur le filtre d’artefacts existant pour permettre leur inspection visuelle; cette dernière vérification est encore en cours. L'environnement local ne dispose pas de navigateur installé; son téléchargement Playwright échoue. La CI vérifiera le rendu et conservera des captures fictives. Aucun appel fournisseur, publication externe ou déploiement VPS depuis cet environnement.
 
 ## Recette et limites
 

@@ -93,7 +93,9 @@ test('content is readable first, copies only the publication and keeps evidence 
   expect(
     accessibility.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical'),
   ).toEqual([]);
-  await result.screenshot({ path: `test-results/content-preview-${testInfo.project.name}.png` });
+  await result.screenshot({
+    path: `test-results/november-publication-${testInfo.project.name}.png`,
+  });
 });
 
 test('clipboard refusal offers manual copy while stale content stays visibly warned @mobile', async ({
