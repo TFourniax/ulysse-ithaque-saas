@@ -2,20 +2,23 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import profiles from './agent-model-profiles.json' with { type: 'json' };
 
-export const MAX_AGENT_CONTEXT_BYTES = 80000;
+export const MAX_AGENT_CONTEXT_BYTES = 256000;
+// Private HTTP framing has separate overhead; the normalized model request is
+// still bounded by its selected profile before any inference is transmitted.
+export const MAX_AGENT_REQUEST_BYTES = MAX_AGENT_CONTEXT_BYTES + 64000;
 export const MAX_AGENT_OUTPUT_TOKENS = 16384;
 export const ModelId = z
   .string()
   .max(160)
-  .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*\/[a-zA-Z0-9][a-zA-Z0-9_.-]*$/);
-export type AgentRoute = 'openrouter' | 'openrouter-eu-zdr';
+  .regex(/^(?:[a-zA-Z0-9][a-zA-Z0-9_.-]*\/)?[a-zA-Z0-9][a-zA-Z0-9_.-]*$/);
+export type AgentRoute = 'openrouter' | 'openrouter-eu-zdr' | 'anthropic';
 export const ModelProfile = z
   .object({
     version: z.literal(1),
     id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/),
     model: ModelId,
-    protocol: z.literal('openai-chat-completions'),
-    route: z.enum(['openrouter', 'openrouter-eu-zdr']),
+    protocol: z.enum(['openai-chat-completions', 'anthropic-messages']),
+    route: z.enum(['openrouter', 'openrouter-eu-zdr', 'anthropic']),
     endpoint: z
       .string()
       .max(120)
@@ -24,6 +27,8 @@ export const ModelProfile = z
       .object({
         prompt: z.number().positive().max(100),
         completion: z.number().positive().max(100),
+        cacheWrite: z.number().positive().max(100).optional(),
+        cacheRead: z.number().nonnegative().max(100).optional(),
       })
       .strict(),
     // Declared model capabilities are metadata, never permission to ingest or transmit media.
@@ -52,23 +57,39 @@ export const ModelProfile = z
       .strict(),
     maxContextBytes: z.number().int().min(1024).max(MAX_AGENT_CONTEXT_BYTES),
   })
-  .strict();
+  .strict()
+  .refine((p) =>
+    p.route === 'anthropic'
+      ? p.protocol === 'anthropic-messages' &&
+        /^claude-[a-z0-9-]+$/.test(p.model) &&
+        p.endpoint === 'anthropic' &&
+        p.prices.cacheWrite !== undefined &&
+        p.prices.cacheRead !== undefined &&
+        p.generation.tokenParameter === 'max_tokens' &&
+        ['low', 'medium', 'high', 'max'].includes(p.generation.reasoning) &&
+        p.generation.temperature === undefined &&
+        p.generation.topP === undefined
+      : p.protocol === 'openai-chat-completions' &&
+        p.model.includes('/') &&
+        p.prices.cacheWrite === undefined &&
+        p.prices.cacheRead === undefined,
+  );
 export type AgentModelProfile = z.infer<typeof ModelProfile>;
 
 const bundled = z.array(ModelProfile).parse(profiles);
 export function modelProfiles(): AgentModelProfile[] {
-  return structuredClone(bundled.filter((p) => p.route === 'openrouter-eu-zdr'));
+  return structuredClone(bundled.filter((p) => p.route !== 'openrouter'));
 }
 export function parseModelProfile(json: string): AgentModelProfile {
   try {
     if (Buffer.byteLength(json) > 16384) throw new Error('size');
     const profile = ModelProfile.parse(JSON.parse(json));
     // Custom administrator profiles cannot open a global/third-party URL or add request fields.
-    if (profile.route !== 'openrouter-eu-zdr') throw new Error('route');
+    if (!['openrouter-eu-zdr', 'anthropic'].includes(profile.route)) throw new Error('route');
     return profile;
   } catch {
     // Never echo arbitrary JSON, including accidentally pasted credentials.
-    throw new Error('Profil modele JSON invalide : verifier le schema v1 et la route Europe.');
+    throw new Error('Profil modele JSON invalide : verifier le schema v1 et la route autorisee.');
   }
 }
 
@@ -88,6 +109,7 @@ export function agentProvider(model: string, route: AgentRoute, profileJson?: st
   )
     throw new Error('Le harness Ulysse exige texte et appels outils.');
   const europe = route === 'openrouter-eu-zdr';
+  const anthropic = route === 'anthropic';
   const g = profile.generation;
   const parameters: Record<string, unknown> = { [g.tokenParameter]: g.maxOutputTokens };
   const requiredParameters = ['tools', 'tool_choice', g.tokenParameter];
@@ -109,9 +131,11 @@ export function agentProvider(model: string, route: AgentRoute, profileJson?: st
   return {
     profile,
     profileHash: createHash('sha256').update(JSON.stringify(profile)).digest('hex'),
-    url: europe
-      ? 'https://eu.openrouter.ai/api/v1/chat/completions'
-      : 'https://openrouter.ai/api/v1/chat/completions',
+    url: anthropic
+      ? 'https://api.anthropic.com/v1/messages'
+      : europe
+        ? 'https://eu.openrouter.ai/api/v1/chat/completions'
+        : 'https://openrouter.ai/api/v1/chat/completions',
     prices: profile.prices,
     provider: {
       allow_fallbacks: false,
@@ -128,7 +152,15 @@ export function agentProvider(model: string, route: AgentRoute, profileJson?: st
     },
     parameters,
     requiredParameters,
-    executionSettings: { maxOutputTokens: g.maxOutputTokens, reasoning: g.reasoning },
+    executionSettings: {
+      maxOutputTokens: g.maxOutputTokens,
+      reasoning: g.reasoning,
+      ...(anthropic ? { protocol: 'anthropic-messages' as const } : {}),
+    },
+    reserve: (inputTokens: number, outputTokens: number) =>
+      (inputTokens * Math.max(profile.prices.prompt, profile.prices.cacheWrite ?? 0) +
+        outputTokens * profile.prices.completion) /
+      1_000_000,
     estimate: (inputTokens: number, outputTokens: number) =>
       (inputTokens * profile.prices.prompt + outputTokens * profile.prices.completion) / 1_000_000,
   };

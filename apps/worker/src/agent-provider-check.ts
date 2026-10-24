@@ -1,5 +1,38 @@
 import { z } from 'zod';
 import { agentProvider } from './agent-provider.ts';
+import { anthropicHeaders } from './anthropic-provider.ts';
+import { fetchAgentCompletion } from './agent-errors.ts';
+
+/** Uses the authenticated model endpoint only; never consumes inference credits. */
+export async function checkAnthropicProvider(
+  model: string,
+  key: string,
+  request: typeof fetch = fetch,
+  profileJson?: string,
+) {
+  const p = agentProvider(model, 'anthropic', profileJson);
+  const result = await fetchAgentCompletion(
+    `https://api.anthropic.com/v1/models/${encodeURIComponent(model)}`,
+    {
+      headers: anthropicHeaders(key),
+      redirect: 'error',
+      signal: AbortSignal.timeout(20000),
+    },
+    request,
+  );
+  if (result.id !== model)
+    throw new Error('Modele Anthropic absent ou different du profil epingle.');
+  return {
+    model,
+    profile: p.profile.id,
+    profileHash: p.profileHash,
+    route: 'anthropic',
+    endpoint: 'api.anthropic.com',
+    prices: p.prices,
+    pricingVerifiedByCatalog: false,
+    dataPolicy: 'Anthropic direct; Europe/ZDR non attestes par ce controle',
+  };
+}
 
 const Catalog = z.object({
   data: z.array(

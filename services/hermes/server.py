@@ -15,7 +15,21 @@ from uuid import UUID
 
 SLOTS = threading.BoundedSemaphore(2)
 MODES = {"hermes-live", "hermes-stub"}
-EXECUTION_CONTRACT = "ulysse-execution-v4"
+EXECUTION_CONTRACT = "ulysse-execution-v6"
+MAX_REQUEST_BYTES = 262144
+
+
+def initial_evidence(request):
+    value = request.get("initialEvidence")
+    required = (request.get("modelSettings", {}).get("protocol") == "anthropic-messages"
+                and request.get("workflow") in ("buyer", "content"))
+    if required:
+        if (not isinstance(value, str) or not value.startswith("ULYSSE_WORKFLOW_EVIDENCE_V1\n")
+                or len(value.encode("utf-8")) > 80000):
+            raise ValueError("invalid_initial_evidence")
+    elif value is not None:
+        raise ValueError("invalid_initial_evidence")
+    return value
 
 
 def execution_timeout_ms(request):
@@ -29,7 +43,7 @@ def execution_timeout_ms(request):
 def model_settings(request):
     """Provider-neutral settings from the authenticated worker, never from business input."""
     model = request.get("model")
-    if not isinstance(model, str) or len(model) > 160 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*", model):
+    if not isinstance(model, str) or len(model) > 160 or not re.fullmatch(r"(?:[a-zA-Z0-9][a-zA-Z0-9_.-]*/)?[a-zA-Z0-9][a-zA-Z0-9_.-]*", model):
         raise ValueError("invalid_model_id")
     fallback = request.get("fallbackModel")
     if fallback is not None and (request.get("workflow") not in ("buyer", "content") or
@@ -37,8 +51,14 @@ def model_settings(request):
                                 not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*/[a-zA-Z0-9][a-zA-Z0-9_.-]*", fallback)):
         raise ValueError("invalid_fallback_model")
     settings = request.get("modelSettings", {"maxOutputTokens": 3000, "reasoning": "disabled"})
-    if not isinstance(settings, dict) or set(settings) != {"maxOutputTokens", "reasoning"}:
+    if not isinstance(settings, dict) or set(settings) not in ({"maxOutputTokens", "reasoning"}, {"maxOutputTokens", "reasoning", "protocol"}):
         raise ValueError("invalid_model_settings")
+    if "protocol" in settings:
+        if (settings["protocol"] != "anthropic-messages" or not re.fullmatch(r"claude-[a-z0-9-]+", model)
+                or fallback is not None or settings["reasoning"] not in ("low", "medium", "high", "max")):
+            raise ValueError("invalid_model_settings")
+    elif "/" not in model:
+        raise ValueError("invalid_model_id")
     tokens = settings["maxOutputTokens"]
     if type(tokens) is not int or not 256 <= tokens <= 16384:
         raise ValueError("invalid_model_settings")
@@ -88,6 +108,7 @@ def isolated_run(request):
     if request["mode"] not in MODES:
         raise ValueError("unsupported_execution")
     model_settings(request)
+    initial_evidence(request)
     if not isinstance(request["capability"], str) or len(request["capability"]) != 43:
         raise ValueError("invalid_capability")
     with tempfile.TemporaryDirectory(prefix="ulysse-run-") as home:
@@ -153,7 +174,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             size = int(self.headers.get("Content-Length", "0"))
-            if size <= 0 or size > 8192:
+            if size <= 0 or size > MAX_REQUEST_BYTES:
                 raise ValueError("request_size")
             request = json.loads(self.rfile.read(size))
             self.send(200, isolated_run(request))

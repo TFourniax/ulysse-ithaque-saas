@@ -11,6 +11,7 @@ import { ProviderCallError } from '../src/agent-errors.ts';
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import type { ModelSettings } from '@ulysse/ai';
 import { ModelError, ScriptedProvider } from '@ulysse/ai';
@@ -53,7 +54,7 @@ import { AgentRuntime, agentConfig, MAX_ATTEMPTS, TOOL_NAMES } from '../src/agen
 import { WORKFLOW_EVIDENCE_PREFIX, WORKFLOW_TOOLS } from '../src/workflow-runtime.ts';
 import { BUYER_REVIEW_INSTRUCTIONS, BUYER_REVIEW_PREFIX } from '../src/buyer-review.ts';
 import { inspectBuyerCitations, workflowRepairPrompt } from '../src/workflow-response.ts';
-import { agentProvider } from '../src/agent-provider.ts';
+import { agentProvider, MAX_AGENT_REQUEST_BYTES } from '../src/agent-provider.ts';
 import type { FaultHooks } from '../src/runtime.ts';
 import { noCredentialStore, WorkerRuntime } from '../src/runtime.ts';
 
@@ -678,6 +679,136 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
       .parse(run.snapshot);
     assert.equal(snapshot.modelProfileHash, provider.profileHash);
     assert.deepEqual(snapshot.modelProfile, provider.profile);
+  });
+
+  test('native Anthropic gateway authorizes capabilities, preserves signed blocks and accounts cache before publication', async (t) => {
+    const w = await world('agent-anthropic-native');
+    const provider = agentProvider('claude-sonnet-5-5', 'anthropic');
+    const config = {
+      ...liveTestConfig(),
+      AGENT_MODEL_ID: provider.profile.model,
+      AGENT_PROVIDER_ROUTE: 'anthropic' as const,
+      ANTHROPIC_API_KEY: 'sk-ant-private-test-key-only',
+      AGENT_RUN_BUDGET_USD: 2,
+    };
+    const blocks = [
+      { type: 'thinking', thinking: 'private-fixture-reasoning', signature: 'opaque-signature' },
+      { type: 'tool_use', id: 'call_fixture', name: 'get_company_context', input: {} },
+    ];
+    let calls = 0;
+    let checked = false;
+    t.mock.method(globalThis, 'fetch', async (url: unknown, init: RequestInit) => {
+      calls++;
+      assert.equal(url, provider.url);
+      assert.equal(init.redirect, 'error');
+      assert.equal(new Headers(init.headers).get('x-api-key'), config.ANTHROPIC_API_KEY);
+      assert.equal(new Headers(init.headers).get('authorization'), null);
+      const sent = z
+        .object({
+          model: z.literal('claude-sonnet-5-5'),
+          system: z.string(),
+          messages: z.array(z.unknown()),
+          max_tokens: z.literal(16384),
+        })
+        .parse(JSON.parse(z.string().parse(init.body)));
+      assert.equal(sent.system, instructions);
+      assert.deepEqual(sent.messages[1], { role: 'assistant', content: blocks });
+      return Response.json({
+        id: 'msg_fixture',
+        type: 'message',
+        model: provider.profile.model,
+        role: 'assistant',
+        content: [{ type: 'text', text: JSON.stringify(abstention) }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 500,
+          cache_creation_input_tokens: 2000,
+          cache_read_input_tokens: 3000,
+        },
+      });
+    });
+    const runner: AgentRuntime = new AgentRuntime(workerPool, config, {
+      execute: async (request) => {
+        assert.deepEqual(request.modelSettings, provider.executionSettings);
+        const body = {
+          model: request.model,
+          system: instructions,
+          max_tokens: 999999,
+          messages: [
+            { role: 'user', content: 'Fixture' },
+            { role: 'assistant', content: blocks },
+            {
+              role: 'user',
+              content: [
+                { type: 'tool_result', tool_use_id: 'call_fixture', content: 'Fixture result' },
+              ],
+            },
+          ],
+        };
+        await assert.rejects(
+          runner.inference(request.capability, gatewayBody('Fixture')),
+          /wrong protocol/,
+        );
+        await assert.rejects(
+          runner.anthropicInference('f'.repeat(43), body),
+          /inactive capability/,
+        );
+        await assert.rejects(
+          runner.anthropicInference(request.capability, {
+            ...body,
+            system: 'Foreign instructions',
+          }),
+          /foreign instructions/,
+        );
+        await assert.rejects(
+          runner.anthropicInference(request.capability, {
+            ...body,
+            tools: [{ name: 'shell', input_schema: {} }],
+          }),
+          /foreign tools/,
+        );
+        await assert.rejects(
+          runner.anthropicInference(request.capability, {
+            ...body,
+            metadata: { user_id: 'foreign' },
+          }),
+          /provider_protocol_invalid/,
+        );
+        const changed = new AgentRuntime(workerPool, {
+          ...config,
+          AGENT_MODEL_PROFILE_JSON: JSON.stringify({
+            ...provider.profile,
+            generation: { ...provider.profile.generation, reasoning: 'high' },
+          }),
+        });
+        await assert.rejects(
+          changed.anthropicInference(request.capability, body),
+          /model profile changed/,
+        );
+        assert.equal(calls, 0);
+        await runner.tool(request.capability, 'get_opportunity', { subjectId: w.o.id });
+        await runner.tool(request.capability, 'get_active_doctrine', {});
+        await runner.tool(request.capability, 'get_company_context', {});
+        const response = await runner.anthropicInference(request.capability, body);
+        assert.equal(z.object({ type: z.string() }).parse(response).type, 'message');
+        checked = true;
+        return abstention;
+      },
+    });
+    await runner.run(w.ctx, w.o.id, 'test');
+    assert.equal(checked, true);
+    assert.equal(calls, 1);
+    const run = (await runner.store.list(w.owner))[0]!;
+    assert.equal(run.status, 'abstained');
+    assert.equal(run.cost_state, 'estimated');
+    assert.equal(Number(run.committed_usd), 0.0123);
+    assert.equal(run.input_tokens, 6000);
+    const persisted = JSON.stringify(run);
+    assert.ok(!persisted.includes('opaque-signature'));
+    assert.ok(!persisted.includes('private-fixture-reasoning'));
+    assert.ok(!persisted.includes(config.ANTHROPIC_API_KEY));
   });
 
   test('failed attempts on unchanged input are bounded and release their unused reservation', async () => {
@@ -1724,6 +1855,355 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       mock.mock.restore();
     }
   });
+  test('native workflow keeps its evidence prefix through tools and signed format repair, rejecting altered initial data', async (t) => {
+    const w = await setup('native-prefix-continuity');
+    const instructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    const provider = agentProvider('claude-sonnet-5-5', 'anthropic');
+    const answer = pendingWorkflow('buyer', [], 'Fixture terminée après outil et réparation.');
+    const tools = ['get_workflow_context', 'list_company_sources', 'read_company_source'].map(
+      (name) => ({ name, input_schema: { type: 'object', properties: {} } }),
+    );
+    const toolBlocks = [
+      { type: 'thinking', thinking: '', signature: 'first-prefix-signature' },
+      { type: 'tool_use', id: 'tool_fixture', name: 'list_company_sources', input: {} },
+    ];
+    const malformed = [
+      { type: 'thinking', thinking: '', signature: 'second-prefix-signature' },
+      { type: 'text', text: 'malformed output' },
+    ];
+    let calls = 0;
+    let original: Record<string, unknown> | undefined;
+    let previous: Record<string, unknown>[] = [];
+    t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
+      const sent = z
+        .object({
+          system: z.string(),
+          tools: z.array(z.unknown()),
+          messages: z.array(z.record(z.string(), z.unknown())),
+          tool_choice: z.unknown(),
+        })
+        .parse(JSON.parse(z.string().parse(init.body)));
+      if (calls === 0) {
+        original = { system: sent.system, tools: sent.tools };
+        assert.equal(sent.messages.length, 1, 'no gateway-only prefix insertion');
+        assert.ok(JSON.stringify(sent.messages[0]).includes(w.source.text));
+      } else {
+        assert.deepEqual({ system: sent.system, tools: sent.tools }, original);
+        assert.deepEqual(
+          sent.messages.slice(0, previous.length),
+          previous,
+          'prefix must be immutable',
+        );
+        assert.deepEqual(sent.messages.at(-2)?.content, calls === 1 ? toolBlocks : malformed);
+      }
+      assert.deepEqual(sent.tool_choice, { type: calls === 2 ? 'none' : 'auto' });
+      previous = sent.messages;
+      const content =
+        calls === 0
+          ? toolBlocks
+          : calls === 1
+            ? malformed
+            : [{ type: 'text', text: JSON.stringify(answer) }];
+      calls++;
+      return Promise.resolve(
+        Response.json({
+          type: 'message',
+          role: 'assistant',
+          content,
+          stop_reason: calls === 1 ? 'tool_use' : 'end_turn',
+          usage: { input_tokens: 200, output_tokens: 40 },
+        }),
+      );
+    });
+    const engine: AgentRuntime = new AgentRuntime(
+      workerPool,
+      {
+        ...liveTestConfig(),
+        AGENT_PROVIDER_ROUTE: 'anthropic',
+        AGENT_MODEL_ID: provider.profile.model,
+        ANTHROPIC_API_KEY: 'sk-ant-fixture-only',
+        AGENT_RUN_BUDGET_USD: 2,
+      },
+      {
+        execute: async (request) => {
+          assert.ok(request.initialEvidence);
+          assert.ok(request.initialEvidence.startsWith(WORKFLOW_EVIDENCE_PREFIX));
+          const body = {
+            model: request.model,
+            system: instructions,
+            max_tokens: 16384,
+            tools,
+            messages: [
+              { role: 'user', content: [{ type: 'text', text: request.initialEvidence }] },
+            ],
+          };
+          await assert.rejects(
+            engine.anthropicInference(request.capability, {
+              ...body,
+              messages: [{ role: 'user', content: request.initialEvidence + ' altered' }],
+            }),
+            /initial evidence changed/,
+          );
+          assert.equal(calls, 0);
+          await engine.anthropicInference(request.capability, body);
+          const listed = await engine.tool(request.capability, 'list_company_sources', {});
+          await engine.anthropicInference(request.capability, {
+            ...body,
+            messages: [
+              ...body.messages,
+              { role: 'assistant', content: toolBlocks },
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: 'tool_fixture',
+                    content: JSON.stringify(listed) + ' fixture context growth'.repeat(500),
+                  },
+                ],
+              },
+            ],
+          });
+          return answer;
+        },
+      },
+    );
+    const id = await w.workspace.create(
+      w.owner,
+      { kind: 'buyer', brief, sourceIds: [w.source.id], requestKey: crypto.randomUUID() },
+      'hermes-live',
+    );
+    await engine.workflows.run(w.ctx, id);
+    const result = (await w.workspace.listWorkflows(w.owner))[0]!;
+    assert.equal(result.status, 'abstained', result.errorCode ?? '');
+    assert.equal(calls, 3);
+    const run = await engine.store.transaction(
+      w.ctx,
+      async (_tx, sql) =>
+        (
+          await sql.query<{ model_calls: number; tool_calls: number; snapshot: unknown }>(
+            'SELECT model_calls,tool_calls,snapshot FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+            [w.ctx.tenantId, result.agentRunId],
+          )
+        ).rows[0]!,
+    );
+    assert.equal(run.model_calls, 3);
+    assert.equal(run.tool_calls, 1);
+    assert.ok(!JSON.stringify(run).includes('prefix-signature'));
+  });
+
+  test('native HTTP continuation grows past old caps, publishes reviewed evidence and records bounded refusals', async (t) => {
+    const instructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    for (const scenario of ['complete', 'profile-limit', 'transport-limit']) {
+      const w = await setup(`native-context-${scenario}`);
+      const sources = [];
+      for (let i = 0; i < 4; i++)
+        sources.push(
+          await w.workspace.saveSource(w.owner, {
+            kind: i === 0 ? 'offer' : 'competitor',
+            title: `Fixture ${i}`,
+            text: 'private-context-fixture ' + 'é'.repeat(5800),
+            url: null,
+            observedAt: new Date().toISOString(),
+            origin: i === 0 ? 'company' : 'observed',
+          }),
+        );
+      const ids = sources.map((s) => s.id);
+      const refs = sources.map((s) => `source:${s.id}:r1`);
+      const answer: WorkflowResult = {
+        ...pendingWorkflow('buyer', [], 'Comparaison fictive relue.'),
+        outcome: 'draft',
+        findings: [
+          { topic: 'Offre', analysis: 'Offre documentée dans la fixture.', references: [refs[0]!] },
+        ],
+        benchmark: sources.slice(1).map((s, i) => ({
+          topic: s.title,
+          analysis: 'Périmètre fictif comparable; résultats non établis.',
+          references: [refs[0]!, refs[i + 1]!],
+        })),
+        uniqueness: {
+          verdict: 'insufficient_evidence',
+          reason: 'Fixture sans résultats mesurés.',
+          references: refs,
+        },
+      };
+      const toolBlocks = [
+        { type: 'thinking', thinking: '', signature: 'private-context-signature' },
+        {
+          type: 'tool_use',
+          id: 'read_fixture',
+          name: 'read_company_source',
+          input: { sourceIds: ids },
+        },
+      ];
+      const realFetch = globalThis.fetch;
+      let calls = 0;
+      let firstMessages: unknown[] = [];
+      let gateway = '';
+      const mock = t.mock.method(globalThis, 'fetch', (url: unknown, init: RequestInit) => {
+        if (typeof url === 'string' && url.startsWith(gateway)) return realFetch(url, init);
+        assert.equal(url, 'https://api.anthropic.com/v1/messages');
+        const sent = z
+          .object({ messages: z.array(z.record(z.string(), z.unknown())) })
+          .parse(JSON.parse(z.string().parse(init.body)));
+        if (calls === 0) firstMessages = sent.messages;
+        if (calls === 1) {
+          assert.deepEqual(sent.messages.slice(0, 1), firstMessages);
+          assert.deepEqual(sent.messages[1]?.content, toolBlocks);
+        }
+        const content =
+          calls++ === 0 ? toolBlocks : [{ type: 'text', text: JSON.stringify(answer) }];
+        return Promise.resolve(
+          Response.json({
+            type: 'message',
+            role: 'assistant',
+            content,
+            stop_reason: calls === 1 ? 'tool_use' : 'end_turn',
+            usage: { input_tokens: 200, output_tokens: 40 },
+          }),
+        );
+      });
+      const profile = agentProvider('claude-sonnet-5-5', 'anthropic').profile;
+      const engine: AgentRuntime = new AgentRuntime(
+        workerPool,
+        {
+          ...liveTestConfig(),
+          AGENT_PROVIDER_ROUTE: 'anthropic',
+          AGENT_MODEL_ID: profile.model,
+          ANTHROPIC_API_KEY: 'sk-ant-fixture-only',
+          AGENT_RUN_BUDGET_USD: 2,
+          AGENT_SESSION_BUDGET_USD: 20,
+          ...(scenario === 'profile-limit'
+            ? { AGENT_MODEL_PROFILE_JSON: JSON.stringify({ ...profile, maxContextBytes: 80000 }) }
+            : {}),
+        },
+        {
+          execute: async (request) => {
+            assert.ok(request.initialEvidence);
+            const body = {
+              model: request.model,
+              system: instructions,
+              max_tokens: 16384,
+              tools: ['get_workflow_context', 'list_company_sources', 'read_company_source'].map(
+                (name) => ({ name, input_schema: { type: 'object', properties: {} } }),
+              ),
+              messages: [{ role: 'user', content: request.initialEvidence }],
+            };
+            const post = (path: string, payload: unknown) =>
+              globalThis.fetch(gateway + path, {
+                method: 'POST',
+                headers: {
+                  'content-type': 'application/json',
+                  'x-api-key': request.capability,
+                  authorization: `Bearer ${request.capability}`,
+                },
+                body: JSON.stringify(payload),
+              });
+            assert.ok(Buffer.byteLength(JSON.stringify(body)) < 80000);
+            assert.equal((await post('/v1/messages', body)).status, 200);
+            const read = await post('/tools/read_company_source', { sourceIds: ids });
+            assert.equal(read.status, 200);
+            const content =
+              JSON.stringify(await read.json()) +
+              (scenario === 'transport-limit' ? 'x'.repeat(MAX_AGENT_REQUEST_BYTES) : '');
+            const continuation = {
+              ...body,
+              messages: [
+                ...body.messages,
+                { role: 'assistant', content: toolBlocks },
+                {
+                  role: 'user',
+                  content: [{ type: 'tool_result', tool_use_id: 'read_fixture', content }],
+                },
+              ],
+            };
+            assert.ok(Buffer.byteLength(JSON.stringify(continuation)) > 100000);
+            const response = await post('/v1/messages', continuation);
+            if (scenario !== 'complete') {
+              assert.equal(response.status, 403);
+              throw new Error('hermes_http_422');
+            }
+            assert.equal(response.status, 200);
+            return answer;
+          },
+        },
+      );
+      const server = createServer((req, res) => {
+        void engine.handleHttp(req, res);
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      assert.ok(address && typeof address !== 'string');
+      gateway = `http://127.0.0.1:${address.port}/agent`;
+      try {
+        const id = await w.workspace.create(
+          w.owner,
+          { kind: 'buyer', brief, sourceIds: ids, requestKey: crypto.randomUUID() },
+          'hermes-live',
+        );
+        await engine.workflows.run(w.ctx, id);
+        const run = (await w.workspace.listWorkflows(w.owner))[0]!;
+        assert.equal(run.status, scenario === 'complete' ? 'draft' : 'failed', run.errorCode ?? '');
+        assert.equal(run.errorCode, scenario === 'complete' ? null : 'context_limit');
+        assert.equal(calls, scenario === 'complete' ? 3 : 1);
+        const saved = await engine.store.transaction(
+          w.ctx,
+          async (_tx, sql) =>
+            (
+              await sql.query<{
+                snapshot: Record<string, unknown>;
+                model_calls: number;
+                tool_calls: number;
+                uncertain_calls: number;
+                committed_usd: string;
+                reserved_usd: string;
+              }>(
+                'SELECT snapshot,model_calls,tool_calls,uncertain_calls,committed_usd,reserved_usd FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+                [w.tenantId, run.agentRunId],
+              )
+            ).rows[0]!,
+        );
+        assert.equal(saved.model_calls, calls);
+        assert.equal(saved.tool_calls, 1);
+        assert.equal(saved.uncertain_calls, 0);
+        assert.equal(saved.reserved_usd, saved.committed_usd);
+        assert.ok(!JSON.stringify(saved).includes('private-context-'));
+        if (scenario === 'complete') {
+          assert.equal(saved.snapshot.contextLimit, undefined);
+          assert.equal(run.result?.benchmark.length, 3);
+          assert.equal(
+            z.object({ status: z.literal('completed') }).safeParse(saved.snapshot.buyerReview)
+              .success,
+            true,
+          );
+        } else {
+          const limit = z
+            .object({ phase: z.string(), actual: z.number(), maximum: z.number() })
+            .strict()
+            .parse(saved.snapshot.contextLimit);
+          assert.equal(limit.phase, scenario === 'profile-limit' ? 'input' : 'transport');
+          assert.equal(
+            limit.maximum,
+            scenario === 'profile-limit' ? 80000 : MAX_AGENT_REQUEST_BYTES,
+          );
+          assert.ok(limit.actual > limit.maximum);
+        }
+      } finally {
+        mock.mock.restore();
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    }
+  });
+
   test('an optional research catalog cannot block a model call whose mandatory evidence fits', async (t) => {
     const w = await setup('workflow-catalog-overflow');
     const instructions = await readFile(
@@ -1990,7 +2470,7 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
         execute: async (request) => {
           await assert.rejects(
             engine.inference(request.capability, body),
-            scenario === 'budget' ? /budget limit/ : /context limit/,
+            scenario === 'budget' ? /budget limit/ : /context_limit/,
           );
           return pendingWorkflow('buyer', [], 'Aucune transmission');
         },
@@ -2002,18 +2482,29 @@ describe('UL-017 buyer and contextual content with PostgreSQL roles', () => {
       );
       await engine.workflows.run(w.ctx, id);
       const run = (await w.workspace.listWorkflows(w.owner))[0]!;
-      assert.equal(run.errorCode, 'required_source_unread');
+      assert.equal(
+        run.errorCode,
+        scenario === 'context' ? 'context_limit' : 'required_source_unread',
+      );
       const trace = await engine.store.transaction(w.ctx, async (_tx, sql) =>
         sql.query<{
           retrieved: string[];
           model_calls: number;
           committed_usd: string;
+          snapshot: Record<string, unknown>;
         }>(
-          'SELECT retrieved,model_calls,committed_usd FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+          'SELECT retrieved,model_calls,committed_usd,snapshot FROM agent_runs WHERE tenant_id=$1 AND id=$2',
           [w.tenantId, run.agentRunId],
         ),
       );
       const saved = trace.rows[0];
+      if (scenario === 'context') {
+        const limit = z
+          .object({ phase: z.literal('prepared'), actual: z.number(), maximum: z.literal(80000) })
+          .strict()
+          .parse(saved?.snapshot.contextLimit);
+        assert.ok(limit.actual > limit.maximum);
+      }
       assert.ok(saved);
       assert.deepEqual(saved.retrieved, []);
       assert.equal(saved.model_calls, 0);
@@ -3559,6 +4050,220 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     assert.equal(await w.engine.reserve(w.ctx, retry.task, 'model', 0.001), null);
     assert.equal(await w.engine.store.claim(w.ctx, w.id), null);
   });
+  test('native buyer seeds research texts after a list-only turn and repairs an omitted benchmark before publication', async (t) => {
+    const w = await setup('native-benchmark-seed');
+    const workspace = new PgWorkspaceStore(appPool);
+    const source = await workspace.saveSource(w.owner, {
+      kind: 'offer',
+      title: 'Offre fictive',
+      text: quote,
+      url: 'https://own.example/',
+      origin: 'company',
+      observedAt: new Date().toISOString(),
+    });
+    for (let i = 0; i < 150 && (await w.current()).qualifiedCount < 2; i++)
+      await w.engine.run(w.ctx, w.id);
+    const campaign = await w.current();
+    assert.ok(campaign.qualifiedCount >= 2);
+    await w.repository.action(w.owner, w.id, campaign.revision, 'pause');
+    await w.engine.run(w.ctx, w.id);
+    const instructions = await readFile(
+      new URL('../../../services/hermes/workflows.txt', import.meta.url),
+      'utf8',
+    );
+    for (const scenario of ['corrected', 'unchanged', 'abstained']) {
+      let calls = 0;
+      let generationCalls = 0;
+      let reviewCalls = 0;
+      let generated: WorkflowResult | undefined;
+      const blocks = [
+        { type: 'tool_use', id: 'list_fixture', name: 'list_company_sources', input: {} },
+      ];
+      const mock = t.mock.method(globalThis, 'fetch', (_url: unknown, init: RequestInit) => {
+        calls++;
+        const sent = z
+          .object({
+            system: z.string(),
+            messages: z.array(z.object({ role: z.string(), content: z.unknown() })),
+          })
+          .parse(JSON.parse(z.string().parse(init.body)));
+        const reviewing = sent.system === BUYER_REVIEW_INSTRUCTIONS;
+        const bundle = sent.messages.find(
+          (m) => typeof m.content === 'string' && m.content.startsWith(WORKFLOW_EVIDENCE_PREFIX),
+        );
+        assert.ok(bundle);
+        const evidence = z
+          .object({
+            sources: z.array(
+              z.object({
+                kind: z.string(),
+                reference: z.string(),
+                text: z.string(),
+                untrusted: z.literal(true),
+              }),
+            ),
+            publicationRequirements: z.object({ benchmarkRequired: z.literal(true) }),
+          })
+          .parse(
+            JSON.parse(z.string().parse(bundle.content).slice(WORKFLOW_EVIDENCE_PREFIX.length)),
+          );
+        const own = evidence.sources.find((s) => s.kind === 'offer');
+        const rivals = evidence.sources.filter((s) => s.kind === 'competitor');
+        assert.ok(own);
+        assert.ok(rivals.length >= 2 && rivals.length <= 4);
+        for (const rival of rivals)
+          assert.ok(rival.text.includes(quote), 'saved quotation, not a preview');
+        const missing: WorkflowResult = {
+          ...pendingWorkflow('buyer', [], 'Offre décrite sans comparaison'),
+          outcome: 'draft',
+          findings: [{ topic: 'Offre', analysis: quote, references: [own.reference] }],
+          uniqueness: {
+            verdict: 'insufficient_evidence',
+            reason: 'Comparaison omise',
+            references: [own.reference],
+          },
+        };
+        let result = missing;
+        if (reviewing) {
+          reviewCalls++;
+          if (reviewCalls === 2) {
+            assert.ok(JSON.stringify(sent).includes('benchmark_missing'));
+            if (scenario === 'corrected')
+              result = {
+                ...missing,
+                benchmark: rivals.map((r, i) => ({
+                  topic: `Alternative fictive ${i}`,
+                  analysis: 'Les deux offres décrivent une intégration. Prix non comparés.',
+                  references: [own.reference, r.reference],
+                })),
+              };
+            if (scenario === 'abstained')
+              result = pendingWorkflow(
+                'buyer',
+                [],
+                'Ces extraits ne permettent pas une comparaison pertinente.',
+              );
+          }
+        } else {
+          generationCalls++;
+          generated = missing;
+        }
+        return Promise.resolve(
+          Response.json({
+            type: 'message',
+            role: 'assistant',
+            content:
+              !reviewing && generationCalls === 1
+                ? blocks
+                : [{ type: 'text', text: JSON.stringify(result) }],
+            stop_reason: !reviewing && generationCalls === 1 ? 'tool_use' : 'end_turn',
+            usage: { input_tokens: 200, output_tokens: 100 },
+          }),
+        );
+      });
+      const engine: AgentRuntime = new AgentRuntime(
+        workerPool,
+        {
+          ...liveTestConfig(),
+          AGENT_PROVIDER_ROUTE: 'anthropic',
+          AGENT_MODEL_ID: 'claude-sonnet-5-5',
+          ANTHROPIC_API_KEY: 'sk-ant-fixture-only',
+          AGENT_RUN_BUDGET_USD: 2,
+        },
+        {
+          execute: async (request) => {
+            assert.ok(request.initialEvidence);
+            const body = {
+              model: request.model,
+              system: instructions,
+              max_tokens: 16384,
+              tools: WORKFLOW_TOOLS.map((name) => ({
+                name,
+                input_schema: { type: 'object', properties: {} },
+              })),
+              messages: [{ role: 'user', content: request.initialEvidence }],
+            };
+            await engine.anthropicInference(request.capability, body);
+            const list = await engine.tool(request.capability, 'list_company_sources', {});
+            await engine.anthropicInference(request.capability, {
+              ...body,
+              messages: [
+                ...body.messages,
+                { role: 'assistant', content: blocks },
+                {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'tool_result',
+                      tool_use_id: 'list_fixture',
+                      content: JSON.stringify(list),
+                    },
+                  ],
+                },
+              ],
+            });
+            assert.ok(generated);
+            return generated;
+          },
+        },
+      );
+      const id = await workspace.create(
+        w.owner,
+        {
+          kind: 'buyer',
+          brief: {
+            offer: 'Intégration',
+            target: 'PME',
+            phase: 'comparison',
+            objective: 'Comparer',
+            channel: '',
+            constraints: '',
+            buyerRunId: null,
+          },
+          sourceIds: [source.id],
+          requestKey: crypto.randomUUID(),
+        },
+        'hermes-live',
+      );
+      await engine.workflows.run(w.ctx, id);
+      const run = (await workspace.listWorkflows(w.owner)).find((r) => r.id === id)!;
+      assert.equal(
+        run.status,
+        scenario === 'corrected' ? 'draft' : scenario === 'unchanged' ? 'failed' : 'abstained',
+        run.errorCode ?? '',
+      );
+      assert.equal(run.errorCode, scenario === 'unchanged' ? 'benchmark_missing' : null);
+      if (scenario === 'corrected') assert.ok((run.result?.benchmark.length ?? 0) >= 2);
+      assert.equal(calls, 4);
+      assert.equal(reviewCalls, 2);
+      const saved = (
+        await engine.store.transaction(w.ctx, (_tx, sql) =>
+          sql.query<{
+            model_calls: number;
+            tool_calls: number;
+            snapshot: unknown;
+            committed_usd: string;
+            reserved_usd: string;
+          }>(
+            'SELECT model_calls,tool_calls,snapshot,committed_usd,reserved_usd FROM agent_runs WHERE tenant_id=$1 AND id=$2',
+            [w.ctx.tenantId, run.agentRunId],
+          ),
+        )
+      ).rows[0]!;
+      assert.equal(saved.model_calls, 4);
+      assert.equal(saved.tool_calls, 1, 'no model-selected source reads');
+      assert.equal(saved.committed_usd, saved.reserved_usd);
+      const snapshot = z
+        .object({
+          reviewRepairAttempted: z.literal(true),
+          initialWorkflowFormat: z.object({ issues: z.array(z.object({ code: z.string() })) }),
+        })
+        .parse(saved.snapshot);
+      assert.ok(snapshot.initialWorkflowFormat.issues.some((i) => i.code === 'benchmark_missing'));
+      assert.ok(!JSON.stringify(saved.snapshot).includes(quote));
+      mock.mock.restore();
+    }
+  });
   test('buyer generates a structured benchmark from paused research and keeps explicit selection and evidence review mandatory', async (t) => {
     const w = await setup('research-buyer');
     const workspace = new PgWorkspaceStore(appPool);
@@ -3640,11 +4345,7 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
         assert.ok(JSON.stringify(sent.messages).includes(quote), 'review receives saved text');
       }
       assert.ok(format.includes(`source:${source.id}:r1`));
-      assert.equal(
-        format.includes(rivalId),
-        nextResult !== undefined,
-        'listing alone must not authorize a citation',
-      );
+      assert.ok(format.includes(rivalId), 'the complete seeded text authorizes its citation');
       return Promise.resolve(
         Response.json({
           choices: [
@@ -3749,7 +4450,11 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     await engine.workflows.run(w.ctx, buyer);
     const draft = (await workspace.listWorkflows(w.owner))[0]!;
     assert.equal(draft.status, 'draft', draft.errorCode ?? '');
-    assert.match(draft.result?.limits[0] ?? '', /Couverture de cette synthèse/u);
+    assert.match(draft.result?.limits[0] ?? '', /Périmètre de la comparaison/u);
+    assert.match(
+      draft.result?.limits[0] ?? '',
+      /fiches fournies à l’analyse : [1-9]\d* ; fiches citées dans le diagnostic : 1 ; fiches utilisées dans les comparaisons : 1/u,
+    );
     await assert.rejects(workspace.review(w.owner, buyer, draft.revision, 'approve'));
     const partialCandidates = (await w.items()).items;
     const unqualified = partialCandidates.find((c) => c.facts.length === 0);

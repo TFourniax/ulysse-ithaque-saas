@@ -14,9 +14,46 @@ SCRIPT = Path(__file__).with_name("ulysse-vps-europe.sh").read_text()
 TRANSFORM = re.search(r'python3 - "\$release" "\$tag"[^\n]* <<\'PY\'\n(.*?)\nPY', SCRIPT, re.S).group(1)
 MODEL_TRANSFORM = re.search(r'<<\'PYMODEL\'\n(.*?)\nPYMODEL', SCRIPT, re.S).group(1)
 RESEARCH_TRANSFORM = re.search(r'<<\'PYRESEARCH\'\n(.*?)\nPYRESEARCH', SCRIPT, re.S).group(1)
+ANTHROPIC_TRANSFORM = re.search(r'<<\'PYANTHROPIC\'\n(.*?)\nPYANTHROPIC', SCRIPT, re.S).group(1)
 
 
 class DeploymentConfig(unittest.TestCase):
+    def test_anthropic_cutover_keeps_data_services_session_and_old_configuration(self):
+        _, original, _ = self.transform('openrouter-eu-zdr')
+        with tempfile.TemporaryDirectory() as temp:
+            d = Path(temp)
+            config = d/'deploy.json'
+            config.write_text(json.dumps(original))
+            key = d/'anthropic.key'
+            key.write_text('sk-ant-fake-key-test-with-$-literal')
+            key.chmod(0o600)
+            captured = io.StringIO()
+            with patch.object(sys, 'argv', ['-', str(config), str(key), 'claude-sonnet-5-5']), contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+                exec(compile(ANTHROPIC_TRANSFORM, 'anthropic-config', 'exec'), {})
+            self.assertEqual(captured.getvalue(), '')
+            candidate = json.loads(config.read_text())
+            expected = copy.deepcopy(original)
+            expected['services']['worker']['environment'].update({
+                'ANTHROPIC_API_KEY': 'sk-ant-fake-key-test-with-$$-literal', 'AGENT_PROVIDER_ROUTE': 'anthropic',
+                'AGENT_MODEL_ID': 'claude-sonnet-5-5', 'AGENT_MODEL_PROFILE_JSON': '', 'AGENT_FALLBACK_MODEL_ID': '',
+                'AGENT_FALLBACK_MODEL_PROFILE_JSON': '', 'AGENT_STUB_PROVIDER_URL': '',
+                'AGENT_RUN_BUDGET_USD': '2', 'AGENT_SESSION_BUDGET_USD': '20', 'AGENT_MONTH_BUDGET_USD': '100'})
+            self.assertEqual(candidate, expected)
+
+    def test_anthropic_rejects_public_symlink_and_invalid_key_before_writing_configuration(self):
+        for case in ('public', 'symlink', 'format', 'missing'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temp:
+                d = Path(temp); config = d/'deploy.json'; config.write_text('{}')
+                key = d/'key'; key.write_text('sk-ant-fixture-private-key-not-real'); key.chmod(0o600)
+                if case == 'public': key.chmod(0o644)
+                if case == 'format': key.write_text('wrong-key')
+                if case == 'missing': key.unlink()
+                if case == 'symlink':
+                    link = d/'link'; link.symlink_to(key); key = link
+                with patch.object(sys, 'argv', ['-', str(config), str(key), 'claude-sonnet-5-5']), self.assertRaises(SystemExit):
+                    exec(compile(ANTHROPIC_TRANSFORM, 'anthropic-config', 'exec'), {})
+                self.assertEqual(config.read_text(), '{}')
+
     def transform(self, route=None, drift=False, limits=()):
         with tempfile.TemporaryDirectory() as temp:
             d = Path(temp)

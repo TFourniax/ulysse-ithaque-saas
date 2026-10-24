@@ -17,6 +17,7 @@ import {
   WORKFLOW_VERSION,
   workflowInputHash,
   workflowQuestions,
+  workflowPublicationEvidence,
   withResearchCoverage,
 } from '@ulysse/domain';
 import type { Pool, PoolClient, WorkflowRequest } from '@ulysse/database';
@@ -24,7 +25,11 @@ import { PgWorkspaceStore, PgResearchStore } from '@ulysse/database';
 import { z } from 'zod';
 import { workflowFailure, type WorkflowStage } from './agent-errors.ts';
 import { WORKFLOW_TIMEOUT_MS } from './workflow-retry.ts';
-import { researchPreview, workflowResearchCatalog } from './workflow-catalog.ts';
+import {
+  researchPreview,
+  workflowResearchCatalog,
+  seedResearchEvidence,
+} from './workflow-catalog.ts';
 import { workflowCitations } from './buyer-review.ts';
 
 export const WORKFLOW_TOOLS = [
@@ -34,6 +39,10 @@ export const WORKFLOW_TOOLS = [
 ] as const;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export const WORKFLOW_EVIDENCE_PREFIX = 'ULYSSE_WORKFLOW_EVIDENCE_V1\n';
+// Keep the initial evidence stable and bounded even when the conversation envelope
+// grows. The extra capacity belongs to tool replies and signed history, not seeding.
+export const nativeEvidenceBudget = (maxContextBytes: number) =>
+  Math.min(56000, maxContextBytes - 24000);
 function workflowContext(input: WorkflowInput, id: string) {
   const references = [
     `workflow:${id}`,
@@ -79,6 +88,7 @@ type Settings = {
   providerRoute: string;
   modelProfile?: object;
   modelProfileHash?: string;
+  maxContextBytes?: number;
   modelSettings?: Parameters<AgentExecutor['execute']>[0]['modelSettings'];
   fallbackModel?: string;
   fallbackProfileHash?: string;
@@ -120,7 +130,7 @@ export class WorkflowRuntime {
     this.store.assertFresh(input);
     ensure(run.status === 'running' && workflowInputHash(input) === inputHash, 'STALE_EVIDENCE');
     const context = workflowContext(input, subjectId);
-    const selected = review
+    const required = review
       ? input.sources.filter(
           (s) =>
             run.sourceIds.includes(s.id) ||
@@ -128,13 +138,37 @@ export class WorkflowRuntime {
             (['offer', 'website'].includes(s.kind) && review.read.includes(sourceReference(s))),
         )
       : requiredSources(input, run);
+    // Seed a bounded first comparison from saved, qualified evidence, independently
+    // of whether Hermes chooses another read. Native generation uses the same fixed
+    // allowance on every turn so this does not mutate its signed initial message.
+    // Review may add only texts actually supplied/read during generation.
+    const selected =
+      input.kind === 'buyer' && input.research
+        ? seedResearchEvidence(
+            required,
+            review
+              ? input.sources.filter((s) => review.read.includes(sourceReference(s)))
+              : input.sources,
+            Math.min(
+              32000,
+              Math.max(
+                0,
+                maxEvidenceBytes -
+                  Buffer.byteLength(JSON.stringify({ context, sources: required })) -
+                  2048 -
+                  8000,
+              ),
+            ),
+          )
+        : required;
     const sources = selected.map((s) => ({
       ...s,
       reference: sourceReference(s),
       untrusted: true,
     }));
     // Deliver the actual versioned text, not just an identifier marked as read.
-    // Rebuild for every provider call so Hermes need not retain an extra transcript.
+    // Native execution seeds this message once; later checks rebuild it only to
+    // verify authorization/freshness, without modifying Hermes' signed history.
     const citationRoles = {
       offerReferences: selected
         .filter((s) => s.kind === 'offer' || s.kind === 'website')
@@ -144,7 +178,10 @@ export class WorkflowRuntime {
     const payload = {
       context,
       sources,
-      ...(review ? { citationRoles } : {}),
+      citationRoles,
+      publicationRequirements: {
+        benchmarkRequired: workflowPublicationEvidence(input, []).benchmarkRequired,
+      },
       untrusted: true,
     };
     // Leave room for escaped JSON and the surrounding message. Mandatory source text
@@ -159,7 +196,12 @@ export class WorkflowRuntime {
         : undefined;
     return {
       references: [...context.references, ...sources.map((s) => s.reference)],
+      publication: workflowPublicationEvidence(input, [
+        ...context.references,
+        ...sources.map((s) => s.reference),
+      ]),
       sourceCount: sources.length,
+      seededCompetitorCount: selected.length - required.length,
       catalogCount: researchCatalog?.items.length ?? 0,
       ...citationRoles,
       messageWithoutCatalog: {
@@ -317,6 +359,26 @@ export class WorkflowRuntime {
     if (!accepted) return;
     let stage: WorkflowStage = 'execution';
     try {
+      const initialEvidence =
+        this.settings.providerRoute === 'anthropic' && this.settings.mode !== 'simulated'
+          ? await this.store.transaction(ctx, async (tx, sql) => {
+              const request = await this.store.get(sql, ctx.tenantId, id);
+              const evidence = await this.prepareEvidence(
+                ctx,
+                tx,
+                sql,
+                id,
+                request.inputHash ?? '',
+                nativeEvidenceBudget(this.settings.maxContextBytes ?? 80000),
+              );
+              ensure(
+                Buffer.byteLength(evidence.message.content) <= 80000,
+                'INVALID_INPUT',
+                'context limit',
+              );
+              return evidence.message.content;
+            })
+          : undefined;
       const raw =
         this.settings.mode === 'simulated'
           ? await this.simulate(capability, kind)
@@ -331,6 +393,7 @@ export class WorkflowRuntime {
                 fallbackModel: this.settings.fallbackModel,
                 timeoutMs: WORKFLOW_TIMEOUT_MS,
                 workflow: kind,
+                initialEvidence,
               },
               signal,
             );
@@ -392,7 +455,7 @@ export class WorkflowRuntime {
           'required source unread',
         );
         validateWorkflowPublication(result, input, new Set(run.retrieved));
-        const published = withResearchCoverage(result, input);
+        const published = withResearchCoverage(result, input, run.retrieved);
         await sql.query(
           'UPDATE agent_runs SET status=$3,result=$4,error_code=NULL,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2',
           [
@@ -416,6 +479,11 @@ export class WorkflowRuntime {
       const obsolete = isDomainError(error, 'STALE_EVIDENCE');
       const code = signal?.aborted ? 'interrupted' : workflowFailure(error, stage);
       await this.store.transaction(ctx, async (_tx, sql) => {
+        // Fixed codes only: do not persist an exception, source text, or model output.
+        await sql.query(
+          "UPDATE agent_runs SET snapshot=jsonb_set(snapshot,'{workflowFailure}',$3::jsonb) WHERE tenant_id=$1 AND id=$2 AND status='running'",
+          [ctx.tenantId, agentId, JSON.stringify({ stage, code })],
+        );
         const failed = await sql.query<{ error_code: string }>(
           "UPDATE agent_runs SET status=$3,error_code=CASE WHEN $3='obsolete' THEN $4 ELSE coalesce(error_code,$4) END,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2 AND status='running' RETURNING error_code",
           [ctx.tenantId, agentId, obsolete ? 'obsolete' : 'failed', code],

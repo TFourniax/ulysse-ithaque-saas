@@ -234,64 +234,106 @@ export function validateWorkflowResult(value: unknown): WorkflowResult {
   return result;
 }
 
-/** Citations must be read; comparison requires competitor evidence, never a score made up by a persona. */
+export type WorkflowPublicationEvidence = Readonly<{
+  kind: WorkflowKind;
+  references: readonly string[];
+  offerReferences: readonly string[];
+  competitorReferences: readonly string[];
+  benchmarkRequired: boolean;
+  briefComplete: boolean;
+}>;
+
+export function workflowPublicationEvidence(
+  input: WorkflowInput,
+  references: readonly string[],
+): WorkflowPublicationEvidence {
+  return {
+    kind: input.kind,
+    references,
+    offerReferences: input.sources
+      .filter((s) => s.kind === 'offer' || s.kind === 'website')
+      .map(sourceReference),
+    competitorReferences: input.sources.filter((s) => s.kind === 'competitor').map(sourceReference),
+    benchmarkRequired:
+      input.kind === 'buyer' &&
+      ((input.research?.qualifiedCount ?? 0) > 0 ||
+        input.sources.some((s) => s.kind === 'competitor')),
+    briefComplete: workflowQuestions(input).length === 0,
+  };
+}
+
+/** Shared by review and publication: a structurally valid response may still omit the requested work. */
+export function workflowPublicationIssues(
+  result: WorkflowResult,
+  evidence: WorkflowPublicationEvidence,
+) {
+  const issues: { path: string; code: string; detail: string }[] = [];
+  if (result.kind !== evidence.kind)
+    issues.push({ path: 'kind', code: 'result_kind_invalid', detail: 'workflow kind mismatch' });
+  const sections = [
+    ...result.findings.map((item, i) => ({ item, path: `findings.${i}.references` })),
+    ...result.benchmark.map((item, i) => ({ item, path: `benchmark.${i}.references` })),
+    ...(result.uniqueness ? [{ item: result.uniqueness, path: 'uniqueness.references' }] : []),
+    ...(result.content ? [{ item: result.content, path: 'content.references' }] : []),
+  ];
+  for (const { item, path } of sections)
+    if (item.references.some((ref) => !evidence.references.includes(ref)))
+      issues.push({ path, code: 'unretrieved_citation', detail: 'unretrieved citation' });
+  if (result.outcome !== 'draft') return issues;
+  if (evidence.benchmarkRequired && !result.benchmark.length)
+    issues.push({
+      path: 'benchmark',
+      code: 'benchmark_missing',
+      detail: 'available research benchmark ignored',
+    });
+  if (!evidence.briefComplete)
+    issues.push({ path: 'outcome', code: 'brief_incomplete', detail: 'incomplete brief' });
+  const hasOwn = (refs: readonly string[]) =>
+    refs.some((ref) => evidence.offerReferences.includes(ref));
+  const hasRival = (refs: readonly string[]) =>
+    refs.some((ref) => evidence.competitorReferences.includes(ref));
+  if (!sections.some(({ item }) => hasOwn(item.references)))
+    issues.push({
+      path: 'findings',
+      code: 'offer_evidence_missing',
+      detail: 'offer evidence required',
+    });
+  result.benchmark.forEach((item, i) => {
+    if (!hasRival(item.references) || !hasOwn(item.references))
+      issues.push({
+        path: `benchmark.${i}.references`,
+        code: 'bilateral_evidence_required',
+        detail: !hasRival(item.references)
+          ? 'competitor evidence required'
+          : 'comparison offer evidence required',
+      });
+  });
+  if (
+    result.uniqueness &&
+    result.uniqueness.verdict !== 'insufficient_evidence' &&
+    (!result.benchmark.length ||
+      !hasOwn(result.uniqueness.references) ||
+      !hasRival(result.uniqueness.references))
+  )
+    issues.push({
+      path: 'uniqueness.references',
+      code: 'bilateral_evidence_required',
+      detail: 'uniqueness without benchmark',
+    });
+  return issues;
+}
+
+/** Citations must be read; comparison requires evidence from both offers. */
 export function validateWorkflowPublication(
   result: WorkflowResult,
   input: WorkflowInput,
   retrieved: ReadonlySet<string>,
 ): void {
-  ensure(result.kind === input.kind, 'INVALID_INPUT');
-  const citations = [
-    ...result.findings,
-    ...result.benchmark,
-    ...(result.uniqueness ? [result.uniqueness] : []),
-    ...(result.content ? [result.content] : []),
-  ].flatMap((f) => f.references);
-  ensure(
-    citations.every((r) => retrieved.has(r)),
-    'INVALID_INPUT',
-    'unretrieved citation',
-  );
-  if (result.outcome !== 'draft') return;
-  ensure(
-    input.kind !== 'buyer' || !input.research?.qualifiedCount || result.benchmark.length > 0,
-    'INVALID_INPUT',
-    'available research benchmark ignored',
-  );
-  ensure(workflowQuestions(input).length === 0, 'INVALID_INPUT', 'incomplete brief');
-  const offerRefs = new Set(
-    input.sources.filter((s) => s.kind === 'offer' || s.kind === 'website').map(sourceReference),
-  );
-  ensure(
-    citations.some((r) => offerRefs.has(r)),
-    'INVALID_INPUT',
-    'offer evidence required',
-  );
-  const competitors = new Set(
-    input.sources.filter((s) => s.kind === 'competitor').map(sourceReference),
-  );
-  ensure(
-    result.benchmark.every((f) => f.references.some((r) => competitors.has(r))),
-    'INVALID_INPUT',
-    'competitor evidence required',
-  );
-  ensure(
-    result.benchmark.every((f) => f.references.some((r) => offerRefs.has(r))),
-    'INVALID_INPUT',
-    'comparison offer evidence required',
-  );
-  if (
-    result.uniqueness?.verdict !== undefined &&
-    result.uniqueness.verdict !== 'insufficient_evidence'
-  ) {
-    ensure(
-      result.benchmark.length > 0 &&
-        result.uniqueness.references.some((r) => competitors.has(r)) &&
-        result.uniqueness.references.some((r) => offerRefs.has(r)),
-      'INVALID_INPUT',
-      'uniqueness without benchmark',
-    );
-  }
+  const issue = workflowPublicationIssues(
+    result,
+    workflowPublicationEvidence(input, [...retrieved]),
+  )[0];
+  ensure(!issue, 'INVALID_INPUT', issue?.detail);
 }
 
 export function pendingWorkflow(

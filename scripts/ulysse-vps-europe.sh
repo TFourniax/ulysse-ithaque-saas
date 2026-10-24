@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Ulysse demo only. Run as Linux user ulysse (UID 10002), never as root.
-# audit | diagnose [tenant-slug] | diagnose-budget [tenant-slug] | diagnose-research [tenant-slug] | deploy <commit> | status | model MODEL_ID|/chemin/profil.json | fallback auto|off|MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback
+# audit | diagnose [tenant-slug] | diagnose-budget [tenant-slug] | diagnose-research [tenant-slug] | deploy <commit> [--anthropic /chemin/cle] | status | anthropic [/chemin/cle] [MODEL_ID] | model MODEL_ID|/chemin/profil.json | fallback auto|off|MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback
 # This script never runs a global docker command, down, prune, seed or reset.
 set -Eeuo pipefail
+set +x
 umask 077
 cd /
 ULYSSE_HOME_DIR=/var/lib/ulysse/home
@@ -12,7 +13,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-22.research11-review-context
+ULYSSE_SCRIPT_VERSION=2026-10-24.anthropic5-selection
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -36,7 +37,7 @@ current_config() {
   else uc_original config --format json; fi
 }
 audit() {
-  say "Script : $ULYSSE_SCRIPT_VERSION (Europe + ZDR, configuration active conservee)"
+  say "Script : $ULYSSE_SCRIPT_VERSION (fournisseur explicite, configuration active conservee)"
   say "VPS : $(hostname) | compte : $(id -un) | UID : $(id -u) | socket : $ULYSSE_SOCKET"
   ud info --format '{{json .SecurityOptions}}' | python3 -c 'import json,sys; assert any("rootless" in x for x in json.load(sys.stdin)), "Docker non rootless"'
   ud ps --filter "label=com.docker.compose.project=$ULYSSE_PROJECT" --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
@@ -47,12 +48,12 @@ audit() {
   ud exec "$api" node -e 'for(const k of ["PUBLIC_ORIGIN","ULYSSE_DB_NAME","ULYSSE_ANALYSIS_MODE"]) console.log(k+"="+(process.env[k]||""));'
   local worker; worker=$(container_id worker)
   [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'un unique worker Ulysse actif est requis'
-  ud exec "$worker" node -e 'console.log("mode_worker="+process.env.ULYSSE_ANALYSIS_MODE); console.log("cle_fournisseur_presente="+Boolean(process.env.OPENROUTER_API_KEY)); for(const k of ["AGENT_MODEL_ID","AGENT_FALLBACK_MODEL_ID","AGENT_PROVIDER_ROUTE","AGENT_RUN_BUDGET_USD","AGENT_SESSION_BUDGET_USD","AGENT_MONTH_BUDGET_USD"]) console.log(k+"="+(process.env[k]||""));'
+  ud exec "$worker" node -e 'console.log("mode_worker="+process.env.ULYSSE_ANALYSIS_MODE); console.log("cle_fournisseur_presente="+Boolean(process.env.AGENT_PROVIDER_ROUTE==="anthropic"?process.env.ANTHROPIC_API_KEY:process.env.OPENROUTER_API_KEY)); for(const k of ["AGENT_MODEL_ID","AGENT_FALLBACK_MODEL_ID","AGENT_PROVIDER_ROUTE","AGENT_RUN_BUDGET_USD","AGENT_SESSION_BUDGET_USD","AGENT_MONTH_BUDGET_USD"]) console.log(k+"="+(process.env[k]||""));'
   ud exec "$worker" node --input-type=module -e '
     try {
       const {agentProvider}=await import("./apps/worker/dist/src/agent-provider.js");
       const p=agentProvider(process.env.AGENT_MODEL_ID,process.env.AGENT_PROVIDER_ROUTE||"openrouter",process.env.AGENT_MODEL_PROFILE_JSON||undefined);
-      if(p.profile) console.log("profil="+p.profile.id+" | empreinte="+p.profileHash+" | sortie_max="+p.profile.generation.maxOutputTokens+" | raisonnement="+p.profile.generation.reasoning);
+      if(p.profile) console.log("profil="+p.profile.id+" | empreinte="+p.profileHash+" | sortie_max="+p.profile.generation.maxOutputTokens+" | raisonnement="+p.profile.generation.reasoning+" | contexte_max_octets="+p.profile.maxContextBytes);
     } catch { console.log("profil_declaratif=indisponible"); }
   '
   if [[ -f "$ULYSSE_ACTIVE" ]]; then say "Configuration active : $(cat "$ULYSSE_ACTIVE")"; fi
@@ -103,6 +104,10 @@ SELECT r.id,r.workflow_kind,r.model,r.status,r.error_code,r.started_at,
        r.snapshot->'workflowEvidence'->>'structuredOutput' AS native_response_schema,
        r.snapshot->'workflowEvidence'->>'offerReferenceCount' AS offer_reference_count,
        r.snapshot->'workflowEvidence'->>'competitorReferenceCount' AS competitor_reference_count,
+       r.snapshot->'workflowEvidence'->>'seededCompetitorCount' AS automatically_selected_competitors,
+       r.snapshot->'workflowEvidence'->>'benchmarkRequired' AS benchmark_required,
+       r.snapshot->'workflowFailure' AS failure_stage,
+       r.snapshot->'contextLimit' AS context_limit,
        r.snapshot->'workflowEvidence'->>'inputBytes' AS input_bytes,
        r.snapshot->'workflowEvidence'->>'maxContextBytes' AS max_context_bytes,
        r.snapshot->>'providerRetryCount' AS provider_retries,
@@ -322,13 +327,13 @@ case "$action" in
   diagnose) diagnose "${2:-acme-demo}"; exit 0 ;;
   diagnose-budget) diagnose_budget "${2:-acme-demo}"; exit 0 ;;
   diagnose-research) diagnose_research "${2:-acme-demo}"; exit 0 ;;
-  deploy|model|fallback|research|rollback) ;;
+  deploy|model|fallback|anthropic|research|rollback) ;;
   models)
     worker=$(container_id worker)
     [[ -n "$worker" && "$worker" != *$'\n'* ]] || die 'worker Ulysse absent ou ambigu'
     ud exec "$worker" node --input-type=module -e 'import {modelProfiles} from "./apps/worker/dist/src/agent-provider.js"; console.log(JSON.stringify(modelProfiles(),null,2))'
     exit 0 ;;
-  *) die 'actions : audit | diagnose [tenant] | diagnose-budget [tenant] | diagnose-research [tenant] | deploy COMMIT [--budgets RUN SESSION MONTH] | status | model MODEL_ID|/chemin/profil.json | fallback auto|off|MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
+  *) die 'actions : audit | diagnose [tenant] | diagnose-budget [tenant] | diagnose-research [tenant] | deploy COMMIT [--budgets RUN SESSION MONTH | --anthropic /chemin/cle] | status | anthropic [/chemin/cle] [MODEL_ID] | model MODEL_ID|/chemin/profil.json | fallback auto|off|MODEL_ID|/chemin/profil.json | research brave|off [/chemin/cle] | rollback' ;;
 esac
 mkdir -p "$ULYSSE_RELEASES"
 exec 9>"$ULYSSE_PRIVATE/november-deploy.lock"
@@ -352,15 +357,48 @@ fi
 preflight() {
   uc_file "$1" run --rm --no-deps worker node --input-type=module -e '
     import {agentConfig} from "./apps/worker/dist/src/agent-runtime.js";
-    import {checkEuropeanProvider} from "./apps/worker/dist/src/agent-provider-check.js";
+    import {checkEuropeanProvider,checkAnthropicProvider} from "./apps/worker/dist/src/agent-provider-check.js";
     try {
       const c=agentConfig();
-      if(c.ULYSSE_ANALYSIS_MODE!=="hermes-live" || c.AGENT_PROVIDER_ROUTE!=="openrouter-eu-zdr") throw new Error("Profil Europe live requis");
+      if(c.ULYSSE_ANALYSIS_MODE!=="hermes-live") throw new Error("Mode live requis");
+      if(c.AGENT_PROVIDER_ROUTE==="anthropic") {
+        console.log(JSON.stringify(await checkAnthropicProvider(c.AGENT_MODEL_ID,c.ANTHROPIC_API_KEY,fetch,c.AGENT_MODEL_PROFILE_JSON)));
+        console.log("Cle et modele Anthropic verifies sans inference. Credits, region et retention non verifies par ce controle.");
+        process.exit(0);
+      }
+      if(c.AGENT_PROVIDER_ROUTE!=="openrouter-eu-zdr") throw new Error("Route non autorisee");
       console.log(JSON.stringify(await checkEuropeanProvider(c.AGENT_MODEL_ID,c.OPENROUTER_API_KEY,fetch,c.AGENT_MODEL_PROFILE_JSON)));
       if(c.AGENT_FALLBACK_MODEL_ID) console.log(JSON.stringify({fallback:await checkEuropeanProvider(c.AGENT_FALLBACK_MODEL_ID,c.OPENROUTER_API_KEY,fetch,c.AGENT_FALLBACK_MODEL_PROFILE_JSON)}));
       console.log("Catalogue et endpoint ZDR verifies ; inference live et qualite restant a tester.");
     } catch(e) { console.error(e.message); process.exit(1); }
   '
+}
+configure_anthropic() {
+  python3 - "$1" "$2" "${3:-claude-sonnet-5-5}" <<'PYANTHROPIC'
+import json,os,pathlib,re,stat,sys
+p=pathlib.Path(sys.argv[1]); f=pathlib.Path(sys.argv[2]); model=sys.argv[3]
+if not re.fullmatch(r'claude-[a-z0-9-]+',model): raise SystemExit('ARRET : identifiant Claude invalide.')
+if not f.is_absolute() or f.is_symlink(): raise SystemExit('ARRET : fichier prive regulier absolu requis.')
+try:
+    fd=os.open(f,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    with os.fdopen(fd) as source:
+        info=os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or stat.S_IMODE(info.st_mode)!=0o600 or info.st_size>1024:
+            raise SystemExit('ARRET : fichier appartenant a ulysse, permissions 600 requis.')
+        key=source.read().strip()
+except (OSError,UnicodeError): raise SystemExit('ARRET : fichier de cle illisible.') from None
+if not key.startswith('sk-ant-') or not 24<=len(key)<=500 or any(ord(ch)<33 or ord(ch)>126 for ch in key):
+    raise SystemExit('ARRET : format de cle Anthropic invalide.')
+c=json.loads(p.read_text()); e=c['services']['worker']['environment']
+if e.get('ULYSSE_ANALYSIS_MODE')!='hermes-live' or c['services']['api']['environment'].get('ULYSSE_ANALYSIS_MODE')!='hermes-live':
+    raise SystemExit('ARRET : cette procedure exige la demo live deja active.')
+e.update({'ANTHROPIC_API_KEY':key.replace('$','$$'),'AGENT_PROVIDER_ROUTE':'anthropic','AGENT_MODEL_ID':model,
+          'AGENT_MODEL_PROFILE_JSON':'','AGENT_FALLBACK_MODEL_ID':'','AGENT_FALLBACK_MODEL_PROFILE_JSON':'','AGENT_STUB_PROVIDER_URL':''})
+# The explicitly authorized demo envelopes; do not reset existing session/spend/history.
+for name,value in (('AGENT_RUN_BUDGET_USD','2'),('AGENT_SESSION_BUDGET_USD','20'),('AGENT_MONTH_BUDGET_USD','100')):
+    e[name]=value
+p.write_text(json.dumps(c,indent=2))
+PYANTHROPIC
 }
 if [[ "$action" == research ]]; then
   selector=${2:-}
@@ -387,7 +425,7 @@ import json,sys,pathlib,os,stat
 p=pathlib.Path(sys.argv[1]); c=json.loads((p/'rollback.json').read_text())
 e=c['services']['worker']['environment']
 if sys.argv[2]=='brave':
-    if e.get('ULYSSE_ANALYSIS_MODE')!='hermes-live' or e.get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr': raise SystemExit('ARRET : modele live Europe requis.')
+    if e.get('ULYSSE_ANALYSIS_MODE')!='hermes-live' or e.get('AGENT_PROVIDER_ROUTE') not in ('openrouter-eu-zdr','anthropic'): raise SystemExit('ARRET : modele live autorise requis.')
     f=pathlib.Path(sys.argv[3])
     if not f.is_absolute() or not f.exists(): raise SystemExit('ARRET : fichier de cle prive absent.')
     info=f.lstat()
@@ -421,8 +459,9 @@ PYRESEARCH
   exit 0
 fi
 
-if [[ "$action" == model || "$action" == fallback ]]; then
+if [[ "$action" == model || "$action" == fallback || "$action" == anthropic ]]; then
   target_model=${2:-}
+  if [[ "$action" == anthropic ]]; then target_model=${3:-claude-sonnet-5-5}; fi
   case "$target_model" in
     glm) target_model=z-ai/glm-5.3-flash ;;
     haiku) target_model=anthropic/claude-haiku-5.5 ;;
@@ -441,6 +480,7 @@ if [[ "$action" == model || "$action" == fallback ]]; then
     # Configuration only, no inference. Both pinned routes are checked before cutover.
     ud exec "$worker" node --input-type=module -e '
       import {modelProfiles} from "./apps/worker/dist/src/agent-provider.js";
+      if(process.env.AGENT_PROVIDER_ROUTE==="anthropic") {console.error("Aucun secours Anthropic qualifie; utiliser fallback off.");process.exit(1);}
       const model=process.env.AGENT_MODEL_ID==="z-ai/glm-5.3-flash"?"mistralai/mistral-small-2603":"z-ai/glm-5.3-flash";
       const profile=modelProfiles().find(p=>p.model===model);
       if(!profile) process.exit(1);
@@ -460,12 +500,16 @@ for k,v in expected.items():
 PYDRIFT
   cp "$ULYSSE_ACTIVE" "$release/previous-active.txt"
   printf '%s\n' api worker > "$release/services.txt"
+  if [[ "$action" == anthropic ]]; then
+    cp "$release/rollback.json" "$release/deploy.json"
+    configure_anthropic "$release/deploy.json" "${2:-$ULYSSE_PRIVATE/anthropic.key}" "$target_model"
+  else
   python3 - "$release" "$target_model" "$action" <<'PYMODEL'
 import json,sys,pathlib,copy
 p=pathlib.Path(sys.argv[1]); c=json.loads((p/'rollback.json').read_text())
 e=c['services']['worker']['environment']
-if e.get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr': raise SystemExit('ARRET : deploy Europe requis avant model.')
-if c['services']['api']['environment'].get('ULYSSE_ANALYSIS_MODE')!='hermes-live' or e.get('ULYSSE_ANALYSIS_MODE')!='hermes-live': raise SystemExit('ARRET : mode live Europe requis.')
+if e.get('AGENT_PROVIDER_ROUTE') not in ('openrouter-eu-zdr','anthropic'): raise SystemExit('ARRET : deploy requis avant model.')
+if c['services']['api']['environment'].get('ULYSSE_ANALYSIS_MODE')!='hermes-live' or e.get('ULYSSE_ANALYSIS_MODE')!='hermes-live': raise SystemExit('ARRET : mode live requis.')
 selector=sys.argv[2]
 fallback=len(sys.argv)>3 and sys.argv[3]=='fallback'
 model_key='AGENT_FALLBACK_MODEL_ID' if fallback else 'AGENT_MODEL_ID'
@@ -488,6 +532,7 @@ else:
     e[profile_key]=''
 (p/'deploy.json').write_text(json.dumps(c,indent=2))
 PYMODEL
+  fi
   preflight "$release/deploy.json"
   ULYSSE_RESTORE_CONFIG="$release/rollback.json"
   ULYSSE_SERVICES=(api worker)
@@ -497,19 +542,19 @@ PYMODEL
   check_health
   printf '%s\n' "$release/deploy.json" > "$ULYSSE_ACTIVE"
   ULYSSE_STOPPED=0
-  say "Configuration $action : $target_model | Europe + ZDR | budgets et session conserves."
+  say "Configuration $action : $target_model | fournisseur explicite | session et donnees conservees."
   exit 0
 fi
 
 revision=${2:-}
-[[ $# == 2 || ( $# == 6 && ${3:-} == --budgets ) ]] || die 'deploy COMMIT [--budgets RUN SESSION MONTH]'
+[[ $# == 2 || ( $# == 6 && ${3:-} == --budgets ) || ( $# == 4 && ${3:-} == --anthropic ) ]] || die 'deploy COMMIT [--budgets RUN SESSION MONTH | --anthropic /chemin/cle]'
 [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || die 'fournir le SHA complet valide de la version novembre'
 git -C "$ULYSSE_REPO" diff --quiet && git -C "$ULYSSE_REPO" diff --cached --quiet || die 'correctifs locaux suivis par Git : les conserver et les examiner avant la mise a jour'
 # Mettre aussi a jour la reference distante dans les clones mono-branche.
 git -C "$ULYSSE_REPO" fetch origin \
-  refs/heads/codex/ul-020-web-research:refs/remotes/origin/codex/ul-020-web-research
+  refs/heads/codex/ul-021-anthropic-native:refs/remotes/origin/codex/ul-021-anthropic-native
 git -C "$ULYSSE_REPO" cat-file -e "$revision^{commit}"
-git -C "$ULYSSE_REPO" merge-base --is-ancestor "$revision" origin/codex/ul-020-web-research || die 'commit hors de la branche recherche UL-020'
+git -C "$ULYSSE_REPO" merge-base --is-ancestor "$revision" origin/codex/ul-021-anthropic-native || die 'commit hors de la branche Anthropic UL-021'
 git -C "$ULYSSE_REPO" merge-base --is-ancestor HEAD "$revision" || die 'le depot VPS contient une lignee qui manque dans la version demandee'
 release=$(mktemp -d "$ULYSSE_RELEASES/${revision:0:7}-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
 current_config > "$release/before.json"
@@ -531,8 +576,10 @@ for service in api worker hermes model-stub; do
   fi
 done
 printf '%s\n' "${ULYSSE_SERVICES[@]}" > "$release/services.txt"
-tag="ul020-${revision:0:12}-$(date -u +%s)"
-python3 - "$release" "$tag" "${4:-}" "${5:-}" "${6:-}" <<'PY'
+tag="ul021-${revision:0:12}-$(date -u +%s)"
+limits=("" "" "")
+if [[ ${3:-} == --budgets ]]; then limits=("$4" "$5" "$6"); fi
+python3 - "$release" "$tag" "${limits[@]}" <<'PY'
 import json,sys,pathlib,copy
 d=pathlib.Path(sys.argv[1]); c=json.loads((d/'before.json').read_text()); old=copy.deepcopy(c)
 api_mode=c['services']['api']['environment'].get('ULYSSE_ANALYSIS_MODE','rules')
@@ -554,9 +601,9 @@ for service in ('hermes','model-stub'):
     if service in c['services']: c['services'][service]['image']='ulysse-hermes:'+sys.argv[2]
 # Explicit live activation is retained. Optional budgets never reset a key, session or cost.
 e=c['services']['worker']['environment']
-if api_mode!='hermes-live' or worker_mode!='hermes-live' or len(e.get('OPENROUTER_API_KEY','') or '')<16:
+if api_mode!='hermes-live' or worker_mode!='hermes-live' or len(e.get('ANTHROPIC_API_KEY' if e.get('AGENT_PROVIDER_ROUTE')=='anthropic' else 'OPENROUTER_API_KEY','') or '')<16:
     raise SystemExit('ARRET : cette mise a niveau exige le mode live et la cle deja actifs.')
-if e.get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr':
+if e.get('AGENT_PROVIDER_ROUTE') not in ('openrouter-eu-zdr','anthropic'):
     e['AGENT_MODEL_ID']='z-ai/glm-5.3-flash'
     e['AGENT_MODEL_PROFILE_JSON']=''
     e['AGENT_PROVIDER_ROUTE']='openrouter-eu-zdr'
@@ -572,7 +619,7 @@ if any(limits):
     for name,value in zip(('AGENT_RUN_BUDGET_USD','AGENT_SESSION_BUDGET_USD','AGENT_MONTH_BUDGET_USD'),amounts):
         e[name]=format(value,'f')
 # On a failed cutover, restore availability without resuming global inference.
-if old['services']['worker']['environment'].get('AGENT_PROVIDER_ROUTE')!='openrouter-eu-zdr':
+if old['services']['worker']['environment'].get('AGENT_PROVIDER_ROUTE') not in ('openrouter-eu-zdr','anthropic'):
     for name in ('api','worker'): old['services'][name]['environment']['ULYSSE_ANALYSIS_MODE']='rules'
 for config in (c,old):
     for service in config['services'].values(): service.pop('build',None)
@@ -581,6 +628,7 @@ for config in (c,old):
 db=c['services']['api']['environment']['ULYSSE_DB_NAME']
 (d/'database.txt').write_text(db)
 PY
+if [[ ${3:-} == --anthropic ]]; then configure_anthropic "$release/deploy.json" "$4"; fi
 uc_file "$release/deploy.json" config --quiet
 database=$(cat "$release/database.txt")
 postgres=$(container_id postgres)
@@ -617,5 +665,6 @@ say "Version installee : $revision"
 say "Sauvegarde et retour arriere : $release"
 say 'Sauvegarde chiffree et catalogue lisible ; cela ne remplace pas un exercice complet de restauration.'
 if [[ ${3:-} == --budgets ]]; then say "Plafonds appliques : ${4} USD/analyse, ${5} USD/session, ${6} USD/mois. Depenses anterieures conservees."
+elif [[ ${3:-} == --anthropic ]]; then say 'Anthropic direct active, plafonds 2/20/100 USD ; depenses anterieures conservees.'
 else say 'Plafonds actifs conserves.'; fi
-say 'Modele Europe + ZDR, session, cles et corpus conserves. Tester les parcours sur https://demo-ulysse.paitite.com.'
+say 'Fournisseur explicite, session, cles et corpus conserves. Tester les parcours sur https://demo-ulysse.paitite.com.'

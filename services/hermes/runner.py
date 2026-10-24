@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import run_state
-from server import model_settings, execution_timeout_ms
+from server import model_settings, execution_timeout_ms, initial_evidence, MAX_REQUEST_BYTES
 
 DEAL_NAMES = (
     "get_opportunity", "list_activities", "search_documents", "read_document_excerpt",
@@ -40,6 +40,9 @@ def parse_final(final):
 
 def execute(request):
     settings = model_settings(request)
+    evidence = initial_evidence(request)
+    native = settings.get("protocol") == "anthropic-messages"
+    run_state.NATIVE_ANTHROPIC = native
     reasoning = settings["reasoning"]
     reasoning_config = (None if reasoning == "omit" else {"enabled": False}
                         if reasoning == "disabled" else {"enabled": True, "effort": reasoning})
@@ -52,6 +55,9 @@ def execute(request):
     # Imported only after the parent establishes a fresh HERMES_HOME holding the Ulysse plugin.
     from hermes_cli.plugins import get_plugin_manager, has_middleware
     from run_agent import AIAgent
+    if native:
+        from anthropic_transport import register
+        register()
 
     # Official Hermes fallback, using the same scoped gateway capability. The child
     # never receives an OpenRouter key or an administrator-controlled destination.
@@ -60,7 +66,8 @@ def execute(request):
                  "api_mode": "chat_completions"} if request.get("fallbackModel") else None)
     agent = AIAgent(
         model=request["model"], api_key=run_state.CAPABILITY, base_url=f"{run_state.GATEWAY_URL}/v1",
-        provider="custom", api_mode="chat_completions", enabled_toolsets=["ulysse"],
+        provider="anthropic" if native else "custom",
+        api_mode="anthropic_messages" if native else "chat_completions", enabled_toolsets=["ulysse"],
         max_iterations=8, max_tokens=settings["maxOutputTokens"], run_budget_seconds=execution_timeout_ms(request) / 1000 - 5,
         ephemeral_system_prompt=run_state.INSTRUCTIONS, quiet_mode=True, verbose_logging=False,
         save_trajectories=False, skip_context_files=True, load_soul_identity=False,
@@ -78,17 +85,18 @@ def execute(request):
     enabled = [p for p in get_plugin_manager().list_plugins() if p["enabled"]]
     ulysse = [(p["kind"], p["tools"], p["hooks"], p["middleware"], p["error"]) for p in enabled if p["name"] == "ulysse"]
     others = [p for p in enabled if p["name"] != "ulysse" and (p["hooks"] or p["middleware"] or p["commands"])]
-    if (ulysse != [("standalone", len(names), 0, 2, None)] or others or
-            not has_middleware("llm_request") or not has_middleware("llm_execution")):
+    if (ulysse != [("standalone", len(names), 0, 1 if native else 2, None)] or others or
+            not has_middleware("llm_request") or (not native and not has_middleware("llm_execution"))):
         raise RuntimeError("ulysse_plugin_not_loaded")
     try:
         # Hermes' own prompt carried the date; the Ulysse-only prompt does not, so state it here.
         today = datetime.now(timezone.utc).date().isoformat()
         result = agent.run_conversation(
+            evidence if evidence is not None else
             f"Parcours {workflow}, sujet autorisé {request['subjectId']}, le {today} (UTC). "
             "Exploite les preuves obligatoires fournies automatiquement et consulte les sources supplémentaires par les outils."
         )
-        if run_state.REASONING_REPLAY is None or run_state.REASONING_REPLAY.failed:
+        if not native and (run_state.REASONING_REPLAY is None or run_state.REASONING_REPLAY.failed):
             raise RuntimeError("reasoning_replay_failed")
         # Discard messages, reasoning and raw trajectory. Ulysse revalidates this object.
         return parse_final(result.get("final_response"))
@@ -97,7 +105,7 @@ def execute(request):
 
 
 if __name__ == "__main__":
-    request = json.loads(sys.stdin.read(8192))
+    request = json.loads(sys.stdin.read(MAX_REQUEST_BYTES))
     logging.disable(logging.CRITICAL)
     try:
         with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):

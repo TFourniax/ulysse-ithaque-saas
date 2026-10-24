@@ -8,6 +8,27 @@ import {
   providerGatewayFailure,
 } from '../src/agent-errors.ts';
 
+test('a native prefix signature refusal has a fixed diagnostic without upstream client text', async () => {
+  await assert.rejects(
+    fetchAgentCompletion('https://example.invalid', {}, async () =>
+      Response.json(
+        {
+          error: {
+            message:
+              'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. private fixture',
+          },
+        },
+        { status: 400 },
+      ),
+    ),
+    (error: unknown) =>
+      error instanceof ProviderCallError &&
+      error.code === 'provider_signature_mismatch' &&
+      error.httpStatus === 400 &&
+      !JSON.stringify(error).includes('private fixture'),
+  );
+});
+
 test('Hermes receives real transient statuses and sanitized Retry-After; permission failures stay closed', () => {
   for (const status of [429, 500, 502, 503, 504]) {
     const failure = providerGatewayFailure(
@@ -206,6 +227,17 @@ test('transport and timeout errors are classified without leaking exception deta
   }
 });
 test('workflow diagnostics distinguish execution, schema and evidence without arbitrary details', () => {
+  assert.equal(
+    workflowFailure(
+      new DomainError('INVALID_INPUT', 'available research benchmark ignored'),
+      'publication',
+    ),
+    'benchmark_missing',
+  );
+  assert.equal(
+    workflowFailure(new DomainError('INVALID_INPUT', 'incomplete brief'), 'publication'),
+    'brief_incomplete',
+  );
   assert.equal(workflowFailure(new Error('hermes_http_504'), 'execution'), 'hermes_http_504');
   assert.equal(workflowFailure(new Error('private-key'), 'execution'), 'hermes_execution_failed');
   assert.equal(workflowFailure(new Error('private-output'), 'result'), 'result_invalid');

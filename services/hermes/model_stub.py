@@ -6,6 +6,7 @@ to end. Ulysse labels every result of this mode as simulated: it is never live e
 says nothing about the relevance of a real model.
 """
 import json
+import hashlib
 import re
 import sys
 import threading
@@ -204,7 +205,17 @@ def respond(body):
         # bilateral references. This is deliberately a fault fixture, never live logic.
         repairing = any(m.get('role') == 'user' and isinstance(m.get('content'), str)
                         and m['content'].startswith('Ulysse a refusé les références du diagnostic') for m in messages)
-        if len(workflow_result['benchmark']) >= 2:
+        missing_benchmark_fixture = 'CI_MISSING_BENCHMARK' in evidence.get('context', {}).get('brief', {}).get('constraints', '')
+        if missing_benchmark_fixture:
+            if repairing:
+                own = next(s['reference'] for s in evidence['sources'] if s.get('kind') in ('offer', 'website'))
+                workflow_result['benchmark'] = [
+                    {'topic': s['title'], 'analysis': 'Comparaison fictive de deux offres documentées, prix non comparés.', 'references': [own, s['reference']]}
+                    for s in evidence['sources'] if s.get('kind') == 'competitor'][:8]
+                workflow_result['limits'].append('Benchmark omis puis corrigé avec les preuves fournies.')
+            else:
+                workflow_result['benchmark'] = []
+        elif len(workflow_result['benchmark']) >= 2:
             if repairing:
                 own = next(s['reference'] for s in evidence['sources'] if s.get('kind') in ('offer', 'website'))
                 rivals = {s['reference'] for s in evidence['sources'] if s.get('kind') == 'competitor'}
@@ -260,6 +271,72 @@ def respond(body):
     }
 
 
+def native_prefix(body, length=None):
+    """Fixture signature binds system, tools and preceding messages, excluding cache hints."""
+    def clean(value):
+        if isinstance(value, list): return [clean(v) for v in value]
+        if isinstance(value, dict): return {k: clean(v) for k, v in value.items() if k != 'cache_control'}
+        return value
+    prefix = {k: body.get(k) for k in ('system', 'tools')}
+    # Messages accepts a string as shorthand for one text block. Hermes switches
+    # between these equivalent representations when moving cache breakpoints.
+    prefix['messages'] = [
+        {**message, 'content': [{'type': 'text', 'text': message['content']}]}
+        if isinstance(message.get('content'), str) else message
+        for message in body.get('messages', [])[:length]
+    ]
+    return hashlib.sha256(json.dumps(clean(prefix), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def native_to_fixture(body):
+    """Test-only bridge into shared scripted business fixtures, never a live adapter."""
+    if body.get('stream') or 'provider' in body or 'response_format' in body:
+        raise ValueError('unexpected native request')
+    messages = [{'role': 'system', 'content': body.get('system', '')}]
+    for index, message in enumerate(body.get('messages', [])):
+        content = message.get('content')
+        if isinstance(content, str):
+            messages.append(message)
+            continue
+        if message['role'] == 'assistant':
+            uses = [b for b in content if b.get('type') == 'tool_use']
+            if uses:
+                expected = []
+                for use in uses:
+                    expected.extend([{'type': 'thinking', 'thinking': '', 'signature': native_prefix(body, index) + ':' + use['id']},
+                                     {k: use[k] for k in ('type', 'id', 'name', 'input')}])
+                actual = [{k: v for k, v in b.items() if k != 'cache_control'} for b in content]
+                if actual != expected:
+                    raise ValueError('native signed block order lost')
+            messages.append({'role': 'assistant', 'content': ''.join(b['text'] for b in content if b['type'] == 'text'),
+                             'tool_calls': [{'id': b['id'], 'type': 'function', 'function': {'name': b['name'], 'arguments': json.dumps(b['input'])}} for b in uses]})
+        else:
+            for block in content:
+                if block['type'] == 'tool_result':
+                    value = block['content']
+                    if isinstance(value, list): value = ''.join(b['text'] for b in value)
+                    messages.append({'role': 'tool', 'tool_call_id': block['tool_use_id'], 'content': value})
+                elif block['type'] == 'text':
+                    messages.append({'role': 'user', 'content': block['text']})
+    schema = body.get('output_config', {}).get('format', {}).get('schema')
+    return {'model': body.get('model'), 'messages': messages,
+            'tools': [{'type': 'function', 'function': {'name': t['name'], 'parameters': t['input_schema']}} for t in body.get('tools', [])],
+            **({'response_format': {'type': 'json_schema', 'json_schema': {'strict': True, 'schema': schema}}} if schema else {})}
+
+
+def native_response(response, request):
+    message = response['choices'][0]['message']
+    blocks = []
+    for call in message.get('tool_calls', []):
+        blocks.extend([{'type': 'thinking', 'thinking': '', 'signature': native_prefix(request) + ':' + call['id']},
+                       {'type': 'tool_use', 'id': call['id'], 'name': call['function']['name'], 'input': json.loads(call['function']['arguments'])}])
+    if message.get('content'):
+        blocks.append({'type': 'text', 'text': message['content']})
+    return {'id': 'msg_fixture', 'type': 'message', 'role': 'assistant', 'model': response.get('model'), 'content': blocks,
+            'stop_reason': 'tool_use' if message.get('tool_calls') else 'end_turn', 'stop_sequence': None,
+            'usage': {'input_tokens': 0, 'output_tokens': 0, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0}}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
@@ -268,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200 if self.path == "/health" else 404, {"status": "ok"})
 
     def do_POST(self):
-        if self.path != "/v1/chat/completions":
+        if self.path not in ("/v1/chat/completions", "/v1/messages"):
             self._send(404, {"error": "not_found"})
             return
         try:
@@ -276,10 +353,17 @@ class Handler(BaseHTTPRequestHandler):
             if size <= 0 or size > 100000:
                 raise ValueError("request_size")
             body = json.loads(self.rfile.read(size))
+            original = body
+            native = self.path == '/v1/messages'
+            if native:
+                if self.headers.get('x-api-key') != 'none':
+                    raise ValueError('a provider credential reached the stub')
+                body = native_to_fixture(body)
             if transient_workflow_fixture(body):
                 self._send(429, {"error": {"code": 429, "message": "simulated temporary rate limit"}}, retry_after="1")
             else:
-                self._send(200, respond(body))
+                response = respond(body)
+                self._send(200, native_response(response, original) if native else response)
         except Exception:
             self._send(400, {"error": {"message": "invalid simulated request", "type": "invalid_request_error"}})
 

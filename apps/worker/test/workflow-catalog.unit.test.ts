@@ -1,7 +1,26 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { WorkspaceSource } from '@ulysse/domain';
-import { workflowResearchCatalog } from '../src/workflow-catalog.ts';
+import { workflowResearchCatalog, seedResearchEvidence } from '../src/workflow-catalog.ts';
+
+test('initial comparison receives up to six complete qualified texts, deduplicated and bounded without truncation', () => {
+  const selected = [sources[0]!];
+  const seeded = seedResearchEvidence(selected, sources, 24000);
+  assert.deepEqual(seeded, [sources[0], ...competitors.slice(0, 6)]);
+  assert.deepEqual(selected, [sources[0]], 'caller input unchanged');
+  assert.deepEqual(seedResearchEvidence(selected, sources, 0), selected);
+  const oversized = { ...competitors[0]!, text: 'x'.repeat(30000) };
+  const skipped = seedResearchEvidence(selected, [oversized, ...competitors.slice(1)], 24000);
+  assert.deepEqual(skipped, [sources[0], ...competitors.slice(1, 7)]);
+  assert.deepEqual(
+    seedResearchEvidence([sources[0]!, competitors[0]!], competitors.slice(0, 2), 24000),
+    [sources[0], ...competitors.slice(0, 2)],
+  );
+  assert.deepEqual(
+    seedResearchEvidence(selected, [{ ...competitors[0]!, research: undefined }], 24000),
+    selected,
+  );
+});
 
 const competitors: WorkspaceSource[] = Array.from({ length: 36 }, (_, i) => ({
   id: `rival-${i}`,

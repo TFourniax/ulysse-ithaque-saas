@@ -14,6 +14,22 @@ export class ProviderCallError extends Error {
     this.retryAfterSeconds = retryAfterSeconds;
   }
 }
+/** Fixed phase and numeric counts only; never retain the rejected conversation. */
+export class ContextLimitError extends ProviderCallError {
+  readonly phase: 'transport' | 'input' | 'prepared' | 'messages';
+  readonly actual: number;
+  readonly maximum: number;
+  constructor(
+    phase: 'transport' | 'input' | 'prepared' | 'messages',
+    actual: number,
+    maximum: number,
+  ) {
+    super('context_limit', null);
+    this.phase = phase;
+    this.actual = actual;
+    this.maximum = maximum;
+  }
+}
 function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value))
@@ -35,6 +51,13 @@ function providerError(
       : status;
   // Recognize this documented refusal without storing or returning the upstream message.
   if (
+    code === 400 &&
+    typeof error?.message === 'string' &&
+    error.message.includes('Invalid `signature` in `thinking` block') &&
+    error.message.includes('bound to a different conversation')
+  )
+    return new ProviderCallError('provider_signature_mismatch', status);
+  if (
     code === 403 &&
     typeof error?.message === 'string' &&
     error.message.startsWith('Regional routing requires a Business or Enterprise plan.')
@@ -43,7 +66,7 @@ function providerError(
   return new ProviderCallError(
     code >= 400 ? `provider_http_${code}` : 'provider_response_error',
     status,
-    [429, 503].includes(code) ? retryAfterSeconds(retryAfter) : null,
+    [429, 503, 529].includes(code) ? retryAfterSeconds(retryAfter) : null,
   );
 }
 function retryAfterSeconds(raw: string | null): number | null {
@@ -126,12 +149,17 @@ export function providerGatewayFailure(error: unknown) {
     provider_http_502: 502,
     provider_http_503: 503,
     provider_http_504: 504,
+    provider_http_529: 529,
     provider_timeout: 504,
     provider_transport_error: 502,
   };
   const status = error instanceof ProviderCallError ? (statuses[error.code] ?? 403) : 403;
   const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (error instanceof ProviderCallError && status === 429 && error.retryAfterSeconds !== null)
+  if (
+    error instanceof ProviderCallError &&
+    [429, 503, 529].includes(status) &&
+    error.retryAfterSeconds !== null
+  )
     headers['retry-after'] = String(error.retryAfterSeconds);
   return {
     status,
@@ -157,6 +185,8 @@ export function providerGatewayFailure(error: unknown) {
 export type WorkflowStage = 'execution' | 'result' | 'publication';
 export function workflowFailure(error: unknown, stage: WorkflowStage): string {
   if (isDomainError(error, 'STALE_EVIDENCE')) return 'versions_changed';
+  if (isDomainError(error, 'INVALID_INPUT') && error.detail === 'context limit')
+    return 'context_limit';
   if (stage === 'result') return 'result_invalid';
   if (stage === 'publication') {
     if (isDomainError(error)) {
@@ -167,6 +197,9 @@ export function workflowFailure(error: unknown, stage: WorkflowStage): string {
         'competitor evidence required': 'competitor_evidence_missing',
         'comparison offer evidence required': 'comparison_evidence_missing',
         'uniqueness without benchmark': 'uniqueness_without_benchmark',
+        'available research benchmark ignored': 'benchmark_missing',
+        'incomplete brief': 'brief_incomplete',
+        'workflow kind mismatch': 'result_kind_invalid',
       };
       return Object.hasOwn(reasons, error.detail ?? '')
         ? (reasons[error.detail ?? ''] ?? 'publication_refused')

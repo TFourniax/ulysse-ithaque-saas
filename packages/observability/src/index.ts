@@ -10,6 +10,8 @@ import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom
  */
 export const REDACT_PATHS = [
   'req.headers.authorization',
+  'req.headers["x-api-key"]',
+  '*.ANTHROPIC_API_KEY',
   'req.headers.cookie',
   'req.headers["x-csrf-token"]',
   'res.headers["set-cookie"]',

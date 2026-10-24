@@ -36,6 +36,8 @@ const STATES: Record<WorkflowRunDto['status'], string> = {
   failed: 'Analyse interrompue',
 };
 const WORKFLOW_ERRORS: Record<string, string> = {
+  context_limit:
+    'Le volume d’informations dépasse la capacité de cette analyse. Les sources collectées sont conservées. Reprenez le brief avec un périmètre plus ciblé.',
   provider_retry_wait:
     'Le fournisseur demande une pause. Ulysse attend puis reprend automatiquement l’appel en cours.',
   budget_reached:
@@ -65,6 +67,12 @@ const WORKFLOW_ERRORS: Record<string, string> = {
   result_evidence_invalid:
     'La relecture n’a pas pu produire un diagnostic avec des références valides. Les sources collectées sont conservées.',
   comparison_evidence_missing: 'Une comparaison ne cite pas les deux offres nécessaires.',
+  benchmark_missing:
+    'La comparaison demandée n’a pas été produite malgré les fiches disponibles. Vos sources sont conservées ; vous pouvez reprendre ce brief.',
+  brief_incomplete:
+    'Le brief ne contient pas encore les informations nécessaires. Reprenez-le pour le compléter.',
+  publication_refused:
+    'Le résultat n’a pas satisfait le contrôle final. Vos sources et votre brief sont conservés.',
   result_json_invalid: 'Le modèle n’a pas fourni un résultat JSON lisible.',
   result_truncated: 'La réponse du modèle est incomplète. Aucun diagnostic n’a été publié.',
   result_too_large: 'La réponse du modèle dépasse la taille autorisée.',
@@ -122,10 +130,24 @@ function References({
               </Link>
             ) : researchId && /^source:[a-f0-9-]+:r[0-9]+$/u.test(ref) ? (
               <Link to={`/research?campaign=${researchId}&candidate=${ref.split(':')[1] ?? ''}`}>
-                Preuve issue du benchmark
+                Source de la comparaison
               </Link>
             ) : (
-              <code>{ref}</code>
+              <span>
+                {/^context:v\d+$/u.test(ref)
+                  ? `Contexte de votre entreprise · version ${ref.slice(9)}`
+                  : /^workflow:[a-f0-9-]+$/u.test(ref)
+                    ? 'Votre demande pour cette analyse'
+                    : /^doctrine:[a-f0-9-]+:v\d+$/u.test(ref)
+                      ? 'Méthode commerciale de référence'
+                      : /^buyer:[a-f0-9-]+$/u.test(ref)
+                        ? 'Diagnostic acheteur associé'
+                        : 'Référence complémentaire'}
+                <details>
+                  <summary>Détail de la référence</summary>
+                  <code>{ref}</code>
+                </details>
+              </span>
             )}
           </li>
         );
@@ -153,6 +175,11 @@ function ResultCard({
     onSuccess: () => client.invalidateQueries({ queryKey: ['workflows', session.activeTenant.id] }),
   });
   const r = run.result;
+  const coverage = r?.limits.find(
+    (limit) =>
+      limit.startsWith('Périmètre de la comparaison :') ||
+      limit.startsWith('Couverture de cette synthèse :'),
+  );
   return (
     <article className="section workflow-result" id={run.id}>
       <div className="workflow-result-head">
@@ -173,8 +200,10 @@ function ResultCard({
         <Banner kind="info">
           {run.status === 'queued'
             ? 'Ulysse prépare les informations du marché avant ce diagnostic.'
-            : 'Le diagnostic utilise une recherche de marché. Validez les preuves citées avant d’approuver le brouillon; une modification du benchmark demandera une nouvelle analyse.'}{' '}
-          <Link to={`/research?campaign=${run.researchId}`}>Voir la collecte et le benchmark</Link>
+            : 'Le diagnostic utilise une recherche de marché. Vérifiez les sources citées avant d’approuver le brouillon ; une modification des informations comparées demandera une nouvelle analyse.'}{' '}
+          <Link to={`/research?campaign=${run.researchId}`}>
+            Voir les entreprises et les sources
+          </Link>
         </Banner>
       )}
       {run.stale && (
@@ -186,7 +215,12 @@ function ResultCard({
       {run.errorCode && (
         <Banner kind={run.errorCode === 'provider_retry_wait' ? 'info' : 'warning'}>
           {WORKFLOW_ERRORS[run.errorCode] ?? 'Analyse non disponible.'}
-          {run.errorCode !== 'provider_retry_wait' && ` (${run.errorCode})`}
+          {run.errorCode !== 'provider_retry_wait' && (
+            <details>
+              <summary>Détail pour l’assistance</summary>
+              <code>{run.errorCode}</code>
+            </details>
+          )}
         </Banner>
       )}
       {r && (
@@ -194,7 +228,7 @@ function ResultCard({
           <p className="lead">{r.summary}</p>
           {r.questions.length > 0 && (
             <div className="workflow-questions">
-              <h3>Pour avancer</h3>
+              <h3>{run.kind === 'buyer' ? 'À clarifier avant de décider' : 'Pour avancer'}</h3>
               <ul>
                 {r.questions.map((q) => (
                   <li key={q}>{q}</li>
@@ -211,7 +245,13 @@ function ResultCard({
           ))}
           {r.benchmark.length > 0 && (
             <>
-              <h3>Benchmark du corpus</h3>
+              <h3>Comparaison des offres</h3>
+              {coverage && (
+                <section aria-label="Périmètre de la comparaison">
+                  <h4>Sur quelles informations repose cette comparaison ?</h4>
+                  <p>{coverage}</p>
+                </section>
+              )}
               <div className="table-scroll">
                 <table>
                   <thead>
@@ -241,11 +281,11 @@ function ResultCard({
           )}
           {r.uniqueness && (
             <section className="workflow-verdict">
-              <h3>Crash test de l’unicité</h3>
+              <h3>Ce qui distingue votre offre</h3>
               <strong>
                 {
                   {
-                    plausible: 'Différence plausible dans ce corpus',
+                    plausible: 'Différence plausible dans les sources consultées',
                     not_differentiated: 'Différence non démontrée face aux alternatives',
                     insufficient_evidence: 'Preuves insuffisantes pour conclure',
                   }[r.uniqueness.verdict]
@@ -291,9 +331,11 @@ function ResultCard({
             <section className="workflow-limits">
               <h3>Limites et points à vérifier</h3>
               <ul>
-                {r.limits.map((l) => (
-                  <li key={l}>{l}</li>
-                ))}
+                {r.limits
+                  .filter((l) => !r.benchmark.length || l !== coverage)
+                  .map((l) => (
+                    <li key={l}>{l}</li>
+                  ))}
               </ul>
             </section>
           )}

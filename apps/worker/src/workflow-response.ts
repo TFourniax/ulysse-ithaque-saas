@@ -1,5 +1,5 @@
 import { WorkflowResult } from '@ulysse/contracts';
-import { validateWorkflowResult } from '@ulysse/domain';
+import { validateWorkflowResult, workflowPublicationIssues } from '@ulysse/domain';
 import type { WorkflowResult as Result } from '@ulysse/domain';
 import { z } from 'zod';
 
@@ -141,7 +141,7 @@ export function inspectWorkflowCompletion(payload: unknown, kind: 'buyer' | 'con
   }
   // Preserve opaque reasoning replay fields for models that require exact continuation.
   const assistant: Record<string, unknown> = { role: 'assistant', content: text };
-  for (const key of ['reasoning', 'reasoning_content', 'reasoning_details'])
+  for (const key of ['reasoning', 'reasoning_content', 'reasoning_details', 'anthropic_content'])
     if (choice.message[key] !== undefined) assistant[key] = choice.message[key];
   return { diagnostics, assistant, repairable: !refused, result, text };
 }
@@ -153,27 +153,16 @@ export function inspectBuyerCitations(
     references: readonly string[];
     offerReferences: readonly string[];
     competitorReferences: readonly string[];
+    benchmarkRequired?: boolean;
+    briefComplete?: boolean;
   },
 ): WorkflowFormatDiagnostic | null {
-  const issues: WorkflowFormatDiagnostic['issues'] = [];
-  const check = (references: readonly string[], path: string, bilateral: boolean) => {
-    if (references.some((ref) => !evidence.references.includes(ref)))
-      issues.push({ path, code: 'unretrieved_citation' });
-    if (
-      bilateral &&
-      (!references.some((ref) => evidence.offerReferences.includes(ref)) ||
-        !references.some((ref) => evidence.competitorReferences.includes(ref)))
-    )
-      issues.push({ path, code: 'bilateral_evidence_required' });
-  };
-  result.findings.forEach((item, i) => check(item.references, `findings.${i}.references`, false));
-  result.benchmark.forEach((item, i) => check(item.references, `benchmark.${i}.references`, true));
-  if (result.uniqueness)
-    check(
-      result.uniqueness.references,
-      'uniqueness.references',
-      result.uniqueness.verdict !== 'insufficient_evidence',
-    );
+  const issues = workflowPublicationIssues(result, {
+    kind: 'buyer',
+    benchmarkRequired: false,
+    briefComplete: true,
+    ...evidence,
+  }).map(({ path, code }) => ({ path, code }));
   return issues.length
     ? { code: 'result_evidence_invalid', finishReason: 'stop', issues: issues.slice(0, 8) }
     : null;
@@ -184,8 +173,11 @@ export function workflowRepairPrompt(
   kind: 'buyer' | 'content',
   evidence?: { offerReferences: readonly string[]; competitorReferences: readonly string[] },
 ): string {
+  const coverage = d.issues.some((issue) => issue.code === 'benchmark_missing')
+    ? " Le benchmark demandé est absent alors que la recherche contient des alternatives qualifiées. Examine les textes concurrents fournis, puis compare les offres pertinentes avec des preuves des deux côtés. Ne retourne pas un draft sans benchmark. Si aucune comparaison n'est justifiable, retourne abstained avec une explication précise, sans inventer d'acteur ni de citation."
+    : '';
   if (d.code === 'result_evidence_invalid')
-    return `Ulysse a refusé les références du diagnostic : ${JSON.stringify(d)}. Une correction est autorisée pour cette relecture. Références de notre offre : ${JSON.stringify(evidence?.offerReferences ?? [])}. Références concurrentes : ${JSON.stringify(evidence?.competitorReferences ?? [])}. Chaque ligne comparative et chaque verdict d'unicité affirmatif doit citer une source de notre offre et une source concurrente effectivement fournies, pertinentes pour la comparaison. Une citation ajoutée ne rend pas une affirmation vraie : réécris les affirmations non étayées, limite les absences aux extraits consultés et ne classe pas les prix inconnus ou incomparables. Aucun outil. Retourne uniquement le résultat complet corrigé, au même schéma; si aucune comparaison n'est étayée, une abstention conforme et explicite.`;
+    return `Ulysse a refusé les références du diagnostic : ${JSON.stringify(d)}. Une correction est autorisée pour cette relecture.${coverage} Références de notre offre : ${JSON.stringify(evidence?.offerReferences ?? [])}. Références concurrentes : ${JSON.stringify(evidence?.competitorReferences ?? [])}. Chaque ligne comparative et chaque verdict d'unicité affirmatif doit citer une source de notre offre et une source concurrente effectivement fournies, pertinentes pour la comparaison. Une citation ajoutée ne rend pas une affirmation vraie : réécris les affirmations non étayées, limite les absences aux extraits consultés et ne classe pas les prix inconnus ou incomparables. Aucun outil. Retourne uniquement le résultat complet corrigé, au même schéma; si aucune comparaison n'est étayée, une abstention conforme et explicite.`;
   return `Ulysse a refusé le FORMAT du résultat ${kind} : ${JSON.stringify(d)}. Une seule correction est autorisée. Retourne uniquement l'objet JSON complet conforme au schéma des instructions, avec tous les champs requis. Conserve les faits et références déjà consultés, sans ajout ni invention. Aucune nouvelle lecture ni action. Références non vides et sans doublons. Raccourcis les textes pour terminer le JSON dans le plafond de sortie. Pour buyer : content=null; findings et uniqueness requis pour draft. Pour content : uniqueness=null, benchmark=[], buyerQuestions=[]. Pour needs_context/abstained : findings=[], benchmark=[], buyerQuestions=[], uniqueness=null, content=null. Si tu ne peux pas étayer un brouillon, retourne une abstention conforme et explicite.`;
 }
 

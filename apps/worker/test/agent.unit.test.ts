@@ -14,10 +14,26 @@ import {
 import {
   agentProvider,
   MAX_AGENT_CONTEXT_BYTES,
+  MAX_AGENT_REQUEST_BYTES,
   assertTextMessages,
   modelProfiles,
 } from '../src/agent-provider.ts';
 import { checkEuropeanProvider } from '../src/agent-provider-check.ts';
+import { nativeEvidenceBudget } from '../src/workflow-runtime.ts';
+
+test('native conversation has room to grow without expanding initial evidence or custom profiles', () => {
+  const native = agentProvider('claude-sonnet-5-5', 'anthropic');
+  assert.equal(native.profile.maxContextBytes, 256000);
+  assert.equal(nativeEvidenceBudget(native.profile.maxContextBytes), 56000);
+  assert.equal(nativeEvidenceBudget(80000), 56000);
+  assert.equal(nativeEvidenceBudget(40000), 16000);
+  const custom = { ...native.profile, maxContextBytes: 80000 };
+  assert.equal(
+    agentProvider(custom.model, custom.route, JSON.stringify(custom)).profile.maxContextBytes,
+    80000,
+  );
+  assert.ok(MAX_AGENT_REQUEST_BYTES > MAX_AGENT_CONTEXT_BYTES);
+});
 
 const hermesEnv = {
   ENABLE_FIXTURE_CONNECTOR: 'true',
@@ -65,7 +81,7 @@ test('GLM keeps reasoning enabled, reserves its full output allowance and has a 
   });
   assert.deepEqual(route.provider.only, ['inceptron/fp8']);
   assert.equal(route.estimate(10000, 2000), 0.0036);
-  assert.ok(route.estimate(MAX_AGENT_CONTEXT_BYTES + 2048, 8192) * 8 < 0.25);
+  assert.ok(route.estimate(route.profile.maxContextBytes + 2048, 8192) * 8 < 0.25);
   const profile = structuredClone(route.profile);
   // A model unknown to this release needs configuration only, not another code allowlist.
   profile.model = 'example/next-model';
@@ -89,7 +105,7 @@ test('GLM keeps reasoning enabled, reserves its full output allowance and has a 
       .profileHash,
     route.profileHash,
   );
-  assert.ok(modelProfiles().every((p) => p.route === 'openrouter-eu-zdr'));
+  assert.ok(modelProfiles().every((p) => ['openrouter-eu-zdr', 'anthropic'].includes(p.route)));
   profile.capabilities.structuredOutput = false;
   const unstructured = agentProvider(profile.model, profile.route, JSON.stringify(profile));
   assert.ok(!unstructured.requiredParameters.includes('response_format'));
@@ -105,7 +121,7 @@ test('administrator profiles cannot smuggle secrets, URLs, plugins, fallbacks or
     { ...base, plugins: [{ id: 'web' }] },
     { ...base, route: 'openrouter' },
     { ...base, prices: { prompt: -1, completion: 0 } },
-    { ...base, maxContextBytes: 80001 },
+    { ...base, maxContextBytes: MAX_AGENT_CONTEXT_BYTES + 1 },
     { ...base, generation: { ...base.generation, maxOutputTokens: 16385 } },
     { ...base, protocol: 'unimplemented-protocol' },
   ]) {
@@ -236,9 +252,10 @@ test('Europe is an explicit closed route; Haiku can never use the global route',
   assert.equal(route.parameters.temperature, undefined);
   assert.deepEqual(route.parameters.reasoning, { enabled: false });
   // An entire eight-call run at the largest allowed input fits in the existing run cap.
-  assert.ok(MAX_AGENT_CONTEXT_BYTES + 2048 < 100000);
+  assert.ok(route.profile.maxContextBytes + 2048 < MAX_AGENT_REQUEST_BYTES);
   assert.ok(
-    route.estimate(MAX_AGENT_CONTEXT_BYTES + 2048, route.profile.generation.maxOutputTokens) * 8 <
+    route.estimate(route.profile.maxContextBytes + 2048, route.profile.generation.maxOutputTokens) *
+      8 <
       0.25,
   );
   assert.equal(route.estimate(10000, 2000), 0.0022);

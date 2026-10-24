@@ -195,6 +195,56 @@ test('reading priority promotes documented need and geography beyond the first a
   assert.equal(ranked.length, 32);
   assert.equal(alphabetical[0]?.id, 'a0.example');
   assert.equal(local.review, 'pending', 'reading order must not approve evidence');
+  const enterprise = candidate('enterprise.example', 'Automatisation métier et intégration');
+  enterprise.facts.push({
+    ...enterprise.facts[0]!,
+    id: 'enterprise-target',
+    dimension: 'target',
+    value: 'ETI et grandes entreprises',
+    quote: 'ETI et grandes entreprises',
+  });
+  const sme = candidate('sme.example', 'Automatisation métier et intégration');
+  sme.facts.push({
+    ...sme.facts[0]!,
+    id: 'sme-target',
+    dimension: 'target',
+    value: 'PME',
+    quote: 'PME',
+  });
+  assert.equal(
+    rankResearchCandidates([enterprise, sme], profile)[0]?.id,
+    sme.id,
+    'documented audience fit prioritizes a comparable offer, without excluding others',
+  );
+  assert.equal(rankResearchCandidates([enterprise, sme], profile).length, 2);
+  const broad = candidate(
+    'broad-comparison.example',
+    'Automatisation métier intégration PME France ERP no-code',
+  );
+  broad.relevance = 'substitute';
+  broad.facts.push({
+    ...broad.facts[0]!,
+    id: 'broad-target',
+    dimension: 'target',
+    value: 'PME, ETI, intégration',
+    quote: 'PME, ETI, intégration',
+  });
+  const unrelated = candidate('irrelevant-direct.example', 'Chaussures et vêtements');
+  unrelated.facts.push({
+    ...unrelated.facts[0]!,
+    id: 'unrelated-target',
+    dimension: 'target',
+    value: 'PME',
+    quote: 'PME',
+  });
+  const focused = rankResearchCandidates([broad, unrelated, sme], profile);
+  assert.deepEqual(
+    focused.map((c) => c.id),
+    [sme.id, broad.id, unrelated.id],
+    'broad keyword coverage and a direct label alone cannot displace documented need/audience fit',
+  );
+  assert.equal(broad.relevance, 'substitute');
+  assert.equal(broad.review, 'pending');
 });
 
 test('bounded digests include comparison dimensions before repeated offer copy and preserve exact quotations', () => {

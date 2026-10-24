@@ -8,6 +8,7 @@ on:
         'codex/ul-017-november-workflows',
         'codex/ul-018-europe-zdr',
         'codex/ul-019-model-profiles',
+        'codex/ul-020-web-research',
       ]
   workflow_dispatch:
 permissions:
@@ -57,6 +58,12 @@ jobs:
       fail-fast: false
       matrix:
         origin: [fresh, upgrade-ul016]
+        protocol: [openrouter]
+        include:
+          - origin: fresh
+            protocol: anthropic
+          - origin: upgrade-ul016
+            protocol: anthropic
     env:
       ULYSSE_ANALYSIS_MODE: hermes-stub
       ENABLE_DEMO_SCENARIOS: 'true'
@@ -115,6 +122,16 @@ jobs:
         run: |
           echo 'AGENT_MODEL_ID=z-ai/glm-5.3-flash' >> "$GITHUB_ENV"
           echo 'AGENT_PROVIDER_ROUTE=openrouter-eu-zdr' >> "$GITHUB_ENV"
+      - name: Native Anthropic Messages through the private gateway
+        if: matrix.protocol == 'anthropic'
+        run: |
+          echo 'AGENT_MODEL_ID=claude-sonnet-5-5' >> "$GITHUB_ENV"
+          echo 'AGENT_PROVIDER_ROUTE=anthropic' >> "$GITHUB_ENV"
+          echo 'AGENT_FALLBACK_MODEL_ID=' >> "$GITHUB_ENV"
+          echo 'AGENT_RUN_BUDGET_USD=2' >> "$GITHUB_ENV"
+          echo 'AGENT_SESSION_BUDGET_USD=20' >> "$GITHUB_ENV"
+          echo 'AGENT_MONTH_BUDGET_USD=100' >> "$GITHUB_ENV"
+          echo 'AGENT_STUB_PROVIDER_URL=http://model-stub:8091/v1/messages' >> "$GITHUB_ENV"
       - run: docker build -t ulysse-app:local .
       - run: docker build -f services/hermes/Dockerfile -t ulysse-hermes:ul016 .
       - run: |
@@ -145,7 +162,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ul016-hermes-stub-evidence-${{ matrix.origin }}
+          name: ul016-hermes-stub-evidence-${{ matrix.origin }}-${{ matrix.protocol }}
           path: |
             test-results/ul016-hermes-stub/proof.json
             test-results/ul016-hermes-stub/*.png
