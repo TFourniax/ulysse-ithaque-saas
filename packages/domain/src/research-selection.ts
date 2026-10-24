@@ -52,7 +52,7 @@ export function rankResearchCandidates(
   brief?: WorkflowBrief,
 ): ResearchCandidate[] {
   const offer = terms([brief?.offer ?? '', ...profile.offers].join(' '));
-  const target = terms([brief?.target ?? '', profile.target, profile.market].join(' '));
+  const target = terms([brief?.target ?? '', profile.target].join(' '));
   const geography = terms(profile.geography);
   const priority = (c: ResearchCandidate) => {
     const evidence = terms(c.facts.map((f) => `${f.offer} ${f.value} ${f.quote}`).join(' '));
@@ -62,18 +62,32 @@ export function rankResearchCandidates(
         .map((f) => `${f.value} ${f.quote}`)
         .join(' '),
     );
-    return (
+    const need = overlap(offer, evidence);
+    const audience = overlap(target, documentedTarget);
+    // A broad comparison article can match many keywords. Prefer a documented
+    // need/audience fit, then the provisional relationship, before lexical volume.
+    // This is a reading order only: all alternatives remain available to Hermes.
+    const fit =
+      need > 0 && audience > 0
+        ? c.relevance === 'direct'
+          ? 3
+          : c.relevance === 'indirect'
+            ? 2
+            : 1
+        : 0;
+    const score =
       4 * overlap(offer, evidence) +
       2 * overlap(target, evidence) +
       6 * overlap(target, documentedTarget) +
-      3 * overlap(geography, evidence)
-    );
+      3 * overlap(geography, evidence);
+    return { fit, score };
   };
   const priorities = new Map(candidates.map((c) => [c.id, priority(c)]));
   return candidates.toSorted(
     (a, b) =>
       Number(b.own) - Number(a.own) ||
-      (priorities.get(b.id) ?? 0) - (priorities.get(a.id) ?? 0) ||
+      (priorities.get(b.id)?.fit ?? 0) - (priorities.get(a.id)?.fit ?? 0) ||
+      (priorities.get(b.id)?.score ?? 0) - (priorities.get(a.id)?.score ?? 0) ||
       Number(b.review === 'approved') - Number(a.review === 'approved') ||
       new Set(b.facts.map((f) => f.dimension)).size -
         new Set(a.facts.map((f) => f.dimension)).size ||
@@ -82,15 +96,33 @@ export function rankResearchCandidates(
 }
 
 /** Actual citation coverage is computed by the application, not guessed by the model. */
-export function withResearchCoverage(result: WorkflowResult, input: WorkflowInput): WorkflowResult {
+export function withResearchCoverage(
+  result: WorkflowResult,
+  input: WorkflowInput,
+  suppliedReferences?: readonly string[],
+): WorkflowResult {
   if (result.kind !== 'buyer' || result.outcome !== 'draft' || !input.research) return result;
   const available = new Set(
     input.sources.filter((s) => s.kind === 'competitor' && s.research).map(sourceReference),
   );
-  const cited = new Set(
+  const compared = new Set(
     result.benchmark.flatMap((f) => f.references).filter((r) => available.has(r)),
   );
-  const pending = [...cited].filter((r) => input.research?.pendingReferences.includes(r)).length;
-  const coverage = `Périmètre de la comparaison : alternatives citées dans ce diagnostic : ${cited.size} ; fiches concurrentes avec des informations disponibles : ${available.size}. Parmi les fiches citées, à vérifier : ${pending} ; relues et approuvées : ${cited.size - pending}. Ces nombres comptent les fiches citées, pas toutes les fiches examinées ni l’ensemble du marché. ${input.research.status === 'completed' ? 'Recherche terminée dans le périmètre prévu.' : 'Recherche partielle : les informations déjà recueillies sont conservées.'} Une fiche approuvée ne constitue pas une vérification indépendante des promesses du prestataire.`;
-  return { ...result, limits: [coverage, ...result.limits.slice(0, 9)] };
+  const cited = new Set(
+    [...result.findings, ...result.benchmark, ...(result.uniqueness ? [result.uniqueness] : [])]
+      .flatMap((f) => f.references)
+      .filter((r) => available.has(r)),
+  );
+  const supplied =
+    suppliedReferences === undefined
+      ? null
+      : new Set(suppliedReferences.filter((r) => available.has(r))).size;
+  const pending = [...compared].filter((r) => input.research?.pendingReferences.includes(r)).length;
+  const coverage = `Périmètre de la comparaison : fiches disponibles : ${available.size} ; ${supplied === null ? '' : `fiches fournies à l’analyse : ${supplied} ; `}fiches citées dans le diagnostic : ${cited.size} ; offres comparées : ${compared.size}. Une fiche citée pour expliquer une exclusion n’est pas une offre comparée. Parmi les offres comparées, à vérifier : ${pending} ; relues et approuvées : ${compared.size - pending}. Ces nombres ne mesurent ni l’examen détaillé des fiches ni la couverture de tout le marché. ${input.research.status === 'completed' ? 'Recherche terminée dans le périmètre prévu.' : 'Recherche partielle : les informations déjà recueillies sont conservées.'} Une fiche approuvée ne constitue pas une vérification indépendante des promesses du prestataire.`;
+  const limits = result.limits.filter(
+    (l) =>
+      !l.startsWith('Périmètre de la comparaison :') &&
+      !l.startsWith('Couverture de cette synthèse :'),
+  );
+  return { ...result, limits: [coverage, ...limits.slice(0, 9)] };
 }

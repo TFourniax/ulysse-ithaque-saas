@@ -738,7 +738,8 @@ function researchSourceText(item: ResearchCandidate): string {
     relevance: item.relevance,
     note: item.note.slice(0, 400),
     totalFacts: facts.length,
-    coverage: 'Digest limité; autres faits dans la matrice de recherche.',
+    coverage:
+      'Synthèse partielle des sources ; les autres informations restent disponibles dans la recherche.',
   };
   const selected: typeof facts = [];
   for (const fact of facts) {

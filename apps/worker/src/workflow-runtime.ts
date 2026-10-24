@@ -150,12 +150,13 @@ export class WorkflowRuntime {
               ? input.sources.filter((s) => review.read.includes(sourceReference(s)))
               : input.sources,
             Math.min(
-              24000,
+              32000,
               Math.max(
                 0,
                 maxEvidenceBytes -
                   Buffer.byteLength(JSON.stringify({ context, sources: required })) -
-                  2048,
+                  2048 -
+                  8000,
               ),
             ),
           )
@@ -454,7 +455,7 @@ export class WorkflowRuntime {
           'required source unread',
         );
         validateWorkflowPublication(result, input, new Set(run.retrieved));
-        const published = withResearchCoverage(result, input);
+        const published = withResearchCoverage(result, input, run.retrieved);
         await sql.query(
           'UPDATE agent_runs SET status=$3,result=$4,error_code=NULL,completed_at=clock_timestamp(),reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2',
           [

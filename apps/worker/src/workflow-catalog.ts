@@ -13,7 +13,7 @@ export function seedResearchEvidence(
   let added = selected.filter((s) => s.kind === 'competitor').length;
   let bytes = 0;
   for (const source of candidates) {
-    if (added >= 4) break;
+    if (added >= 6) break;
     if (source.kind !== 'competitor' || !source.research || result.some((s) => s.id === source.id))
       continue;
     const size =

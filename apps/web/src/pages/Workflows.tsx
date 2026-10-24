@@ -136,7 +136,13 @@ function References({
               <span>
                 {/^context:v\d+$/u.test(ref)
                   ? `Contexte de votre entreprise · version ${ref.slice(9)}`
-                  : 'Référence complémentaire'}
+                  : /^workflow:[a-f0-9-]+$/u.test(ref)
+                    ? 'Votre demande pour cette analyse'
+                    : /^doctrine:[a-f0-9-]+:v\d+$/u.test(ref)
+                      ? 'Méthode commerciale de référence'
+                      : /^buyer:[a-f0-9-]+$/u.test(ref)
+                        ? 'Diagnostic acheteur associé'
+                        : 'Référence complémentaire'}
                 <details>
                   <summary>Détail de la référence</summary>
                   <code>{ref}</code>
