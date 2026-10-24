@@ -2601,3 +2601,34 @@ details[open]::details-content {
 .research-table-scroll {
   scrollbar-gutter: stable;
 }
+
+.crm-drop {
+  border: 2px dashed var(--border);
+  padding: 1.5rem;
+  border-radius: 12px;
+}
+.crm-columns {
+  margin-block: 1rem;
+}
+.crm-columns summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.crm-column-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 1rem;
+  margin-block: 1rem;
+}
+.crm-column-grid label {
+  overflow-wrap: anywhere;
+}
+.crm-column-grid select {
+  width: 100%;
+}
+.crm-history {
+  padding-inline-start: 1.25rem;
+}
+.crm-history li {
+  margin-block: 1rem;
+}

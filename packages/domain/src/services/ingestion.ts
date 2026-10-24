@@ -3,7 +3,7 @@ import { requireScope } from '../context.ts';
 import { ensure, isDomainError } from '../errors.ts';
 import type { NormalizedRecord, Opportunity } from '../opportunity.ts';
 import { factsOf, planSourceChange, validateNormalizedRecord } from '../opportunity.ts';
-import type { TenantTx } from '../ports.ts';
+import type { IdGenerator, TenantTx } from '../ports.ts';
 import type { Connection, Fact, SyncRun, SyncTrigger } from '../records.ts';
 import { toInstant } from '../time.ts';
 import type { ServiceDeps } from './shared.ts';
@@ -135,7 +135,7 @@ export class IngestionService {
           throw error;
         }
         try {
-          const outcome = await this.#applyRecord(tx, ctx, connection, record, at, now);
+          const outcome = await persistSourceRecord(tx, ids, connection, record, at, now);
           counts[outcome] += 1;
         } catch (error) {
           if (
@@ -261,80 +261,80 @@ export class IngestionService {
       return next;
     });
   }
+}
 
-  async #applyRecord(
-    tx: TenantTx,
-    ctx: Context,
-    connection: Connection,
-    record: NormalizedRecord,
-    at: string,
-    now: number,
-  ): Promise<'created' | 'revised' | 'unchanged' | 'deleted' | 'stale'> {
-    const { ids } = this.#deps;
-    const head = await tx.getSourceHead(connection.id, record.externalId);
-    const change = planSourceChange(head, record, at, now);
-    if (change.kind === 'stale' || change.kind === 'ignore_delete') return 'stale';
-    if (change.kind === 'unchanged') {
-      if (head) await tx.touchSourceRecord(head.sourceRecordId, at);
-      return 'unchanged';
-    }
-    const sourceRecordId = ids.next();
-    const revision = change.revision;
-    const deleted = change.kind === 'delete';
-    await tx.insertSourceRecord({
-      tenantId: ctx.tenantId,
-      id: sourceRecordId,
-      connectionId: connection.id,
-      entityType: 'opportunity',
-      externalId: record.externalId,
-      revision,
-      providerVersion: record.providerVersion,
-      etag: record.etag,
-      contentHash: deleted ? null : change.contentHash,
-      normalized: record.fields,
-      sourceModifiedAt: record.sourceModifiedAt,
-      observedAt: at,
-      ingestedAt: at,
-      deletedAt: deleted ? at : null,
-    });
-    const existing = await tx.getOpportunityByExternalId(connection.id, record.externalId);
-    const fields = record.fields ?? existing?.fields;
-    ensure(fields !== undefined, 'INVALID_INPUT', 'fields');
-    const opportunity: Opportunity = {
-      tenantId: ctx.tenantId,
-      id: existing?.id ?? ids.next(),
-      connectionId: connection.id,
-      externalId: record.externalId,
-      sourceRecordId,
-      revision,
-      fields,
-      sourceModifiedAt: record.sourceModifiedAt,
-      observedAt: at,
-      ingestedAt: at,
-      deletedAt: deleted ? at : null,
-    };
-    await tx.upsertOpportunity(opportunity);
-    await tx.supersedeFacts(opportunity.id, at);
-    if (!deleted) {
-      const facts: Fact[] = factsOf(fields).map((f) => ({
-        tenantId: ctx.tenantId,
-        id: ids.next(),
-        subjectType: 'opportunity',
-        subjectId: opportunity.id,
-        connectionId: connection.id,
-        sourceRecordId,
-        sourceRevision: revision,
-        factType: f.factType,
-        state: f.state,
-        value: f.value,
-        locator: f.locator,
-        observedAt: at,
-        sourceModifiedAt: record.sourceModifiedAt,
-        supersededAt: null,
-      }));
-      await tx.insertFacts(facts);
-    }
-    if (deleted) return 'deleted';
-    return change.kind === 'create' ? 'created' : 'revised';
+/** Shared persistence for validated connectors and reviewed file imports; caller owns the transaction and authorization. */
+export async function persistSourceRecord(
+  tx: TenantTx,
+  ids: IdGenerator,
+  connection: Connection,
+  record: NormalizedRecord,
+  at: string,
+  now: number,
+): Promise<'created' | 'revised' | 'unchanged' | 'deleted' | 'stale'> {
+  const head = await tx.getSourceHead(connection.id, record.externalId);
+  const change = planSourceChange(head, record, at, now);
+  if (change.kind === 'stale' || change.kind === 'ignore_delete') return 'stale';
+  if (change.kind === 'unchanged') {
+    if (head) await tx.touchSourceRecord(head.sourceRecordId, at);
+    return 'unchanged';
   }
+  const sourceRecordId = ids.next();
+  const revision = change.revision;
+  const deleted = change.kind === 'delete';
+  await tx.insertSourceRecord({
+    tenantId: tx.tenantId,
+    id: sourceRecordId,
+    connectionId: connection.id,
+    entityType: 'opportunity',
+    externalId: record.externalId,
+    revision,
+    providerVersion: record.providerVersion,
+    etag: record.etag,
+    contentHash: deleted ? null : change.contentHash,
+    normalized: record.fields,
+    sourceModifiedAt: record.sourceModifiedAt,
+    observedAt: at,
+    ingestedAt: at,
+    deletedAt: deleted ? at : null,
+  });
+  const existing = await tx.getOpportunityByExternalId(connection.id, record.externalId);
+  const fields = record.fields ?? existing?.fields;
+  ensure(fields !== undefined, 'INVALID_INPUT', 'fields');
+  const opportunity: Opportunity = {
+    tenantId: tx.tenantId,
+    id: existing?.id ?? ids.next(),
+    connectionId: connection.id,
+    externalId: record.externalId,
+    sourceRecordId,
+    revision,
+    fields,
+    sourceModifiedAt: record.sourceModifiedAt,
+    observedAt: at,
+    ingestedAt: at,
+    deletedAt: deleted ? at : null,
+  };
+  await tx.upsertOpportunity(opportunity);
+  await tx.supersedeFacts(opportunity.id, at);
+  if (!deleted) {
+    const facts: Fact[] = factsOf(fields).map((f) => ({
+      tenantId: tx.tenantId,
+      id: ids.next(),
+      subjectType: 'opportunity',
+      subjectId: opportunity.id,
+      connectionId: connection.id,
+      sourceRecordId,
+      sourceRevision: revision,
+      factType: f.factType,
+      state: f.state,
+      value: f.value,
+      locator: f.locator,
+      observedAt: at,
+      sourceModifiedAt: record.sourceModifiedAt,
+      supersededAt: null,
+    }));
+    await tx.insertFacts(facts);
+  }
+  if (deleted) return 'deleted';
+  return change.kind === 'create' ? 'created' : 'revised';
 }

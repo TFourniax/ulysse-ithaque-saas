@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import type { Connection } from '@ulysse/contracts';
 import { useId, useState } from 'react';
 import { useConnectionActions, useConnections, useConnectors, useSyncRuns } from '../api.ts';
@@ -77,7 +78,10 @@ function AddConnection({ tenantId }: { tenantId: string }) {
           >
             <option value="">Choisir…</option>
             {connectors.data.map((c) => (
-              <option key={c.provider} value={c.provider}>
+              <option
+                key={c.provider === 'crm-file' ? 'Fichiers CRM' : c.provider}
+                value={c.provider === 'crm-file' ? 'Fichiers CRM' : c.provider}
+              >
                 {c.displayName}
               </option>
             ))}
@@ -155,7 +159,7 @@ export function ConnectionsPage() {
             <h2 className="card-title">{c.displayName}</h2>
             <dl className="facts">
               <dt>Connecteur</dt>
-              <dd>{c.provider}</dd>
+              <dd>{c.provider === 'crm-file' ? 'Fichiers CRM' : c.provider}</dd>
               <dt>Accès</dt>
               <dd>{c.grantedScopes.join(', ')}</dd>
               <dt>Données confirmées</dt>
@@ -168,8 +172,14 @@ export function ConnectionsPage() {
               <dd>{formatDateTime(c.lastSuccessAt)}</dd>
               <dt>Cadence</dt>
               <dd>
-                toutes les {c.syncIntervalMinutes} min · prochaine{' '}
-                {c.nextSyncAt ? formatRelative(c.nextSyncAt) : '—'}
+                {c.provider === 'crm-file' ? (
+                  'À chaque nouvel export déposé'
+                ) : (
+                  <>
+                    toutes les {c.syncIntervalMinutes} min · prochaine{' '}
+                    {c.nextSyncAt ? formatRelative(c.nextSyncAt) : '—'}
+                  </>
+                )}
               </dd>
               {c.lastErrorCode && (
                 <>
@@ -183,7 +193,12 @@ export function ConnectionsPage() {
             </dl>
             {c.status === 'active' && (
               <div className="actions">
-                {can(session, 'connection:sync') && (
+                {c.provider === 'crm-file' && can(session, 'connection:manage') && (
+                  <Link className="button" to="/imports">
+                    Déposer un nouvel export
+                  </Link>
+                )}
+                {c.provider !== 'crm-file' && can(session, 'connection:sync') && (
                   <button
                     type="button"
                     className="button"

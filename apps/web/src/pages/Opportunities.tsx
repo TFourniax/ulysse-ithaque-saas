@@ -1,6 +1,6 @@
 import { useOpportunities } from '../api.ts';
 import { Link } from 'react-router';
-import { useSession } from '../session.tsx';
+import { can, useSession } from '../session.tsx';
 import { EmptyState, ErrorBanner, Loading, PageHeader, TableScroll } from '../components/ui.tsx';
 import { formatDateTime, formatFactValue } from '../format.ts';
 
@@ -35,6 +35,13 @@ export function OpportunitiesPage() {
           signale une information que la source n&apos;expose pas ; Ulysse ne la devine pas.
         </p>
       </PageHeader>
+      {can(session, 'connection:manage') && (
+        <p>
+          <Link className="button button-primary" to="/imports">
+            Importer un fichier CRM
+          </Link>
+        </p>
+      )}
       {query.isPending && <Loading />}
       {query.error && <ErrorBanner error={query.error} />}
       {query.isSuccess && items.length === 0 && (

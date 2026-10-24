@@ -1,4 +1,5 @@
 import { registerResearchRoutes } from './research.ts';
+import { registerCrmImportRoutes } from './crm-imports.ts';
 import {
   Analysis,
   AgentRun,
@@ -122,6 +123,7 @@ export async function registerV1Routes(scope: FastifyInstance, deps: ApiDeps): P
 
   const ctxOf = (request: FastifyRequest): Context => contextFor(authOf(request), request.id);
   registerWorkflowRoutes(app, deps, ctxOf);
+  registerCrmImportRoutes(app, deps, ctxOf);
   registerResearchRoutes(app, deps, ctxOf);
   const agentStore = new PgAgentStore(deps.pool);
   app.get(

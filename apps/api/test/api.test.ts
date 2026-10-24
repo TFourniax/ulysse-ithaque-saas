@@ -3,6 +3,8 @@ import { after, before, describe, test } from 'node:test';
 import { createRegistry, FixtureConnector, MemoryFixtureStore } from '@ulysse/connectors';
 import type { Pool } from '@ulysse/database';
 import { AdminClient, createPool, IdentityRepository, PgUnitOfWork } from '@ulysse/database';
+import { PgCrmImportStore } from '@ulysse/database';
+import type { CrmPreviewDto } from '@ulysse/contracts';
 import type { TestDatabase } from '@ulysse/database/testing';
 import { createTestDatabase } from '@ulysse/database/testing';
 import type { ServiceDeps } from '@ulysse/domain';
@@ -743,5 +745,212 @@ describe('UL-017 workspace authorization and provenance', () => {
     assert.equal(retired.statusCode, 200, retired.body);
     const runs = await app.inject({ method: 'GET', url: '/v1/workflows', headers });
     assert.equal(runs.json<Array<{ status: string }>>()[0]?.status, 'obsolete');
+  });
+});
+
+describe('reviewed CRM CSV imports through authenticated API and worker roles', () => {
+  test('preview → confirmation → worker import; replay, update and missing rows preserve identifiers', async () => {
+    const s = await signedIn('alice');
+    const headers = { cookie: s.cookie, 'x-csrf-token': s.csrf };
+    const workerPool = createPool({
+      connectionString: db.workerUrl,
+      applicationName: 'csv-test-worker',
+      max: 2,
+    });
+    const worker = new PgCrmImportStore(workerPool);
+    const ctx = serviceContext(tenants.A ?? '');
+    const uow = new PgUnitOfWork(workerPool);
+    let connectionId: string | null = null;
+    const preview = async (text: string) => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/crm/imports/preview',
+        headers,
+        payload: { filename: 'fictif.csv', text, connectionId },
+      });
+      assert.equal(response.statusCode, 201, response.body);
+      const p = response.json<CrmPreviewDto>();
+      assert.ok(
+        !('fields' in (p.rows[0] ?? {})),
+        'response must not leak the full commercial payload',
+      );
+      return p;
+    };
+    const confirm = async (p: CrmPreviewDto) => {
+      const r = await app.inject({
+        method: 'POST',
+        url: `/v1/crm/imports/${p.id}/confirm`,
+        headers,
+        payload: { resolutions: [] },
+      });
+      assert.equal(r.statusCode, 202, r.body);
+      const value = r.json<{ connectionId: string }>();
+      connectionId = value.connectionId;
+      return value;
+    };
+    const csv =
+      'Titre;Entreprise;Prochaine action;Notes\nPilote A;Fictive A;Préciser les critères;Le client demande un exemple.\nPilote B;Fictive B;;Pas de prochaine étape décidée.';
+    try {
+      const first = await preview(csv);
+      assert.deepEqual(
+        first.rows.map((r) => r.action),
+        ['create', 'create'],
+      );
+      const firstConfirmed = await confirm(first);
+      await worker.apply(ctx, firstConfirmed.connectionId);
+      const before = await uow.run(ctx, (tx) =>
+        tx.listOpportunitiesForAnalysis(new Date(0).toISOString()),
+      );
+      const original = before.filter((o) => o.connectionId === firstConfirmed.connectionId);
+      assert.equal(original.length, 2);
+      assert.ok(original[0]?.fields.commercial?.materials.length);
+      const replay = await confirm(first);
+      assert.equal(replay.connectionId, firstConfirmed.connectionId);
+      await worker.apply(ctx, firstConfirmed.connectionId);
+      const second = await preview(csv);
+      assert.deepEqual(
+        second.rows.map((r) => r.action),
+        ['unchanged', 'unchanged'],
+      );
+      await confirm(second);
+      await worker.apply(ctx, firstConfirmed.connectionId);
+      const changed = await preview(
+        'Titre;Entreprise;Prochaine action;Notes\nPilote A;Fictive A;Préparer une réunion;Le client demande un exemple.',
+      );
+      assert.equal(changed.rows[0]?.action, 'update');
+      assert.equal(changed.missing, 1);
+      await confirm(changed);
+      await worker.apply(ctx, firstConfirmed.connectionId);
+      const after = await uow.run(ctx, (tx) =>
+        tx.listOpportunitiesForAnalysis(new Date(0).toISOString()),
+      );
+      const current = after.filter((o) => o.connectionId === firstConfirmed.connectionId);
+      assert.deepEqual(current.map((o) => o.id).sort(), original.map((o) => o.id).sort());
+      for (const o of original)
+        assert.equal(
+          current.find((c) => c.id === o.id)?.revision,
+          o.revision + (o.fields.name === 'Pilote A' ? 1 : 0),
+        );
+      const conn = await uow.run(ctx, (tx) => tx.getConnection(firstConfirmed.connectionId));
+      assert.equal(
+        conn?.nextSyncAt,
+        null,
+        'a file is never periodically made fresh without another upload',
+      );
+      const history = await app.inject({ url: '/v1/crm/imports', headers });
+      const imported =
+        history.json<
+          Array<{ id: string; result: { created: number; updated: number; unchanged: number } }>
+        >();
+      assert.equal(imported.find((r) => r.id === changed.id)?.result.updated, 1);
+      const revoked = await app.inject({
+        method: 'DELETE',
+        url: `/v1/connections/${replay.connectionId}`,
+        headers,
+      });
+      assert.equal(revoked.statusCode, 200, revoked.body);
+      await assert.rejects(() =>
+        worker.preview(
+          userContext(tenants.A ?? '', users.alice?.id ?? '', 'owner'),
+          'bad.csv',
+          { columns: [], rows: [], delimiter: ',' },
+          firstConfirmed.connectionId,
+        ),
+      );
+      const copies = await worker.transaction(
+        ctx,
+        async (_tx, sql) =>
+          (
+            await sql.query<{ preview: unknown }>(
+              'SELECT preview FROM crm_import_batches WHERE connection_id=$1',
+              [connectionId],
+            )
+          ).rows,
+      );
+      assert.ok(copies.every((r) => r.preview === null));
+    } finally {
+      await workerPool.end();
+    }
+  });
+  test('tenant, permissions, CSRF, ambiguous matches and invalid rows are enforced before confirmation', async () => {
+    const alice = await signedIn('alice'),
+      gina = await signedIn('gina'),
+      viewer = await signedIn('vera');
+    const payload = {
+      filename: 'fictif.csv',
+      connectionId: null,
+      text: 'Titre;Entreprise\nMême affaire;Fictive\nMême affaire;Fictive',
+    };
+    const h = { cookie: alice.cookie, 'x-csrf-token': alice.csrf };
+    const noCsrf = await app.inject({
+      method: 'POST',
+      url: '/v1/crm/imports/preview',
+      headers: { cookie: alice.cookie },
+      payload,
+    });
+    assert.equal(noCsrf.statusCode, 403);
+    const denied = await app.inject({
+      method: 'POST',
+      url: '/v1/crm/imports/preview',
+      headers: { cookie: viewer.cookie, 'x-csrf-token': viewer.csrf },
+      payload,
+    });
+    assert.equal(denied.statusCode, 403);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/crm/imports/preview',
+      headers: h,
+      payload,
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    const p = response.json<CrmPreviewDto>();
+    assert.ok(p.rows.every((r) => r.action === 'choose'));
+    const confirm = (headers: Record<string, string>, resolutions: unknown[] = []) =>
+      app.inject({
+        method: 'POST',
+        url: `/v1/crm/imports/${p.id}/confirm`,
+        headers,
+        payload: { resolutions },
+      });
+    assert.equal(
+      (await confirm({ cookie: gina.cookie, 'x-csrf-token': gina.csrf })).statusCode,
+      404,
+    );
+    assert.equal((await confirm(h)).statusCode, 422);
+    const done = await confirm(h, [
+      { row: 2, target: 'new' },
+      { row: 3, target: 'skip' },
+    ]);
+    assert.equal(done.statusCode, 202, done.body);
+    const other = await app.inject({ url: '/v1/crm/imports', headers: { cookie: gina.cookie } });
+    assert.deepEqual(other.json(), []);
+    const foreign = await app.inject({
+      method: 'POST',
+      url: '/v1/crm/imports/preview',
+      headers: { cookie: gina.cookie, 'x-csrf-token': gina.csrf },
+      payload: { ...payload, connectionId: done.json<{ connectionId: string }>().connectionId },
+    });
+    assert.equal(foreign.statusCode, 404);
+    const cleanup = await app.inject({
+      method: 'DELETE',
+      url: `/v1/connections/${done.json<{ connectionId: string }>().connectionId}`,
+      headers: h,
+    });
+    assert.equal(cleanup.statusCode, 200);
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/v1/crm/imports/preview',
+      headers: h,
+      payload: { ...payload, text: 'Titre;Limiter la vue à ..\nPrivée;Équipe secrète' },
+    });
+    const rejected = invalid.json<CrmPreviewDto>();
+    assert.equal(rejected.rows[0]?.action, 'invalid');
+    const forced = await app.inject({
+      method: 'POST',
+      url: `/v1/crm/imports/${rejected.id}/confirm`,
+      headers: h,
+      payload: { resolutions: [{ row: 2, target: 'new' }] },
+    });
+    assert.equal(forced.statusCode, 422);
   });
 });

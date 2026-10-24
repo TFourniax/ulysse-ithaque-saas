@@ -1,5 +1,9 @@
 # État actuel
 
+## UL-024 — Import CRM avant l’API Néréis
+
+En cours, responsable Codex, 24 octobre 2026. Thomas autorise la suite du chantier MVP et confirme un parcours de dépôt CSV simple. Ce lot ajoute aperçu, rapprochements revus, identifiants Ulysse, réimport, intégration par le worker existant et retrait des données. Les diagnostics et contenus restent sur leur circuit actuel. [Journal](journal/2026-10-24-UL-024-crm-import.md), [guide](CRM-IMPORT.md), [conditions MVP et lots suivants](MVP-NEXT.md). Aucun déploiement ni qualification MVP annoncé.
+
 ## UL-023 — Texte de publication identifiable
 
 **DEBT-042**, responsable Codex, 24 octobre 2026. Thomas transmet un contenu live abouti à 15 h 35 (Europe/Paris), mais le texte destiné au lecteur est noyé parmi les explications. Le lot place le texte dans un encadré au début du résultat, conserve ses sauts de ligne et ajoute une copie explicite du corps seul. Brief, justifications, sources et limites restent accessibles dans un volet replié; les avertissements d'obsolescence et les erreurs restent visibles. Aucun changement du texte enregistré, du moteur, des contrôles de revue ou des données. [Journal](journal/2026-10-24-UL-023-content-preview.md).
