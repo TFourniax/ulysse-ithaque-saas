@@ -333,6 +333,7 @@ export function CrmImportsPage() {
                 <label>
                   Format des montants
                   <select
+                    aria-label="Format des montants"
                     value={draftAdjustments.numberFormat ?? 'auto'}
                     onChange={(e) => {
                       const value = e.target.value;

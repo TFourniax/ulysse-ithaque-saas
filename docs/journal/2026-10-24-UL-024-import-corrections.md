@@ -14,4 +14,6 @@ Tests ajoutés : formats Excel, séparateurs ambigus, montant vide, devise contr
 
 ## Suite
 
+Premier passage CI `72cd10c` : 157 tests unitaires, 130 tests d’intégration PostgreSQL, 17 tests Hermes et les 8 jobs de validation de stack/mise à jour réussis. Les 23 parcours navigateur existants réussissent; les trois nouveaux parcours sont bloqués par le nom accessible implicite du sélecteur de format, qui inclut ses options. Ajout d’un nom accessible explicite, puis nouvelle exécution de la CI avant livraison. Les résultats définitifs sont liés dans la PR #12.
+
 Relire le montant interprété lors du nouvel essai du CSV réel. Le statut MVP reste ouvert selon [le plan](../MVP-NEXT.md). La saisie de consignes libres n’est pas implémentée : ce lot fournit des choix explicites et l’édition directe.
