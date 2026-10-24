@@ -6,7 +6,7 @@ import { formulateNextStep, PROMPT_VERSION } from '@ulysse/ai';
 import type { Connector, ConnectorContext, ConnectorRegistry } from '@ulysse/connectors';
 import { ConnectorError } from '@ulysse/connectors';
 import type { Pool } from '@ulysse/database';
-import { PGBOSS_SCHEMA, PgUnitOfWork, QUEUES } from '@ulysse/database';
+import { PGBOSS_SCHEMA, PgUnitOfWork, QUEUES, PgCrmImportStore } from '@ulysse/database';
 import type {
   Clock,
   Connection,
@@ -17,6 +17,7 @@ import type {
 } from '@ulysse/domain';
 import {
   AnalysisService,
+  CRM_FILE_PROVIDER,
   FormulationService,
   IngestionService,
   isDomainError,
@@ -442,6 +443,7 @@ export class WorkerRuntime {
       );
     }
     await this.#deps.pool.query('SELECT * FROM app.purge_expired(now())');
+    await this.#deps.pool.query('SELECT app.purge_crm_previews()');
     return tenants.rows.length;
   }
 
@@ -449,6 +451,19 @@ export class WorkerRuntime {
   async handleSync(job: SyncJob, jobId: string): Promise<void> {
     const { config, registry, credentials, faults, metrics } = this.#deps;
     const ctx = serviceContext(job.tenantId, `job:${jobId}`, ['source:ingest'], job.connectionId);
+    const imported = await this.#uow.run(ctx, (tx) => tx.getConnection(job.connectionId));
+    if (imported?.provider === CRM_FILE_PROVIDER) {
+      const store = new PgCrmImportStore(this.#deps.pool);
+      try {
+        await store.apply(ctx, job.connectionId);
+      } catch {
+        // The batch transaction rolls back as a whole. No payload is logged.
+        // If storage is unavailable even this write fails and pg-boss retries.
+        await store.fail(ctx, job.connectionId);
+        this.#deps.logger.warn({ connectionId: job.connectionId }, 'CRM import requires retry');
+      }
+      return;
+    }
     let runId: string;
     let cursor: string | null;
     let connection: Connection;

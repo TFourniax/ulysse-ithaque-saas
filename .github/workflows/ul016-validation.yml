@@ -9,6 +9,7 @@ on:
         'codex/ul-018-europe-zdr',
         'codex/ul-019-model-profiles',
         'codex/ul-020-web-research',
+        'codex/ul-023-content-preview',
       ]
   workflow_dispatch:
 permissions:

@@ -1,4 +1,5 @@
 import { ResearchPage } from './pages/Research.tsx';
+import { CrmImportsPage } from './pages/CrmImports.tsx';
 import type { Me } from '@ulysse/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
@@ -192,6 +193,7 @@ function Layout() {
     { to: '/recommendations', label: 'Prochaine interaction' },
     { to: '/workspace', label: 'Sources métier' },
     { to: '/opportunities', label: 'Opportunités' },
+    { to: '/imports', label: 'Importer mes affaires' },
     { to: '/analyses', label: 'Analyses' },
     { to: '/connections', label: 'Connexions' },
     ...(can(session, 'analysis:read') ? [{ to: '/measure', label: 'Mesure' }] : []),
@@ -261,6 +263,7 @@ const router = createBrowserRouter([
       { path: '/recommendations', element: <RecommendationsPage /> },
       { path: '/recommendations/:id', element: <RecommendationDetailPage /> },
       { path: '/opportunities', element: <OpportunitiesPage /> },
+      { path: '/imports', element: <CrmImportsPage /> },
       { path: '/opportunities/:id', element: <OpportunityDetailPage /> },
       { path: '/analyses', element: <AnalysesPage /> },
       { path: '/connections', element: <ConnectionsPage /> },

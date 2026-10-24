@@ -11,3 +11,4 @@ export * from './config.ts';
 export * from './identity.ts';
 export * from './workspace-store.ts';
 export * from './research-store.ts';
+export * from './crm-import-store.ts';

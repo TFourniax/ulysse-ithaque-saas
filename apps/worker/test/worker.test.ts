@@ -1,5 +1,7 @@
 import type { ResearchProfile } from '@ulysse/domain';
 import { PgResearchStore } from '@ulysse/database';
+import { PgCrmImportStore } from '@ulysse/database';
+import { parseCrmCsv } from '@ulysse/connectors';
 import { extractPublicPage, ResearchWebError } from '@ulysse/connectors';
 import { ResearchRuntime } from '../src/research-runtime.ts';
 import {
@@ -4539,4 +4541,114 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
       /STALE_EVIDENCE/,
     );
   });
+});
+
+describe('CRM file import on the existing background pipeline', () => {
+  test('worker applies a reviewed file once, analyses its real normalized materials and purges all copies', async () => {
+    const w = await tenantWorld('csv-pipeline', 'unused');
+    const store = new PgCrmImportStore(appPool);
+    const past = new Date(Date.now() - 20 * 86400000).toISOString();
+    const file = parseCrmCsv(
+      `Titre;Entreprise;Dernière interaction;Prochaine action;Notes\nPilote fictif;Atelier fictif;${past};;Le client souhaite clarifier les critères de décision.`,
+    );
+    const preview = await store.preview(w.owner, 'test.csv', file, null);
+    const confirmed = await store.confirm(w.owner, preview.id, []);
+    const runtime = runtimeWith();
+    const job = {
+      tenantId: w.tenantId,
+      connectionId: confirmed.connectionId,
+      trigger: 'manual' as const,
+    };
+    await runtime.handleSync(job, crypto.randomUUID());
+    await runtime.handleSync(job, crypto.randomUUID());
+    const list = await w.queries.listOpportunities(w.owner, { limit: 100 });
+    assert.equal(list.items.length, 1);
+    assert.ok(
+      list.items[0]?.fields.commercial?.materials.some((m) =>
+        m.text.includes('critères de décision'),
+      ),
+    );
+    await runtime.handleAnalyze(
+      { tenantId: w.tenantId, trigger: 'source_change' },
+      crypto.randomUUID(),
+    );
+    assert.equal((await w.open()).length, 1, 'normal analysis receives the imported affair');
+    const summary = await store.listImports(w.owner);
+    assert.equal(summary[0]?.status, 'completed');
+    assert.equal(summary[0].result?.created, 1);
+    const initial = list.items[0]!;
+    const renamed = parseCrmCsv(
+      `Titre;Entreprise;Dernière interaction;Prochaine action\nPilote renommé;Atelier fictif;${past};Préparer un échange`,
+    );
+    const proposed = await store.preview(w.owner, 'next.csv', renamed, confirmed.connectionId);
+    assert.equal(proposed.rows[0]?.action, 'choose');
+    await store.confirm(w.owner, proposed.id, [{ row: 2, target: initial.externalId }]);
+    await runtime.handleSync(job, crypto.randomUUID());
+    const current = await w.queries.listOpportunities(w.owner, { limit: 100 });
+    assert.equal(current.items[0]?.id, initial.id);
+    assert.equal(current.items[0].revision, initial.revision + 1);
+    await w.connections.revoke(w.owner, confirmed.connectionId);
+    await runtime.handlePurge(
+      { tenantId: w.tenantId, connectionId: confirmed.connectionId },
+      crypto.randomUUID(),
+    );
+    assert.equal((await w.queries.listOpportunities(w.owner, { limit: 100 })).items.length, 0);
+    assert.equal(await w.count('SELECT count(*)::int n FROM crm_import_items'), 0);
+    assert.equal(
+      await w.count('SELECT count(*)::int n FROM crm_import_batches WHERE preview IS NOT NULL'),
+      0,
+    );
+  });
+});
+
+test('CRM import rolls back all rows on failure, retries once and rejects an outdated preview', async () => {
+  const w = await tenantWorld('csv-rollback', 'unused');
+  const store = new PgCrmImportStore(appPool),
+    worker = new PgCrmImportStore(workerPool);
+  const preview = await store.preview(
+    w.owner,
+    'two.csv',
+    parseCrmCsv('Titre;Entreprise\nA;Fictive A\nB;Fictive B'),
+    null,
+  );
+  const confirmed = await store.confirm(w.owner, preview.id, []);
+  const ctx = serviceContext(w.tenantId);
+  const corrupt = structuredClone(preview);
+  corrupt.rows[1]!.fields = null;
+  await worker.transaction(ctx, async (_tx, sql) => {
+    await sql.query('UPDATE crm_import_batches SET preview=$3 WHERE tenant_id=$1 AND id=$2', [
+      w.tenantId,
+      preview.id,
+      JSON.stringify(corrupt),
+    ]);
+  });
+  const runtime = runtimeWith(),
+    job = {
+      tenantId: w.tenantId,
+      connectionId: confirmed.connectionId,
+      trigger: 'manual' as const,
+    };
+  await runtime.handleSync(job, crypto.randomUUID());
+  assert.equal((await store.listImports(w.owner))[0]?.status, 'failed');
+  assert.equal((await w.queries.listOpportunities(w.owner, { limit: 100 })).items.length, 0);
+  assert.equal(await w.count('SELECT count(*)::int n FROM source_records'), 0);
+  await worker.transaction(ctx, async (_tx, sql) => {
+    await sql.query('UPDATE crm_import_batches SET preview=$3 WHERE tenant_id=$1 AND id=$2', [
+      w.tenantId,
+      preview.id,
+      JSON.stringify(preview),
+    ]);
+  });
+  await store.retry(w.owner, preview.id);
+  const stale = await store.preview(
+    w.owner,
+    'later.csv',
+    parseCrmCsv('Titre;Entreprise\nC;Fictive C'),
+    confirmed.connectionId,
+  );
+  await runtime.handleSync(job, crypto.randomUUID());
+  assert.equal((await w.queries.listOpportunities(w.owner, { limit: 100 })).items.length, 2);
+  await assert.rejects(() => store.confirm(w.owner, stale.id, []), /REVISION_CONFLICT/);
+  await runtime.handleSync(job, crypto.randomUUID());
+  assert.equal((await w.queries.listOpportunities(w.owner, { limit: 100 })).items.length, 2);
 });

@@ -1,5 +1,6 @@
 import type { Context } from '../context.ts';
 import { requirePermission } from '../context.ts';
+import { CRM_FILE_PROVIDER } from '../crm-import.ts';
 import { ensure } from '../errors.ts';
 import { close, isOpen } from '../recommendation.ts';
 import type { Connection, SyncRun } from '../records.ts';
@@ -138,6 +139,11 @@ export class ConnectionService {
       const connection = await tx.getConnection(connectionId);
       ensure(connection !== null, 'NOT_FOUND');
       ensure(connection.status === 'active', 'CONNECTION_INACTIVE', connection.status);
+      ensure(
+        connection.provider !== CRM_FILE_PROVIDER,
+        'INVALID_INPUT',
+        'Déposez un nouvel export pour actualiser ces affaires.',
+      );
       const at = toInstant(clock.now());
       const trigger = options.replay ? 'replay' : 'manual';
       await tx.appendAudit(

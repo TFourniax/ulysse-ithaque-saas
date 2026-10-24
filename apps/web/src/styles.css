@@ -2601,3 +2601,69 @@ details[open]::details-content {
 .research-table-scroll {
   scrollbar-gutter: stable;
 }
+
+.crm-drop {
+  border: 2px dashed var(--line);
+  padding: 1.5rem;
+  border-radius: 12px;
+}
+.crm-columns {
+  margin-block: 1rem;
+}
+.crm-columns summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.crm-column-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 1rem;
+  margin-block: 1rem;
+}
+.crm-column-grid label {
+  overflow-wrap: anywhere;
+}
+.crm-column-grid select {
+  width: 100%;
+}
+.crm-history {
+  padding-inline-start: 1.25rem;
+}
+.crm-history li {
+  margin-block: 1rem;
+}
+@media (max-width: 640px) {
+  .crm-drop {
+    padding: 1rem;
+  }
+  .crm-preview,
+  .crm-preview tbody {
+    display: block;
+    width: 100%;
+  }
+  .crm-preview thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .crm-preview tr {
+    display: grid;
+    gap: 0.75rem;
+    padding-block: 1rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .crm-preview td {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+  .crm-preview select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+}
