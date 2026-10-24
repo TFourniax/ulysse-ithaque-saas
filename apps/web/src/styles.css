@@ -2477,6 +2477,53 @@ details[open]::details-content {
 .workflow-result section {
   margin: 1.2rem 0;
 }
+.publication-preview {
+  border: 1px solid var(--line-strong);
+  border-top: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+  padding: clamp(1rem, 3vw, 2rem);
+}
+.publication-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.publication-preview-head h3,
+.publication-preview-head p {
+  margin: 0;
+}
+.publication-preview-head p {
+  margin-top: 0.3rem;
+}
+.publication-preview-body {
+  max-width: 68ch;
+  margin: 1.5rem auto 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+  font-size: var(--text-md);
+  user-select: text;
+}
+.publication-copy-status {
+  min-height: 1.5em;
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+}
+.publication-copy-fallback textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+.publication-explanation > summary {
+  color: var(--ink);
+  padding-bottom: 0.75rem;
+}
 .table-scroll {
   overflow-x: auto;
 }
