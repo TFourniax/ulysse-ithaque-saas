@@ -118,20 +118,26 @@ test('research coverage counts distinct cited actors, retained partial data and 
   );
   assert.match(
     result.limits[0]!,
-    /fiches disponibles : 3 ; fiches fournies à l’analyse : 3 ; fiches citées dans le diagnostic : 2 ; offres comparées : 1/u,
+    /fiches disponibles : 3 ; fiches fournies à l’analyse : 3 ; fiches citées dans le diagnostic : 2 ; fiches utilisées dans les comparaisons : 1/u,
   );
-  assert.match(result.limits[0]!, /à vérifier : 1 ; relues et approuvées : 0/u);
+  assert.match(
+    result.limits[0]!,
+    /Parmi toutes les fiches citées, à vérifier : 1 ; relues et approuvées : 1/u,
+  );
   assert.match(result.limits[0]!, /Recherche partielle/u);
   assert.match(
     result.limits[0]!,
     /ni l’examen détaillé des fiches ni la couverture de tout le marché/u,
   );
-  assert.match(result.limits[0]!, /expliquer une exclusion n’est pas une offre comparée/u);
+  assert.match(
+    result.limits[0]!,
+    /Une fiche peut décrire plusieurs offres ; une citation d’exclusion n’entre pas dans ce dernier compte/u,
+  );
   const approved = withResearchCoverage(result, {
     ...researchInput,
     research: { ...researchInput.research!, status: 'completed', pendingReferences: [] },
   });
-  assert.match(approved.limits[0]!, /à vérifier : 0 ; relues et approuvées : 1/u);
+  assert.match(approved.limits[0]!, /à vérifier : 0 ; relues et approuvées : 2/u);
   assert.match(approved.limits[0]!, /Recherche terminée/u);
   assert.equal(
     approved.limits.filter((l) => l.startsWith('Périmètre de la comparaison :')).length,

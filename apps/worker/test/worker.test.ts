@@ -4453,7 +4453,7 @@ describe('UL-020 autonomous research with PostgreSQL roles', () => {
     assert.match(draft.result?.limits[0] ?? '', /Périmètre de la comparaison/u);
     assert.match(
       draft.result?.limits[0] ?? '',
-      /fiches fournies à l’analyse : [1-9]\d* ; fiches citées dans le diagnostic : 1 ; offres comparées : 1/u,
+      /fiches fournies à l’analyse : [1-9]\d* ; fiches citées dans le diagnostic : 1 ; fiches utilisées dans les comparaisons : 1/u,
     );
     await assert.rejects(workspace.review(w.owner, buyer, draft.revision, 'approve'));
     const partialCandidates = (await w.items()).items;

@@ -117,8 +117,8 @@ export function withResearchCoverage(
     suppliedReferences === undefined
       ? null
       : new Set(suppliedReferences.filter((r) => available.has(r))).size;
-  const pending = [...compared].filter((r) => input.research?.pendingReferences.includes(r)).length;
-  const coverage = `Périmètre de la comparaison : fiches disponibles : ${available.size} ; ${supplied === null ? '' : `fiches fournies à l’analyse : ${supplied} ; `}fiches citées dans le diagnostic : ${cited.size} ; offres comparées : ${compared.size}. Une fiche citée pour expliquer une exclusion n’est pas une offre comparée. Parmi les offres comparées, à vérifier : ${pending} ; relues et approuvées : ${compared.size - pending}. Ces nombres ne mesurent ni l’examen détaillé des fiches ni la couverture de tout le marché. ${input.research.status === 'completed' ? 'Recherche terminée dans le périmètre prévu.' : 'Recherche partielle : les informations déjà recueillies sont conservées.'} Une fiche approuvée ne constitue pas une vérification indépendante des promesses du prestataire.`;
+  const pending = [...cited].filter((r) => input.research?.pendingReferences.includes(r)).length;
+  const coverage = `Périmètre de la comparaison : fiches disponibles : ${available.size} ; ${supplied === null ? '' : `fiches fournies à l’analyse : ${supplied} ; `}fiches citées dans le diagnostic : ${cited.size} ; fiches utilisées dans les comparaisons : ${compared.size}. Une fiche peut décrire plusieurs offres ; une citation d’exclusion n’entre pas dans ce dernier compte. Parmi toutes les fiches citées, à vérifier : ${pending} ; relues et approuvées : ${cited.size - pending}. Ces nombres ne mesurent ni l’examen détaillé des fiches ni la couverture de tout le marché. ${input.research.status === 'completed' ? 'Recherche terminée dans le périmètre prévu.' : 'Recherche partielle : les informations déjà recueillies sont conservées.'} Une fiche approuvée ne constitue pas une vérification indépendante des promesses du prestataire.`;
   const limits = result.limits.filter(
     (l) =>
       !l.startsWith('Périmètre de la comparaison :') &&
