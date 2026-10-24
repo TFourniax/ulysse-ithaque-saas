@@ -68,6 +68,7 @@ export function CrmImportsPage() {
   const [limit, setLimit] = useState(50);
   const input = useRef<HTMLInputElement>(null);
   const requestSerial = useRef(0);
+  const fileSerial = useRef(0);
   const permitted = can(session, 'connection:manage');
   const fileConnections = (connections.data ?? []).filter(
     (c) => c.provider === 'crm-file' && c.status === 'active',
@@ -145,6 +146,8 @@ export function CrmImportsPage() {
   }
   async function load(selected: File | undefined) {
     if (!selected) return;
+    const serial = ++fileSerial.current;
+    ++requestSerial.current;
     setError(null);
     setPreview(null);
     setFile(null);
@@ -163,6 +166,7 @@ export function CrmImportsPage() {
     }
     try {
       const bytes = await selected.arrayBuffer();
+      if (serial !== fileSerial.current) return;
       let text: string;
       try {
         text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -173,7 +177,8 @@ export function CrmImportsPage() {
       setFile(next);
       await inspect(next);
     } catch (e) {
-      setError(e instanceof Error ? e : new Error('Lecture du fichier impossible.'));
+      if (serial === fileSerial.current)
+        setError(e instanceof Error ? e : new Error('Lecture du fichier impossible.'));
     }
   }
   const unresolved =
@@ -184,6 +189,8 @@ export function CrmImportsPage() {
   const skipped = (preview?.rows.length ?? 0) - included - unresolved;
   const mappingChanged = preview?.columns.some((c) => mapping[c.index] !== c.role) ?? false;
   const busy = prepare.isPending || confirm.isPending || cancel.isPending;
+  const uploadDisabled =
+    busy || !connections.isSuccess || (fileConnections.length > 1 && !selectedConnection);
   return (
     <>
       <PageHeader title="Importer mes affaires">
@@ -199,6 +206,8 @@ export function CrmImportsPage() {
       )}
       {permitted && (
         <section className="card" aria-label="Déposer un fichier CRM">
+          {connections.isPending && <Loading label="Chargement de vos sources…" />}
+          {connections.error && <ErrorBanner error={connections.error} />}
           {fileConnections.length > 1 && (
             <label>
               Portefeuille à actualiser
@@ -225,7 +234,7 @@ export function CrmImportsPage() {
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();
-              if (!busy) void load(e.dataTransfer.files[0]);
+              if (!uploadDisabled) void load(e.dataTransfer.files[0]);
             }}
           >
             <label htmlFor="crm-file">
@@ -240,7 +249,7 @@ export function CrmImportsPage() {
               id="crm-file"
               type="file"
               accept=".csv,text/csv"
-              disabled={busy}
+              disabled={uploadDisabled}
               onChange={(e) => void load(e.target.files?.[0])}
             />
           </div>

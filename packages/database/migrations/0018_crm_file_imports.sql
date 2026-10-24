@@ -5,7 +5,7 @@ CREATE TABLE crm_import_batches (
   filename text NOT NULL CHECK(length(filename) BETWEEN 1 AND 200),
   status text NOT NULL CHECK(status IN ('preview','queued','completed','failed','cancelled')),
   preview jsonb, selections jsonb, snapshot text NOT NULL,
-  result jsonb, error_code text,
+  result jsonb, error_code text, confirmation_hash text,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   expires_at timestamptz NOT NULL, completed_at timestamptz,
   PRIMARY KEY(tenant_id,id),
@@ -48,8 +48,8 @@ BEGIN
   RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION app.withdraw_crm_imports() FROM PUBLIC;
-ALTER FUNCTION app.withdraw_crm_imports() OWNER TO ulysse_definer;
 CREATE TRIGGER withdraw_crm_imports AFTER UPDATE OF status ON connections FOR EACH ROW EXECUTE FUNCTION app.withdraw_crm_imports();
+ALTER FUNCTION app.withdraw_crm_imports() OWNER TO ulysse_definer;
 
 CREATE FUNCTION app.purge_crm_previews() RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
   UPDATE public.crm_import_batches SET preview=NULL,selections=NULL,status='cancelled',filename='Aperçu expiré'

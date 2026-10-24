@@ -176,6 +176,11 @@ export class PgCrmImportStore extends PgAgentStore {
       const state = str(row, 'status');
       if ((state === 'queued' || state === 'completed') && oldConnection) {
         await this.connection(tx, oldConnection);
+        ensure(
+          strOrNull(row, 'confirmation_hash') ===
+            fingerprintOf([...resolutions].sort((a, b) => a.row - b.row)),
+          'IDEMPOTENCY_CONFLICT',
+        );
         return { id, connectionId: oldConnection, status: state };
       }
       ensure(state === 'preview' && Date.parse(str(row, 'expires_at')) > Date.now(), 'EXPIRED');
@@ -242,8 +247,14 @@ export class PgCrmImportStore extends PgAgentStore {
           revokedBy: null,
         });
       await sql.query(
-        "UPDATE crm_import_batches SET status='queued',connection_id=$3,selections=$4 WHERE tenant_id=$1 AND id=$2",
-        [ctx.tenantId, id, connectionId, JSON.stringify(selections)],
+        "UPDATE crm_import_batches SET status='queued',connection_id=$3,selections=$4,confirmation_hash=$5 WHERE tenant_id=$1 AND id=$2",
+        [
+          ctx.tenantId,
+          id,
+          connectionId,
+          JSON.stringify(selections),
+          fingerprintOf([...resolutions].sort((a, b) => a.row - b.row)),
+        ],
       );
       await tx.enqueueOutbox({
         tenantId: ctx.tenantId,
@@ -316,7 +327,7 @@ export class PgCrmImportStore extends PgAgentStore {
         await sql.query(
           `INSERT INTO crm_import_items(tenant_id,connection_id,id,identity_hash,source_id,title,company,revision,content_hash) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8)
           ON CONFLICT(tenant_id,id) DO UPDATE SET identity_hash=EXCLUDED.identity_hash,source_id=EXCLUDED.source_id,title=EXCLUDED.title,company=EXCLUDED.company,
-          revision=crm_import_items.revision+CASE WHEN crm_import_items.content_hash<>EXCLUDED.content_hash OR crm_import_items.identity_hash<>EXCLUDED.identity_hash THEN 1 ELSE 0 END,content_hash=EXCLUDED.content_hash`,
+          revision=crm_import_items.revision+1,content_hash=EXCLUDED.content_hash`,
           [
             ctx.tenantId,
             connectionId,

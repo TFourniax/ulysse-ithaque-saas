@@ -98,6 +98,7 @@ export function registerCrmImportRoutes(
   app.post(
     '/crm/imports/:id/confirm',
     {
+      bodyLimit: 256 * 1024,
       schema: {
         tags: ['crm'],
         params: IdParam,

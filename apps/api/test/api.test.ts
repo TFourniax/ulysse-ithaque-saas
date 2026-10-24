@@ -806,6 +806,13 @@ describe('reviewed CRM CSV imports through authenticated API and worker roles', 
       assert.ok(original[0]?.fields.commercial?.materials.length);
       const replay = await confirm(first);
       assert.equal(replay.connectionId, firstConfirmed.connectionId);
+      const alteredReplay = await app.inject({
+        method: 'POST',
+        url: `/v1/crm/imports/${first.id}/confirm`,
+        headers,
+        payload: { resolutions: [{ row: 2, target: 'skip' }] },
+      });
+      assert.equal(alteredReplay.statusCode, 409, alteredReplay.body);
       await worker.apply(ctx, firstConfirmed.connectionId);
       const second = await preview(csv);
       assert.deepEqual(
@@ -813,7 +820,15 @@ describe('reviewed CRM CSV imports through authenticated API and worker roles', 
         ['unchanged', 'unchanged'],
       );
       await confirm(second);
+      const beforeUnchangedImport = await preview(csv);
       await worker.apply(ctx, firstConfirmed.connectionId);
+      const olderConfirmation = await app.inject({
+        method: 'POST',
+        url: `/v1/crm/imports/${beforeUnchangedImport.id}/confirm`,
+        headers,
+        payload: { resolutions: [] },
+      });
+      assert.equal(olderConfirmation.statusCode, 409, olderConfirmation.body);
       const changed = await preview(
         'Titre;Entreprise;Prochaine action;Notes\nPilote A;Fictive A;Préparer une réunion;Le client demande un exemple.',
       );
