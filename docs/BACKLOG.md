@@ -1,5 +1,9 @@
 # Backlog canonique
 
+## UL-023 — Texte de publication identifiable
+
+**DEBT-042**, responsable Codex, 24 octobre 2026. Thomas transmet un contenu live abouti à 15 h 35 (Europe/Paris), mais le texte destiné au lecteur est noyé parmi les explications. Le lot place le texte dans un encadré au début du résultat, conserve ses sauts de ligne et ajoute une copie explicite du corps seul. Brief, justifications, sources et limites restent accessibles dans un volet replié; les avertissements d'obsolescence et les erreurs restent visibles. Aucun changement du texte enregistré, du moteur, des contrôles de revue ou des données. [Journal](journal/2026-10-24-UL-023-content-preview.md).
+
 ## UL-022 — Diagnostic utile à la décision
 
 **DEBT-041**, prise par Codex le 24 octobre : sélection trop faible dans le résultat live et bilan ambigu entre fiche citée et offre comparée. Périmètre : priorité de lecture, premier lot de preuves, comptes déterministes, langage des sources/instructions et références UI. Aucun quota de comparaisons bloquant ni nouvelle boucle d'agent. Clôture : comptes vérifiés, continuité native et publication testées, puis relecture d'un diagnostic réel avant contenu. [Journal](journal/2026-10-24-UL-022-selection-coverage.md).

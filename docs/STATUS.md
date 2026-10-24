@@ -1,5 +1,9 @@
 # État actuel
 
+## UL-023 — Texte de publication identifiable
+
+**DEBT-042**, responsable Codex, 24 octobre 2026. Thomas transmet un contenu live abouti à 15 h 35 (Europe/Paris), mais le texte destiné au lecteur est noyé parmi les explications. Le lot place le texte dans un encadré au début du résultat, conserve ses sauts de ligne et ajoute une copie explicite du corps seul. Brief, justifications, sources et limites restent accessibles dans un volet replié; les avertissements d'obsolescence et les erreurs restent visibles. Aucun changement du texte enregistré, du moteur, des contrôles de revue ou des données. [Journal](journal/2026-10-24-UL-023-content-preview.md).
+
 ## UL-022 — Diagnostic utile à la décision
 
 **DEBT-041 — sélection et bilan, 24 octobre, Codex.** Thomas transmet un diagnostic live abouti à 02 h 34 (Europe/Paris). Deux offres sont comparées et une troisième fiche est citée pour expliquer son exclusion, sur quarante disponibles. Les mots « digest » et « substitut » restent visibles; une offre visant surtout les grandes entreprises occupe encore une place importante. Ce texte ne donne ni révision déployée ni trace des appels. Le lot clarifie les comptes disponibles/fournis/cités/comparés, privilégie le besoin et la clientèle documentés avant le volume de mots-clés, élargit le premier lot borné et simplifie les consignes et références. [Journal](journal/2026-10-24-UL-022-selection-coverage.md).

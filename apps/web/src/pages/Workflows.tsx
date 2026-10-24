@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { api } from '../api.ts';
 import { Banner, ErrorBanner, Loading, PageHeader } from '../components/ui.tsx';
+import { PublicationPreview } from '../components/PublicationPreview.tsx';
 import { formatDateTime } from '../format.ts';
 import { can, useSession } from '../session.tsx';
 import { MODE_LABELS } from './Analyses.tsx';
@@ -180,18 +181,9 @@ function ResultCard({
       limit.startsWith('Périmètre de la comparaison :') ||
       limit.startsWith('Couverture de cette synthèse :'),
   );
-  return (
-    <article className="section workflow-result" id={run.id}>
-      <div className="workflow-result-head">
-        <h2>
-          {r?.content?.title ??
-            (run.kind === 'buyer' ? 'Diagnostic acheteur' : 'Contenu contextualisé')}
-        </h2>
-        <span className="badge">{STATES[run.status]}</span>
-      </div>
-      <p className="small muted">
-        {formatDateTime(run.createdAt)} · {MODE_LABELS[run.mode]}
-      </p>
+  const publication = run.kind === 'content' ? r?.content : null;
+  const briefContext = (
+    <>
       <p>
         <strong>{run.brief.target || 'Cible à préciser'}</strong> · {PHASES[run.brief.phase]} ·{' '}
         {run.brief.objective || 'Objectif à préciser'}
@@ -206,6 +198,134 @@ function ResultCard({
           </Link>
         </Banner>
       )}
+    </>
+  );
+  const explanation = r && (
+    <>
+      <p className="lead">{r.summary}</p>
+      {r.questions.length > 0 && (
+        <div className="workflow-questions">
+          <h3>{run.kind === 'buyer' ? 'À clarifier avant de décider' : 'Pour avancer'}</h3>
+          <ul>
+            {r.questions.map((q) => (
+              <li key={q}>{q}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {r.findings.map((f, i) => (
+        <section key={`${f.topic}-${i}`}>
+          <h3>{f.topic}</h3>
+          <p>{f.analysis}</p>
+          <References refs={f.references} sources={sources} researchId={run.researchId} />
+        </section>
+      ))}
+      {r.benchmark.length > 0 && (
+        <>
+          <h3>Comparaison des offres</h3>
+          {coverage && (
+            <section aria-label="Périmètre de la comparaison">
+              <h4>Sur quelles informations repose cette comparaison ?</h4>
+              <p>{coverage}</p>
+            </section>
+          )}
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Alternative</th>
+                  <th>Comparaison et preuves</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.benchmark.map((f, i) => (
+                  <tr key={`${f.topic}-${i}`}>
+                    <td>{f.topic}</td>
+                    <td>
+                      {f.analysis}
+                      <References
+                        refs={f.references}
+                        sources={sources}
+                        researchId={run.researchId}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {r.uniqueness && (
+        <section className="workflow-verdict">
+          <h3>Ce qui distingue votre offre</h3>
+          <strong>
+            {
+              {
+                plausible: 'Différence plausible dans les sources consultées',
+                not_differentiated: 'Différence non démontrée face aux alternatives',
+                insufficient_evidence: 'Preuves insuffisantes pour conclure',
+              }[r.uniqueness.verdict]
+            }
+          </strong>
+          <p>{r.uniqueness.reason}</p>
+          <References
+            refs={r.uniqueness.references}
+            sources={sources}
+            researchId={run.researchId}
+          />
+        </section>
+      )}
+      {r.buyerQuestions.length > 0 && (
+        <>
+          <h3>Questions d’achat simulées</h3>
+          <p className="small muted">
+            Hypothèses à tester ; elles ne représentent pas une demande consommateur mesurée.
+          </p>
+          <ul>
+            {r.buyerQuestions.map((q) => (
+              <li key={q}>{q}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {r.content && (
+        <>
+          <p>
+            <strong>Prochaine étape proposée au lecteur :</strong> {r.content.callToAction}
+          </p>
+          <h3>Pourquoi ce contenu</h3>
+          <p>{r.content.rationale}</p>
+          <References refs={r.content.references} sources={sources} researchId={run.researchId} />
+        </>
+      )}
+      {r.limits.length > 0 && (
+        <section className="workflow-limits">
+          <h3>Limites et points à vérifier</h3>
+          <ul>
+            {r.limits
+              .filter((l) => !r.benchmark.length || l !== coverage)
+              .map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+          </ul>
+        </section>
+      )}
+    </>
+  );
+  return (
+    <article className="section workflow-result" id={run.id}>
+      <div className="workflow-result-head">
+        <h2>
+          {r?.content?.title ??
+            (run.kind === 'buyer' ? 'Diagnostic acheteur' : 'Contenu contextualisé')}
+        </h2>
+        <span className="badge">{STATES[run.status]}</span>
+      </div>
+      <p className="small muted">
+        {formatDateTime(run.createdAt)} · {MODE_LABELS[run.mode]}
+      </p>
+      {!publication && briefContext}
       {run.stale && (
         <Banner kind="warning">
           Des sources, le contexte ou la doctrine ont changé ou sont trop anciens. Relancez
@@ -223,123 +343,17 @@ function ResultCard({
           )}
         </Banner>
       )}
-      {r && (
+      {publication ? (
         <>
-          <p className="lead">{r.summary}</p>
-          {r.questions.length > 0 && (
-            <div className="workflow-questions">
-              <h3>{run.kind === 'buyer' ? 'À clarifier avant de décider' : 'Pour avancer'}</h3>
-              <ul>
-                {r.questions.map((q) => (
-                  <li key={q}>{q}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {r.findings.map((f, i) => (
-            <section key={`${f.topic}-${i}`}>
-              <h3>{f.topic}</h3>
-              <p>{f.analysis}</p>
-              <References refs={f.references} sources={sources} researchId={run.researchId} />
-            </section>
-          ))}
-          {r.benchmark.length > 0 && (
-            <>
-              <h3>Comparaison des offres</h3>
-              {coverage && (
-                <section aria-label="Périmètre de la comparaison">
-                  <h4>Sur quelles informations repose cette comparaison ?</h4>
-                  <p>{coverage}</p>
-                </section>
-              )}
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Alternative</th>
-                      <th>Comparaison et preuves</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {r.benchmark.map((f, i) => (
-                      <tr key={`${f.topic}-${i}`}>
-                        <td>{f.topic}</td>
-                        <td>
-                          {f.analysis}
-                          <References
-                            refs={f.references}
-                            sources={sources}
-                            researchId={run.researchId}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-          {r.uniqueness && (
-            <section className="workflow-verdict">
-              <h3>Ce qui distingue votre offre</h3>
-              <strong>
-                {
-                  {
-                    plausible: 'Différence plausible dans les sources consultées',
-                    not_differentiated: 'Différence non démontrée face aux alternatives',
-                    insufficient_evidence: 'Preuves insuffisantes pour conclure',
-                  }[r.uniqueness.verdict]
-                }
-              </strong>
-              <p>{r.uniqueness.reason}</p>
-              <References
-                refs={r.uniqueness.references}
-                sources={sources}
-                researchId={run.researchId}
-              />
-            </section>
-          )}
-          {r.buyerQuestions.length > 0 && (
-            <>
-              <h3>Questions d’achat simulées</h3>
-              <p className="small muted">
-                Hypothèses à tester ; elles ne représentent pas une demande consommateur mesurée.
-              </p>
-              <ul>
-                {r.buyerQuestions.map((q) => (
-                  <li key={q}>{q}</li>
-                ))}
-              </ul>
-            </>
-          )}
-          {r.content && (
-            <>
-              <div className="workflow-copy">{r.content.body}</div>
-              <p>
-                <strong>Prochaine étape proposée au lecteur :</strong> {r.content.callToAction}
-              </p>
-              <h3>Pourquoi ce contenu</h3>
-              <p>{r.content.rationale}</p>
-              <References
-                refs={r.content.references}
-                sources={sources}
-                researchId={run.researchId}
-              />
-            </>
-          )}
-          {r.limits.length > 0 && (
-            <section className="workflow-limits">
-              <h3>Limites et points à vérifier</h3>
-              <ul>
-                {r.limits
-                  .filter((l) => !r.benchmark.length || l !== coverage)
-                  .map((l) => (
-                    <li key={l}>{l}</li>
-                  ))}
-              </ul>
-            </section>
-          )}
+          <PublicationPreview key={`${run.id}:${run.revision}`} body={publication.body} />
+          <details className="publication-explanation">
+            <summary>Comprendre ce contenu et vérifier les sources</summary>
+            {briefContext}
+            {explanation}
+          </details>
         </>
+      ) : (
+        explanation
       )}
       <div className="workflow-actions">
         {can(session, 'recommendation:revise') && (

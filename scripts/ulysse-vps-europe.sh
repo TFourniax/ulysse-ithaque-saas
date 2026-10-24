@@ -13,7 +13,7 @@ ULYSSE_RELEASES="$ULYSSE_PRIVATE/november-releases"
 ULYSSE_ACTIVE="$ULYSSE_PRIVATE/november-active"
 ULYSSE_SOCKET=/run/user/10002/docker.sock
 ULYSSE_PROJECT=ulysse
-ULYSSE_SCRIPT_VERSION=2026-10-24.anthropic5-selection
+ULYSSE_SCRIPT_VERSION=2026-10-24.content1-preview
 die() { printf 'ARRET : %s\n' "$*" >&2; return 1; }
 say() { printf '%s\n' "$*"; }
 [[ $(hostname) == hermes-prospection-prod ]] || die 'VPS inattendu'
@@ -552,9 +552,9 @@ revision=${2:-}
 git -C "$ULYSSE_REPO" diff --quiet && git -C "$ULYSSE_REPO" diff --cached --quiet || die 'correctifs locaux suivis par Git : les conserver et les examiner avant la mise a jour'
 # Mettre aussi a jour la reference distante dans les clones mono-branche.
 git -C "$ULYSSE_REPO" fetch origin \
-  refs/heads/codex/ul-021-anthropic-native:refs/remotes/origin/codex/ul-021-anthropic-native
+  refs/heads/codex/ul-023-content-preview:refs/remotes/origin/codex/ul-023-content-preview
 git -C "$ULYSSE_REPO" cat-file -e "$revision^{commit}"
-git -C "$ULYSSE_REPO" merge-base --is-ancestor "$revision" origin/codex/ul-021-anthropic-native || die 'commit hors de la branche Anthropic UL-021'
+git -C "$ULYSSE_REPO" merge-base --is-ancestor "$revision" origin/codex/ul-023-content-preview || die 'commit hors de la branche contenu UL-023'
 git -C "$ULYSSE_REPO" merge-base --is-ancestor HEAD "$revision" || die 'le depot VPS contient une lignee qui manque dans la version demandee'
 release=$(mktemp -d "$ULYSSE_RELEASES/${revision:0:7}-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
 current_config > "$release/before.json"
