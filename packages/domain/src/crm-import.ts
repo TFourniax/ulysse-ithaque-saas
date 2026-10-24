@@ -26,6 +26,14 @@ export type CrmColumnRole =
   | 'competitors'
   | 'history';
 export type CrmColumn = { index: number; label: string; role: CrmColumnRole };
+export type CrmNumberFormat = 'auto' | 'fr' | 'en';
+export type CrmImportAdjustments = {
+  numberFormat?: CrmNumberFormat;
+  defaultCurrency?: string;
+  cells?: { row: number; column: number; value: string }[];
+  rowCurrencies?: { row: number; currency: string }[];
+};
+export type CrmEditableCell = { column: number; original: string; value: string };
 export type CrmImportRow = {
   row: number;
   title: string;
@@ -35,6 +43,9 @@ export type CrmImportRow = {
   fields: OpportunityFields | null;
   errors: string[];
   warnings: string[];
+  editableCells?: CrmEditableCell[];
+  currencyOverride?: string;
+  correctionCount?: number;
 };
 export type CrmFile = { columns: CrmColumn[]; rows: CrmImportRow[]; delimiter: string };
 export type CrmMatch = CrmImportRow & {

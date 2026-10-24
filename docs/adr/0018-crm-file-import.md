@@ -31,3 +31,11 @@ L’aperçu disparaît après intégration ou annulation. Un aperçu abandonné 
 ## Limites et suite
 
 Ce lot alimente les affaires et la préparation de leurs prochaines actions. Il ne publie pas les noms ou notes CRM dans un contenu marketing. Le rapprochement contrôlé de ces observations avec les parcours acheteur/contenu, la doctrine de Denis protégée et le suivi d’une action réellement effectuée restent des lots explicites du MVP. Un import et des tests techniques réussis ne constituent pas la recette commerciale du MVP.
+
+## Complément — correction de l’aperçu (DEBT-043)
+
+Les corrections sont des choix structurés de l’utilisateur : format des nombres, devise par défaut si absente, cellules retenues et devise corrigée d’une affaire sans conversion. Le serveur reparcourt le CSV original, applique les seules corrections permises, normalise et valide à nouveau, puis crée un nouvel aperçu. L’ancien aperçu ne peut plus être confirmé. Les refus d’accès détectés dans le fichier ne sont jamais masqués par une correction ou un remapping. Les identifiants source restent non éditables.
+
+Les cellules sélectionnées sont visibles dans l’aperçu, y compris sur une ligne invalide, afin de permettre leur correction. Les colonnes ignorées ne sont pas exposées ni conservées. Une erreur de validation ne modifie aucune affaire. Les valeurs avant/après et les décisions d’interprétation sont conservées dans un document commercial « Corrections à l’import », distinct des informations du fichier; l’acteur reste attribué par le lot et l’audit. Les limites documentaires habituelles restent appliquées sans tronquage silencieux.
+
+La reconnaissance des nombres reste déterministe : formats français et anglais, groupements réguliers, unités explicites. Un séparateur isolé ambigu nécessite un choix plutôt qu’une estimation par un modèle. Le dialogue consiste à régler des options ou éditer des valeurs, puis revoir le résultat. Aucun interpréteur de consignes libres ni appel de modèle supplémentaire n’est ajouté. Le worker reçoit le résultat validé par le même circuit. Les migrations déjà appliquées ne changent pas.

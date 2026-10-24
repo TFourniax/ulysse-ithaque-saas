@@ -4,7 +4,7 @@ import { createRegistry, FixtureConnector, MemoryFixtureStore } from '@ulysse/co
 import type { Pool } from '@ulysse/database';
 import { AdminClient, createPool, IdentityRepository, PgUnitOfWork } from '@ulysse/database';
 import { PgCrmImportStore } from '@ulysse/database';
-import type { CrmPreviewDto } from '@ulysse/contracts';
+import type { CrmAdjustmentsDto, CrmPreviewDto } from '@ulysse/contracts';
 import type { TestDatabase } from '@ulysse/database/testing';
 import { createTestDatabase } from '@ulysse/database/testing';
 import type { ServiceDeps } from '@ulysse/domain';
@@ -749,6 +749,95 @@ describe('UL-017 workspace authorization and provenance', () => {
 });
 
 describe('reviewed CRM CSV imports through authenticated API and worker roles', () => {
+  test('review corrections are validated, replace only the preview and persist with provenance after confirmation', async () => {
+    const owner = await signedIn('alice');
+    const headers = { cookie: owner.cookie, 'x-csrf-token': owner.csrf };
+    const csv =
+      'Titre;Entreprise;Montant;Prochaine action\nRévision fictive A;Atelier fictif A;1,234;Appeler\nRévision fictive B;Atelier fictif B;inconnu;Écrire';
+    const propose = (adjustments?: CrmAdjustmentsDto) =>
+      app.inject({
+        method: 'POST',
+        url: '/v1/crm/imports/preview',
+        headers,
+        payload: {
+          filename: 'corrections.csv',
+          text: csv,
+          connectionId: null,
+          ...(adjustments ? { adjustments } : {}),
+        },
+      });
+    const first = await propose();
+    assert.equal(first.statusCode, 201, first.body);
+    const invalid = first.json<CrmPreviewDto>();
+    assert.ok(invalid.rows.every((r) => r.action === 'invalid'));
+    const malformed = await propose({ cells: [{ row: 100, column: 2, value: '20' }] });
+    assert.equal(malformed.statusCode, 422);
+    const corrected = await propose({
+      numberFormat: 'en',
+      defaultCurrency: 'EUR',
+      cells: [
+        { row: 3, column: 2, value: '' },
+        { row: 2, column: 3, value: 'Préparer une réunion' },
+      ],
+    });
+    assert.equal(corrected.statusCode, 201, corrected.body);
+    const p = corrected.json<CrmPreviewDto>();
+    assert.ok(p.rows.every((r) => r.action === 'create'));
+    assert.ok(p.rows[0]?.details.some((d) => d.value === '1234 EUR'));
+    assert.equal(p.rows[1]?.editableCells?.find((c) => c.column === 2)?.original, 'inconnu');
+    const obsolete = await app.inject({
+      method: 'POST',
+      url: `/v1/crm/imports/${invalid.id}/confirm`,
+      headers,
+      payload: { resolutions: [] },
+    });
+    assert.equal(obsolete.statusCode, 409, obsolete.body);
+    const workerPool = createPool({
+      connectionString: db.workerUrl,
+      applicationName: 'csv-corrections-worker',
+      max: 2,
+    });
+    try {
+      const ctx = serviceContext(tenants.A ?? '');
+      const uow = new PgUnitOfWork(workerPool);
+      const before = await uow.run(ctx, (tx) =>
+        tx.listOpportunitiesForAnalysis(new Date(0).toISOString()),
+      );
+      assert.ok(
+        !before.some((o) => o.fields.name === 'Révision fictive A'),
+        'review is not an import',
+      );
+      const accepted = await app.inject({
+        method: 'POST',
+        url: `/v1/crm/imports/${p.id}/confirm`,
+        headers,
+        payload: { resolutions: [] },
+      });
+      assert.equal(accepted.statusCode, 202, accepted.body);
+      const { connectionId } = accepted.json<{ connectionId: string }>();
+      await new PgCrmImportStore(workerPool).apply(ctx, connectionId);
+      const all = await uow.run(ctx, (tx) =>
+        tx.listOpportunitiesForAnalysis(new Date(0).toISOString()),
+      );
+      const imported = all.filter((o) => o.connectionId === connectionId);
+      assert.equal(imported.length, 2);
+      assert.deepEqual(
+        imported.find((o) => o.fields.name === 'Révision fictive A')?.fields.amount,
+        { state: 'present', value: { amount: '1234', currency: 'EUR' } },
+      );
+      assert.deepEqual(
+        imported.find((o) => o.fields.name === 'Révision fictive B')?.fields.amount,
+        { state: 'empty' },
+      );
+      assert.ok(
+        imported.every((o) =>
+          o.fields.commercial?.materials.some((m) => m.title === 'Corrections à l’import'),
+        ),
+      );
+    } finally {
+      await workerPool.end();
+    }
+  });
   test('preview → confirmation → worker import; replay, update and missing rows preserve identifiers', async () => {
     const s = await signedIn('alice');
     const headers = { cookie: s.cookie, 'x-csrf-token': s.csrf };

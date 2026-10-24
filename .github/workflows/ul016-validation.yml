@@ -10,6 +10,7 @@ on:
         'codex/ul-019-model-profiles',
         'codex/ul-020-web-research',
         'codex/ul-023-content-preview',
+        'codex/ul-024-crm-import',
       ]
   workflow_dispatch:
 permissions:

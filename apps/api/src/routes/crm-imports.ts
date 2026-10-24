@@ -39,7 +39,12 @@ export function registerCrmImportRoutes(
           'Choisissez un fichier CSV. Depuis Excel, utilisez « Enregistrer sous → CSV UTF-8 ».',
         );
       try {
-        const parsed = parseCrmCsv(req.body.text, req.body.mapping);
+        const parsed = parseCrmCsv(
+          req.body.text,
+          req.body.mapping,
+          new Date().toISOString(),
+          req.body.adjustments,
+        );
         const preview = await store.preview(ctx, req.body.filename, parsed, req.body.connectionId);
         const rows = preview.rows.map((r) => {
           const f = r.fields;

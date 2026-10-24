@@ -2,6 +2,8 @@
 
 ## UL-024 — Import CRM avant l’API Néréis
 
+**DEBT-043 — corrections avant import**, prise Codex le 24 octobre. Thomas rapporte trois lignes écartées pour montant/devise et demande de les ajuster dans l’aperçu. Le lot ajoute reconnaissance prudente des formats Excel, choix commun format/devise, correction des cellules autorisées par affaire, nouvel aperçu obligatoire, conservation des choix de rapprochement et provenance des corrections. Aucune migration historique ni donnée déployée modifiée. [Journal](journal/2026-10-24-UL-024-import-corrections.md). Clôture : tests de conversion et de refus, import réel via navigateur/API/worker, puis reprise du CSV réel sur la démo.
+
 En cours, responsable Codex, 24 octobre 2026. Thomas autorise la suite du chantier MVP et confirme un parcours de dépôt CSV simple. Ce lot ajoute aperçu, rapprochements revus, identifiants Ulysse, réimport, intégration par le worker existant et retrait des données. Les diagnostics et contenus restent sur leur circuit actuel. [Journal](journal/2026-10-24-UL-024-crm-import.md), [guide](CRM-IMPORT.md), [conditions MVP et lots suivants](MVP-NEXT.md). Aucun déploiement ni qualification MVP annoncé.
 
 ## UL-023 — Texte de publication identifiable
