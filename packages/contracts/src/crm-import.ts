@@ -24,6 +24,43 @@ export const CrmColumnRole = z.enum([
   'history',
 ]);
 export type CrmColumnRoleDto = z.infer<typeof CrmColumnRole>;
+export const CrmAdjustments = z
+  .object({
+    numberFormat: z.enum(['auto', 'fr', 'en']).optional(),
+    defaultCurrency: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z]{3}$/)
+      .optional(),
+    cells: z
+      .array(
+        z
+          .object({
+            row: z.number().int().min(2).max(2001),
+            column: z.number().int().min(0).max(199),
+            value: z.string().max(48000),
+          })
+          .strict(),
+      )
+      .max(10000)
+      .optional(),
+    rowCurrencies: z
+      .array(
+        z
+          .object({
+            row: z.number().int().min(2).max(2001),
+            currency: z
+              .string()
+              .trim()
+              .regex(/^[A-Za-z]{3}$/),
+          })
+          .strict(),
+      )
+      .max(2000)
+      .optional(),
+  })
+  .strict();
+export type CrmAdjustmentsDto = z.infer<typeof CrmAdjustments>;
 export const CrmUpload = z
   .object({
     filename: z.string().trim().min(1).max(200),
@@ -33,6 +70,7 @@ export const CrmUpload = z
       .max(5 * 1024 * 1024),
     connectionId: z.uuid().nullable(),
     mapping: z.array(CrmColumnRole).max(200).optional(),
+    adjustments: CrmAdjustments.optional(),
   })
   .strict();
 export const CrmPreview = z.object({
@@ -53,6 +91,11 @@ export const CrmPreview = z.object({
       targetId: z.uuid().nullable(),
       choices: z.array(z.object({ id: z.uuid(), title: z.string(), company: z.string() })),
       details: z.array(z.object({ label: z.string(), value: z.string() })),
+      editableCells: z
+        .array(z.object({ column: z.number().int(), original: z.string(), value: z.string() }))
+        .optional(),
+      currencyOverride: z.string().optional(),
+      correctionCount: z.number().int().nonnegative().optional(),
     }),
   ),
 });

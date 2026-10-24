@@ -3,9 +3,11 @@ import type {
   CrmColumnRole,
   CrmFile,
   CrmImportRow,
+  CrmImportAdjustments,
   FieldValue,
   Money,
 } from '@ulysse/domain';
+import { crmMoney } from './crm-money.ts';
 import {
   empty,
   ensure,
@@ -157,6 +159,7 @@ export function parseCrmCsv(
   text: string,
   mapping?: CrmColumnRole[],
   observedAt = new Date().toISOString(),
+  adjustments: CrmImportAdjustments = {},
 ): CrmFile {
   if (!text || Buffer.byteLength(text, 'utf8') > CRM_MAX_BYTES)
     throw new CrmCsvError('Choisissez un CSV de moins de 5 Mo.');
@@ -200,6 +203,38 @@ export function parseCrmCsv(
     label: label || `Colonne ${index + 1}`,
     role: mapping?.[index] ?? crmRole(label),
   }));
+  const edits = new Map<string, string>();
+  let editedBytes = 0;
+  for (const edit of adjustments.cells ?? []) {
+    const column = columns[edit.column];
+    if (
+      !column ||
+      !table[edit.row - 2] ||
+      ['ignore', 'visibility', 'externalId'].includes(column.role) ||
+      ['visibility', 'externalId'].includes(crmRole(column.label))
+    )
+      throw new CrmCsvError(
+        'Cette cellule ne peut pas être corrigée ici. Vérifiez les colonnes et les restrictions du fichier.',
+      );
+    const key = `${edit.row}:${edit.column}`;
+    if (edits.has(key)) throw new CrmCsvError('La même cellule a reçu plusieurs corrections.');
+    if (edit.value.includes('\u0000') || edit.value.includes('\ufffd') || edit.value.length > 48000)
+      throw new CrmCsvError('Une correction contient une valeur illisible ou trop longue.');
+    editedBytes += Buffer.byteLength(edit.value, 'utf8');
+    if (editedBytes > CRM_MAX_BYTES)
+      throw new CrmCsvError('Les corrections dépassent 5 Mo. Réduisez leur contenu.');
+    edits.set(key, edit.value.trim());
+  }
+  const currencies = new Map<number, string>();
+  for (const correction of adjustments.rowCurrencies ?? []) {
+    if (
+      !table[correction.row - 2] ||
+      currencies.has(correction.row) ||
+      !/^[A-Za-z]{3}$/.test(correction.currency)
+    )
+      throw new CrmCsvError('Correction de devise invalide.');
+    currencies.set(correction.row, correction.currency.toUpperCase());
+  }
   const single: CrmColumnRole[] = [
     'title',
     'company',
@@ -216,7 +251,35 @@ export function parseCrmCsv(
     'opposed',
     'pauseUntil',
   ];
-  const rows = table.map((values, index) => normalizeRow(columns, values, index + 2, observedAt));
+  const rows = table.map((original, index) => {
+    const row = index + 2;
+    const values = original.map((value, column) => edits.get(`${row}:${column}`) ?? value);
+    const changes = columns
+      .filter((c) => values[c.index] !== original[c.index])
+      .map((c) => `${c.label} : ${original[c.index] || '(vide)'} → ${values[c.index] || '(vide)'}`);
+    const normalized = normalizeRow(
+      columns,
+      values,
+      row,
+      observedAt,
+      adjustments,
+      currencies.get(row),
+      changes,
+    );
+    normalized.editableCells = columns
+      .filter(
+        (c) =>
+          !['ignore', 'visibility', 'externalId'].includes(c.role) &&
+          !['visibility', 'externalId'].includes(crmRole(c.label)),
+      )
+      .map((c) => ({
+        column: c.index,
+        original: original[c.index] ?? '',
+        value: values[c.index] ?? '',
+      }));
+    normalized.currencyOverride = currencies.get(row) ?? '';
+    return normalized;
+  });
   if (single.some((role) => columns.filter((c) => c.role === role).length > 1)) {
     for (const row of rows) {
       row.errors.push(
@@ -240,6 +303,9 @@ function normalizeRow(
   values: string[],
   row: number,
   at: string,
+  adjustments: CrmImportAdjustments,
+  currencyOverride: string | undefined,
+  changes: string[],
 ): CrmImportRow {
   const errors: string[] = [],
     warnings: string[] = [];
@@ -312,20 +378,25 @@ function normalizeRow(
   const a = get('amount');
   if (a === '') amount = empty;
   else if (a !== undefined) {
-    const decimal = a.replace(/[\s\u00a0\u202f€]/g, '').replace(',', '.');
-    const currency = (
-      get('currency') ||
-      (columns.find((c) => c.role === 'amount')?.label.includes('€') || a.includes('€')
-        ? 'EUR'
-        : '')
-    )
-      .replace('€', 'EUR')
-      .toUpperCase();
-    if (!/^-?\d{1,15}(\.\d{1,4})?$/.test(decimal) || !/^[A-Z]{3}$/.test(currency))
-      errors.push(
-        'Montant ou devise ambigu : précisez une valeur décimale et une devise (EUR, USD…).',
-      );
-    else amount = present({ amount: decimal, currency });
+    const money = crmMoney(a, {
+      heading: columns.find((c) => c.role === 'amount')?.label ?? '',
+      format: adjustments.numberFormat ?? 'auto',
+      ...(get('currency') ? { fieldCurrency: get('currency') } : {}),
+      ...(adjustments.defaultCurrency ? { defaultCurrency: adjustments.defaultCurrency } : {}),
+      ...(currencyOverride ? { override: currencyOverride } : {}),
+    });
+    if (money.error) errors.push(money.error);
+    else if (money.money) {
+      amount = present(money.money);
+      if (
+        currencyOverride ||
+        money.usedDefault ||
+        (adjustments.numberFormat && adjustments.numberFormat !== 'auto')
+      )
+        changes.push(
+          `Montant relu : ${a} → ${money.money.amount} ${money.money.currency}. Devise dans le fichier : ${get('currency') || columns.find((c) => c.role === 'amount')?.label || 'non indiquée'}. Format choisi : ${adjustments.numberFormat ?? 'auto'}${currencyOverride ? '. Devise corrigée sans conversion' : ''}.`,
+        );
+    }
   }
   const stageText = norm(get('stage') ?? '');
   const stage = ['gagne', 'won', 'gagnee'].includes(stageText)
@@ -361,6 +432,20 @@ function normalizeRow(
         title: label,
         text: `Source : export CRM. Date du document : dépôt du fichier.\n${text.slice(start, start + 3900)}`,
         author: 'Export CRM',
+        occurredAt: at,
+      });
+  }
+  if (changes.length) {
+    result.correctionCount = changes.length;
+    const text = `Corrections décidées par l’utilisateur avant import, à distinguer des valeurs du fichier.\n${changes.join('\n')}`;
+    for (let start = 0; start < text.length; start += 3900)
+      materials.push({
+        id: `crm_${materials.length + 1}`,
+        version: 1,
+        type: 'document',
+        title: 'Corrections à l’import',
+        text: text.slice(start, start + 3900),
+        author: 'Responsable de l’import',
         occurredAt: at,
       });
   }

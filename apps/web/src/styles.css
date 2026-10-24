@@ -2632,6 +2632,44 @@ details[open]::details-content {
 .crm-history li {
   margin-block: 1rem;
 }
+.crm-money-options {
+  margin-block: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem;
+  min-width: 0;
+}
+.crm-money-options legend,
+.crm-edit > summary {
+  font-weight: 600;
+}
+.crm-edit {
+  margin-top: 0.75rem;
+}
+.crm-edit-fields {
+  display: grid;
+  gap: 0.75rem;
+  margin-block: 0.75rem;
+}
+.crm-edit-fields label {
+  min-width: 0;
+}
+.crm-edit-fields textarea,
+.crm-edit-fields input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+}
+.crm-edit-fields .small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.crm-corrections-pending {
+  margin-block: 1rem;
+  padding: 1rem;
+  border-left: 3px solid var(--ink);
+}
 @media (max-width: 640px) {
   .crm-drop {
     padding: 1rem;

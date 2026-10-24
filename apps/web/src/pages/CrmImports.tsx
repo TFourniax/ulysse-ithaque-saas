@@ -1,4 +1,9 @@
-import type { CrmColumnRoleDto, CrmImportSummaryDto, CrmPreviewDto } from '@ulysse/contracts';
+import type {
+  CrmAdjustmentsDto,
+  CrmColumnRoleDto,
+  CrmImportSummaryDto,
+  CrmPreviewDto,
+} from '@ulysse/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { Link } from 'react-router';
@@ -6,6 +11,7 @@ import { api, useConnections } from '../api.ts';
 import { Banner, ErrorBanner, Loading, PageHeader, TableScroll } from '../components/ui.tsx';
 import { formatDateTime } from '../format.ts';
 import { can, useSession } from '../session.tsx';
+import { CrmImportRowEditor } from './CrmImportRowEditor.tsx';
 
 const ROLES: Record<CrmColumnRoleDto, string> = {
   ignore: 'Ne pas utiliser',
@@ -48,6 +54,14 @@ const STATUS: Record<string, string> = {
 function defaultTarget(r: CrmPreviewDto['rows'][number]): string {
   return r.action === 'invalid' ? 'skip' : r.action === 'choose' ? '' : (r.targetId ?? 'new');
 }
+function adjustmentKey(a: CrmAdjustmentsDto): string {
+  return JSON.stringify([
+    a.numberFormat ?? 'auto',
+    a.defaultCurrency ?? '',
+    [...(a.cells ?? [])].sort((a, b) => a.row - b.row || a.column - b.column),
+    [...(a.rowCurrencies ?? [])].sort((a, b) => a.row - b.row),
+  ]);
+}
 
 export function CrmImportsPage() {
   const session = useSession(),
@@ -63,6 +77,8 @@ export function CrmImportsPage() {
   const [connectionId, setConnectionId] = useState('');
   const [preview, setPreview] = useState<CrmPreviewDto | null>(null);
   const [mapping, setMapping] = useState<CrmColumnRoleDto[]>([]);
+  const [adjustments, setAdjustments] = useState<CrmAdjustmentsDto>({});
+  const [draftAdjustments, setDraftAdjustments] = useState<CrmAdjustmentsDto>({});
   const [resolutions, setResolutions] = useState<Record<number, string>>({});
   const [error, setError] = useState<Error | null>(null);
   const [limit, setLimit] = useState(50);
@@ -87,6 +103,7 @@ export function CrmImportsPage() {
       text: string;
       connectionId: string | null;
       mapping?: CrmColumnRoleDto[];
+      adjustments?: CrmAdjustmentsDto;
     }) => api<CrmPreviewDto>('/v1/crm/imports/preview', { method: 'POST', body }),
   });
   const confirm = useMutation({
@@ -123,21 +140,38 @@ export function CrmImportsPage() {
   async function inspect(
     selected: { filename: string; text: string },
     columns?: CrmColumnRoleDto[],
+    corrections: CrmAdjustmentsDto = adjustments,
   ) {
     const serial = ++requestSerial.current;
     setError(null);
-    setPreview(null);
     confirm.reset();
     try {
       const p = await prepare.mutateAsync({
         ...selected,
         connectionId: selectedConnection || null,
         ...(columns ? { mapping: columns } : {}),
+        adjustments: corrections,
       });
       if (serial !== requestSerial.current) return;
       setPreview(p);
       setMapping(p.columns.map((c) => c.role));
-      setResolutions({});
+      setAdjustments(corrections);
+      setDraftAdjustments(corrections);
+      setResolutions((old) =>
+        Object.fromEntries(
+          Object.entries(old).filter(([row, target]) => {
+            const r = p.rows.find((r) => r.row === Number(row));
+            return (
+              r &&
+              (target === 'skip' ||
+                (r.action !== 'invalid' &&
+                  (target === 'new' ||
+                    r.targetId === target ||
+                    r.choices.some((c) => c.id === target))))
+            );
+          }),
+        ),
+      );
       setLimit(50);
     } catch (e) {
       if (serial === requestSerial.current)
@@ -151,6 +185,9 @@ export function CrmImportsPage() {
     setError(null);
     setPreview(null);
     setFile(null);
+    setAdjustments({});
+    setDraftAdjustments({});
+    setResolutions({});
     confirm.reset();
     if (!selected.name.toLowerCase().endsWith('.csv')) {
       setError(
@@ -175,7 +212,7 @@ export function CrmImportsPage() {
       }
       const next = { filename: selected.name, text };
       setFile(next);
-      await inspect(next);
+      await inspect(next, undefined, {});
     } catch (e) {
       if (serial === fileSerial.current)
         setError(e instanceof Error ? e : new Error('Lecture du fichier impossible.'));
@@ -188,6 +225,10 @@ export function CrmImportsPage() {
       .length ?? 0;
   const skipped = (preview?.rows.length ?? 0) - included - unresolved;
   const mappingChanged = preview?.columns.some((c) => mapping[c.index] !== c.role) ?? false;
+  const correctionsChanged = adjustmentKey(adjustments) !== adjustmentKey(draftAdjustments);
+  const currenciesValid =
+    (!draftAdjustments.defaultCurrency || /^[A-Z]{3}$/.test(draftAdjustments.defaultCurrency)) &&
+    (draftAdjustments.rowCurrencies ?? []).every((c) => /^[A-Z]{3}$/.test(c.currency));
   const busy = prepare.isPending || confirm.isPending || cancel.isPending;
   const uploadDisabled =
     busy || !connections.isSuccess || (fileConnections.length > 1 && !selectedConnection);
@@ -267,7 +308,7 @@ export function CrmImportsPage() {
               }
             />
           )}
-          {error && <ErrorBanner error={error} />}
+          {error && !preview && <ErrorBanner error={error} />}
         </section>
       )}
       {preview && (
@@ -281,6 +322,59 @@ export function CrmImportsPage() {
             {preview.missing} affaire(s) déjà connue(s) ne sont pas rapprochées automatiquement dans
             cet export. Elles seront conservées.
           </p>
+          {preview.columns.some((c) => c.role === 'amount') && (
+            <fieldset className="crm-money-options" disabled={busy}>
+              <legend>Ajuster les montants du fichier</legend>
+              <p className="small">
+                Choisissez un format commun si nécessaire. Vous pouvez aussi corriger chaque affaire
+                ci-dessous.
+              </p>
+              <div className="crm-column-grid">
+                <label>
+                  Format des montants
+                  <select
+                    aria-label="Format des montants"
+                    value={draftAdjustments.numberFormat ?? 'auto'}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === 'auto' || value === 'fr' || value === 'en')
+                        setDraftAdjustments((a) => ({ ...a, numberFormat: value }));
+                    }}
+                  >
+                    <option value="auto">Reconnaissance automatique</option>
+                    <option value="fr">Français : 1 234,56 ou 1.234,56</option>
+                    <option value="en">Anglais : 1,234.56</option>
+                  </select>
+                </label>
+                <label>
+                  Devise si elle manque dans le fichier
+                  <input
+                    maxLength={3}
+                    placeholder="Ex. EUR"
+                    value={draftAdjustments.defaultCurrency ?? ''}
+                    onChange={(e) => {
+                      const { defaultCurrency: _previous, ...rest } = draftAdjustments;
+                      setDraftAdjustments({
+                        ...rest,
+                        ...(e.target.value
+                          ? { defaultCurrency: e.target.value.toUpperCase() }
+                          : {}),
+                      });
+                    }}
+                  />
+                </label>
+              </div>
+              <p className="small muted">
+                Une devise déjà indiquée est conservée. Aucune conversion monétaire n’est effectuée.
+              </p>
+            </fieldset>
+          )}
+          {preview.rows.some((r) => r.correctionCount) && (
+            <p role="status">
+              {preview.rows.reduce((n, r) => n + (r.correctionCount ?? 0), 0)} correction(s) prises
+              en compte dans cet aperçu.
+            </p>
+          )}
           <details className="crm-columns">
             <summary>
               Informations reconnues : {preview.columns.filter((c) => c.role !== 'ignore').length}{' '}
@@ -319,9 +413,9 @@ export function CrmImportsPage() {
               <button
                 type="button"
                 className="button"
-                disabled={busy}
+                disabled={busy || !currenciesValid}
                 onClick={() => {
-                  if (file) void inspect(file, mapping);
+                  if (file) void inspect(file, mapping, draftAdjustments);
                 }}
               >
                 Actualiser l’aperçu
@@ -370,6 +464,13 @@ export function CrmImportsPage() {
                           </dl>
                         </details>
                       )}
+                      <CrmImportRowEditor
+                        row={r}
+                        columns={preview.columns}
+                        adjustments={draftAdjustments}
+                        disabled={busy}
+                        onChange={setDraftAdjustments}
+                      />
                     </td>
                     <td>
                       <label>
@@ -409,6 +510,36 @@ export function CrmImportsPage() {
               dont le rapprochement est incertain.
             </Banner>
           )}
+          {correctionsChanged && (
+            <div className="crm-corrections-pending" role="status">
+              <p>
+                Vos corrections ne sont pas encore appliquées. Vérifiez le nouvel aperçu avant de
+                confirmer l’import.
+              </p>
+              {!currenciesValid && <p>Une devise doit comporter trois lettres, par exemple EUR.</p>}
+              <div className="actions">
+                <button
+                  type="button"
+                  className="button button-primary"
+                  disabled={busy || !currenciesValid}
+                  onClick={() => {
+                    if (file) void inspect(file, mapping, draftAdjustments);
+                  }}
+                >
+                  Appliquer les corrections
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  disabled={busy}
+                  onClick={() => setDraftAdjustments(adjustments)}
+                >
+                  Annuler mes corrections
+                </button>
+              </div>
+            </div>
+          )}
+          {error && <ErrorBanner error={error} />}
           <p>
             Après confirmation, les affaires alimentent la préparation des prochaines actions avec
             le moteur configuré. Aucun message n’est envoyé à vos contacts.
@@ -417,7 +548,9 @@ export function CrmImportsPage() {
             <button
               type="button"
               className="button button-primary"
-              disabled={busy || mappingChanged || unresolved > 0 || included === 0}
+              disabled={
+                busy || correctionsChanged || mappingChanged || unresolved > 0 || included === 0
+              }
               onClick={() => confirm.mutate(preview)}
             >
               Importer {included} affaire(s){skipped ? ` — ${skipped} ligne(s) écartée(s)` : ''}
