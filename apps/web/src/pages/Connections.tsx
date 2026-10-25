@@ -162,7 +162,7 @@ export function ConnectionsPage() {
               <dd>{c.provider === 'crm-file' ? 'Fichiers CRM' : c.provider}</dd>
               <dt>Accès</dt>
               <dd>{c.grantedScopes.join(', ')}</dd>
-              <dt>Données confirmées</dt>
+              <dt>Données reçues</dt>
               <dd>
                 {c.dataAsOf
                   ? `${formatDateTime(c.dataAsOf)} (${formatRelative(c.dataAsOf)})`

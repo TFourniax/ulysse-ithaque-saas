@@ -4828,7 +4828,12 @@ describe('CRM imports reach the configured agent with tenant-owned doctrine', ()
       await w.agent.analyze(w.ctx, 'maintenance');
       const runs = await w.agent.store.list(w.owner);
       assert.equal(runs.length, 2, 'one new execution for the instruction revision');
-      assert.ok(runs.every((r) => r.status === 'completed'));
+      assert.deepEqual(
+        runs.map((r) => r.status).sort(),
+        state === 'pending' ? ['completed', 'completed'] : ['abstained', 'completed'],
+        'preserved human work deliberately produces no automatic replacement',
+      );
+      assert.ok(runs.every((r) => r.error_code === null));
       const original = (await w.queries.getRecommendation(w.owner, rec.id)).recommendation;
       const open = await w.open();
       if (state === 'pending') {

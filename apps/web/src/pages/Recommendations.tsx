@@ -133,7 +133,7 @@ function SourceStatus({ tenantId }: { tenantId: string }) {
           aria-hidden="true"
         />
         <span>
-          Données confirmées :{' '}
+          Données reçues :{' '}
           {active
             .map(
               (c) => `${c.displayName} ${c.dataAsOf ? formatRelative(c.dataAsOf) : '(en attente)'}`,

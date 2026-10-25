@@ -33,3 +33,7 @@ Après déploiement, la maintenance reprend les affaires admissibles sans nouvel
 6. Les citations montrent les valeurs utilisées. Approbation, rejet, pause, opposition et édition humaine restent respectés; aucun envoi externe.
 
 La qualité des nouvelles réponses réelles n’est pas garantie par les recettes scriptées. Doctrine Denis protégée, suivi d’action et autres lots du [MVP](../MVP-NEXT.md) restent à réaliser.
+
+## Première recette et précision du test de conservation
+
+Au commit `9bf1173`, les citations exactes et le remplacement d’une proposition en attente passent sous PostgreSQL. Trois nouvelles assertions attendaient à tort un run `completed` après approbation, rejet ou édition : le moteur enregistre `abstained` lorsqu’il ne publie aucun remplacement. Les tests attendent désormais explicitement cette abstention sans erreur, une seule réexécution et la conservation de l’état humain. Les protections de production ne sont pas modifiées. CI de cette première tentative : `40221322311`.
