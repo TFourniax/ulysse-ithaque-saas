@@ -40,8 +40,8 @@ import {
   DoctrineService,
   QueryService,
   ReviewService,
+  agentInputHash as legacyAgentInputHash,
   systemClock,
-  agentInputHash,
 } from '@ulysse/domain';
 import {
   FIXTURE_CONTEXT,
@@ -54,6 +54,7 @@ import { createLogger, createMetrics } from '@ulysse/observability';
 import { loadWorkerConfig } from '../src/config.ts';
 import {
   AgentRuntime,
+  agentExecutionHash as agentInputHash,
   agentConfig,
   DEAL_TIMEOUT_MS,
   MAX_ATTEMPTS,
@@ -4666,18 +4667,19 @@ test('CRM import rolls back all rows on failure, retries once and rejects an out
 });
 
 describe('CRM imports reach the configured agent with tenant-owned doctrine', () => {
-  async function imported(name: string, count = 1) {
+  async function imported(name: string, count = 1, csvText?: string) {
     const w = await tenantWorld(name, 'unused');
     const agent = new AgentRuntime(workerPool, agentConfig({ ULYSSE_ANALYSIS_MODE: 'simulated' }));
     const runtime = runtimeWith({ agent });
     const imports = new PgCrmImportStore(appPool);
     const csv =
+      csvText ??
       'Titre;Entreprise;Notes\n' +
-      Array.from(
-        { length: count },
-        (_, i) =>
-          `Projet fictif ${i};Entreprise fictive ${i};Le client souhaite clarifier son besoin et le calendrier.`,
-      ).join('\n');
+        Array.from(
+          { length: count },
+          (_, i) =>
+            `Projet fictif ${i};Entreprise fictive ${i};Le client souhaite clarifier son besoin et le calendrier.`,
+        ).join('\n');
     const preview = await imports.preview(w.owner, 'projets.csv', parseCrmCsv(csv), null);
     const confirmed = await imports.confirm(w.owner, preview.id, []);
     await runtime.handleSync(
@@ -4694,6 +4696,161 @@ describe('CRM imports reach the configured agent with tenant-owned doctrine', ()
       connectionId: confirmed.connectionId,
       ctx: serviceContext(w.tenantId, ['analysis:run']),
     };
+  }
+
+  test('distinct CRM roles, objectives and initial dates reach Hermes with exact field citations', async () => {
+    const w = await imported(
+      'csv-field-evidence',
+      1,
+      'Titre;Entreprise;Commercial;Responsable(s) des ventes;Contact cible principale;Date de 1ère ACCROCHE;Etape dans processus client;Objectif AU\n' +
+        'Projet fictif;Atelier fictif;Vendeur fictif A;Direction fictive B;Contact fictif C;02/09/2026;Actif mais reporté;Préparer avec D les critères du pilote futur Novalta.',
+    );
+    const agent: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        const opportunity = z
+          .object({
+            source: z.object({ provider: z.string() }),
+            fieldEvidence: z.array(
+              z.object({ reference: z.string(), state: z.string(), value: z.unknown() }),
+            ),
+          })
+          .parse(await agent.tool(request.capability, 'get_opportunity', {}));
+        assert.equal(opportunity.source.provider, 'crm-file');
+        const owner = opportunity.fieldEvidence.find((f) => f.reference.includes(':owner_name:'));
+        assert.equal(owner?.value, 'Vendeur fictif A');
+        const last = opportunity.fieldEvidence.find((f) =>
+          f.reference.includes(':last_interaction_at:'),
+        );
+        assert.ok(last);
+        assert.notEqual(
+          last.state,
+          'present',
+          'initial contact is not silently promoted to latest interaction',
+        );
+        const result = await agent.simulate(request.capability, request.subjectId);
+        const activities = z
+          .object({ state: z.string(), coverage: z.string() })
+          .parse(await agent.tool(request.capability, 'list_activities', {}));
+        assert.equal(activities.state, 'empty');
+        assert.match(activities.coverage, /notes et documents/);
+        return {
+          ...result,
+          proposals: result.proposals.map((p) => ({
+            ...p,
+            references: [...p.references, last.reference],
+          })),
+        };
+      },
+    });
+    await agent.analyze(w.ctx, 'source_change');
+    const rec = (await w.open())[0];
+    assert.ok(rec);
+    const detail = await w.queries.getRecommendation(w.owner, rec.id);
+    const owner = detail.evidence.find((e) => e.factType === 'owner_name');
+    assert.ok(owner);
+    assert.equal(owner.value, 'Vendeur fictif A');
+    assert.equal(owner.state, 'present');
+    assert.equal(owner.sourceRevision, 1);
+    assert.match(owner.locator, /:owner_name:r1$/);
+    assert.equal(
+      detail.evidence.find((e) => e.factType === 'next_step')?.value,
+      'Préparer avec D les critères du pilote futur Novalta.',
+    );
+    assert.notEqual(
+      detail.evidence.find((e) => e.factType === 'last_interaction_at')?.state,
+      'present',
+    );
+    const documents = detail.evidence
+      .filter((e) => e.factType === 'commercial_context')
+      .map((e) => e.value)
+      .join('\n');
+    assert.match(documents, /Direction fictive B/);
+    assert.match(documents, /02\/09\/2026/);
+    assert.match(documents, /Actif mais reporté/);
+    const review = new ReviewService({
+      uow: new PgUnitOfWork(appPool),
+      clock: systemClock,
+      ids: { next: () => crypto.randomUUID() },
+      rules: defaultRules,
+    });
+    await review.decide(
+      w.owner,
+      rec.id,
+      { expectedRevision: rec.revision, decision: 'approve', reason: null },
+      crypto.randomUUID(),
+    );
+    assert.equal(
+      (await w.queries.getRecommendation(w.owner, rec.id)).recommendation.status,
+      'approved',
+    );
+  });
+
+  for (const state of ['pending', 'approve', 'reject', 'edited'] as const) {
+    test(`instruction update reanalyzes once and preserves ${state} human state`, async () => {
+      const w = await imported(`csv-instructions-${state}`);
+      await w.agent.analyze(w.ctx, 'source_change');
+      const rec = (await w.open())[0];
+      assert.ok(rec);
+      const review = new ReviewService({
+        uow: new PgUnitOfWork(appPool),
+        clock: systemClock,
+        ids: { next: () => crypto.randomUUID() },
+        rules: defaultRules,
+      });
+      if (state === 'edited')
+        await review.revise(
+          w.owner,
+          rec.id,
+          {
+            expectedRevision: rec.revision,
+            proposedAction: 'Question préparée et corrigée par le responsable.',
+            note: null,
+            submit: true,
+          },
+          crypto.randomUUID(),
+        );
+      else if (state !== 'pending')
+        await review.decide(
+          w.owner,
+          rec.id,
+          { expectedRevision: rec.revision, decision: state, reason: null },
+          crypto.randomUUID(),
+        );
+      // Reproduce a completed run from the earlier deployment, without changing business data.
+      await w.agent.store.transaction(w.ctx, async (tx, sql) => {
+        const { opportunity, doctrine, context } = await w.agent.current(tx, rec.subject.id);
+        await sql.query(
+          'UPDATE agent_runs SET input_hash=$3 WHERE tenant_id=$1 AND subject_id=$2',
+          [w.tenantId, rec.subject.id, legacyAgentInputHash(opportunity, doctrine, context)],
+        );
+      });
+      await w.agent.analyze(w.ctx, 'maintenance');
+      await w.agent.analyze(w.ctx, 'maintenance');
+      const runs = await w.agent.store.list(w.owner);
+      assert.equal(runs.length, 2, 'one new execution for the instruction revision');
+      assert.ok(runs.every((r) => r.status === 'completed'));
+      const original = (await w.queries.getRecommendation(w.owner, rec.id)).recommendation;
+      const open = await w.open();
+      if (state === 'pending') {
+        assert.equal(original.status, 'expired');
+        assert.equal(original.closedReason, 'replaced');
+        assert.equal(open.length, 1);
+        assert.notEqual(open[0]!.id, rec.id);
+        assert.equal(
+          open[0]!.fingerprint,
+          rec.fingerprint,
+          'business identity survives instruction updates',
+        );
+      } else if (state === 'edited') {
+        assert.equal(open.length, 1);
+        assert.equal(open[0]!.id, rec.id);
+        assert.equal(original.contentRevision, 2);
+        assert.equal(original.proposedAction, 'Question préparée et corrigée par le responsable.');
+      } else {
+        assert.equal(open.length, 0);
+        assert.equal(original.status, state === 'approve' ? 'approved' : 'rejected');
+      }
+    });
   }
 
   test('CSV documents and validated customer doctrine reach execution, citations and human review', async () => {

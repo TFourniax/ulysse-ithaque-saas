@@ -1,5 +1,13 @@
 # Backlog canonique
 
+## UL-026 — Jugement commercial et preuves (DEBT-045)
+
+Pris le 25 octobre 2026, responsable Codex. Deux propositions Hermes live transmises par Thomas confirment la génération après import (DEBT-044), mais assimilent des rôles distincts et un report compatible avec un projet futur à des incohérences bloquantes. La qualité commerciale n’est pas acceptée. Aucun contenu client brut n’est reproduit dans le dépôt.
+
+Ce lot conserve la boucle Hermes et lui demande de distinguer empêchement explicite, clarification ciblée et préparation possible. Les champs normalisés ont leurs propres références et valeurs dans les preuves; les notes importées peuvent documenter des échanges sans activité structurée. Le score fixe 30/100 n’est plus affiché comme un classement; la date de réception n’est plus appelée confirmation. Une nouvelle version d’instructions déclenche une analyse sans réimport, avec identité métier stable pour préserver approbations, rejets et corrections humaines. [Journal](journal/2026-10-25-UL-026-commercial-judgment.md), [ADR](adr/0019-crm-agent-proposals.md).
+
+Clôture DEBT-045 : contrôles techniques et stack réussis, puis revue de nouvelles propositions live montrant un travail commercial utilisable sans contradiction inventée. Les tests scriptés ne démontrent pas ce jugement. UL-026 complet et MVP restent partiels (suivi effectué/reporté/écarté, doctrine et recette pilote notamment).
+
 ## UL-026 — Propositions après import CRM (DEBT-044)
 
 Pris le 25 octobre 2026, responsable Codex. Thomas confirme les affaires importées puis transmet un écran sans proposition et une ancienne date d’analyse. Le code révèle un filtre `fixture-crm`/doctrine `fixture` dans le moteur proactif, avant insertion d’une trace. Les tests UL-024 couvraient l’import et le moteur de règles, pas sa continuation agentique. Le correctif accepte les fichiers autorisés et les doctrines validées utilisables, conserve les contrôles de source et de publication, expose les blocages sans appel modèle et évite que les douze premières affaires monopolisent les lots suivants. Périmètre : worker, instructions Hermes, états UI, tests PostgreSQL/navigateur et recettes des deux protocoles. [Journal](journal/2026-10-25-UL-026-crm-proposals.md), [ADR](adr/0019-crm-agent-proposals.md).

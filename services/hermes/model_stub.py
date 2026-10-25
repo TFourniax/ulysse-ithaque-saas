@@ -79,7 +79,9 @@ def _final(calls):
         return {**base, "outcome": "abstained",
                 "summary": "Modèle simulé : aucun échange ni document disponible ; informations insuffisantes."}
     latest = max(items, key=lambda m: str(m.get("occurredAt", "")))
-    refs = [r for r in _references([c["result"] for c in calls], []) if not r.startswith("recommendation:")][:12]
+    refs = [r for r in _references([c["result"] for c in calls], []) if not r.startswith("recommendation:")]
+    # Keep actual excerpts cited when typed field references enlarge the fixture context.
+    refs = sorted(refs, key=lambda r: not r.startswith("material:"))[:12]
     return {**base, "outcome": "proposals",
             "summary": "Modèle simulé : proposition construite à partir des sources réellement lues.",
             "proposals": [{

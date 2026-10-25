@@ -10,6 +10,7 @@ import {
   useRecommendation,
   useRevision,
 } from '../api.ts';
+import { hasCalculatedPriority } from '../deal-analysis.ts';
 import { useSession } from '../session.tsx';
 import { ChevronLeft } from '../components/icons.tsx';
 import {
@@ -374,7 +375,7 @@ function AgentProposalFacts({ analysisId, title }: { analysisId: string; title: 
       {typeof proposal.urgency === 'string' && (
         <p className="small">
           Urgence proposée par l’agent : {URGENCY_LABELS[proposal.urgency] ?? proposal.urgency}.
-          Elle n’entre pas dans la priorité, calculée par Ulysse.
+          Cette appréciation reste à valider ; elle ne constitue pas un classement des affaires.
         </p>
       )}
     </>
@@ -437,27 +438,39 @@ export function RecommendationDetailPage() {
       )}
       <div className="detail-grid">
         <div className="detail-main">
-          <section className="section priority-block" aria-labelledby="priority-title">
-            <div className="priority-figure">
-              <h2 id="priority-title" className="priority-label">
-                Priorité
-              </h2>
-              <span className="priority-value">{rec.priority.score}</span>
-              <span className="priority-scale">sur 100</span>
-            </div>
-            <PriorityGauge score={rec.priority.score} ticks={40} />
-            <div className="reasons">
-              <h3 className="visually-hidden">Raison de la priorité</h3>
-              {rec.priority.reasons.map((r) => (
-                <div key={r.label} className="reason">
-                  <span className="reason-label">{r.label}</span>
-                  <span className="reason-points">+{r.points}</span>
-                  <Meter ratio={r.points / 100} />
-                </div>
-              ))}
-            </div>
-            <p className="muted small">Le score est une priorité calculée, pas une probabilité.</p>
-          </section>
+          {hasCalculatedPriority(rec) ? (
+            <section className="section priority-block" aria-labelledby="priority-title">
+              <div className="priority-figure">
+                <h2 id="priority-title" className="priority-label">
+                  Priorité
+                </h2>
+                <span className="priority-value">{rec.priority.score}</span>
+                <span className="priority-scale">sur 100</span>
+              </div>
+              <PriorityGauge score={rec.priority.score} ticks={40} />
+              <div className="reasons">
+                <h3 className="visually-hidden">Raison de la priorité</h3>
+                {rec.priority.reasons.map((r) => (
+                  <div key={r.label} className="reason">
+                    <span className="reason-label">{r.label}</span>
+                    <span className="reason-points">+{r.points}</span>
+                    <Meter ratio={r.points / 100} />
+                  </div>
+                ))}
+              </div>
+              <p className="muted small">
+                Le score est une priorité calculée, pas une probabilité.
+              </p>
+            </section>
+          ) : (
+            <section className="section" aria-labelledby="priority-title">
+              <h2 id="priority-title">Priorité à apprécier</h2>
+              <p>
+                Ces propositions n’ont pas encore de classement chiffré fiable. Examinez l’échéance,
+                les enjeux et les sources avant de choisir l’ordre des actions.
+              </p>
+            </section>
+          )}
           <section className="section" aria-labelledby="why-title">
             <h2 id="why-title">Pourquoi maintenant</h2>
             <p className="why">{rec.whyNow}</p>
@@ -516,8 +529,8 @@ export function RecommendationDetailPage() {
               </table>
             </TableScroll>
             <p className="muted small">
-              Données confirmées au {formatDateTime(rec.dataAsOf)} ({formatRelative(rec.dataAsOf)})
-              · âge maximal accepté : {rec.maxSourceAgeHours} h.
+              Données reçues le {formatDateTime(rec.dataAsOf)} ({formatRelative(rec.dataAsOf)}) ·
+              âge maximal accepté : {rec.maxSourceAgeHours} h.
             </p>
           </section>
           <section className="section" aria-labelledby="limits-title">
