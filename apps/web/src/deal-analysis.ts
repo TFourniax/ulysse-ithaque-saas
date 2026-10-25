@@ -1,4 +1,4 @@
-import type { AgentRunDto } from '@ulysse/contracts';
+import type { AgentRunDto, RecommendationSummary } from '@ulysse/contracts';
 
 const READINESS: Record<string, string> = {
   no_validated_doctrine:
@@ -19,3 +19,8 @@ export function dealAnalysisIssue(run: AgentRunDto): string | null {
     return 'L’analyse n’a pas abouti. Consultez son détail pour connaître le motif.';
   return null;
 }
+
+/** The original agent rule uses a constant 30 for storage, not a comparative score. */
+export const hasCalculatedPriority = (
+  rec: Pick<RecommendationSummary, 'ruleId' | 'ruleVersion'>,
+): boolean => !(rec.ruleId === 'ulysse.agent.v1' && rec.ruleVersion === '1');

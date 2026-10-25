@@ -12,6 +12,7 @@ on:
         'codex/ul-023-content-preview',
         'codex/ul-024-crm-import',
         'codex/ul-024-import-corrections',
+        'codex/ul-026-crm-proposals',
       ]
   workflow_dispatch:
 permissions:

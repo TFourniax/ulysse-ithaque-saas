@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import type { View } from '../api.ts';
 import { useAnalyses, useConnections, useRecommendations } from '../api.ts';
 import { can, useSession } from '../session.tsx';
-import { dealAnalysisIssue } from '../deal-analysis.ts';
+import { dealAnalysisIssue, hasCalculatedPriority } from '../deal-analysis.ts';
 import { useAgentRuns } from './Analyses.tsx';
 import {
   Banner,
@@ -133,7 +133,7 @@ function SourceStatus({ tenantId }: { tenantId: string }) {
           aria-hidden="true"
         />
         <span>
-          Données confirmées :{' '}
+          Données reçues :{' '}
           {active
             .map(
               (c) => `${c.displayName} ${c.dataAsOf ? formatRelative(c.dataAsOf) : '(en attente)'}`,
@@ -174,11 +174,21 @@ function RecommendationCard({ rec, index }: { rec: RecommendationSummary; index:
   return (
     <li className="proposal" style={{ '--i': Math.min(index, 8) }}>
       <div className="proposal-priority">
-        <span className="priority" title="Score de priorité (formule affichée dans le détail)">
-          <span className="priority-label">Priorité</span>{' '}
-          <span className="priority-value">{rec.priority.score}</span>
-        </span>
-        <PriorityGauge score={rec.priority.score} />
+        {hasCalculatedPriority(rec) ? (
+          <>
+            <span className="priority" title="Score de priorité (formule affichée dans le détail)">
+              <span className="priority-label">Priorité</span>{' '}
+              <span className="priority-value">{rec.priority.score}</span>
+            </span>
+            <PriorityGauge score={rec.priority.score} />
+          </>
+        ) : (
+          <p className="priority-label">
+            À examiner
+            <br />
+            <span className="muted small">Sans classement chiffré</span>
+          </p>
+        )}
       </div>
       <div className="proposal-body">
         <div className="tag-row">

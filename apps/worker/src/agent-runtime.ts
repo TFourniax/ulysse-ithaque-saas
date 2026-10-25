@@ -30,6 +30,7 @@ import {
   validateAgentPublication,
   validateAgentResult,
 } from '@ulysse/domain';
+import { DEAL_FIELD_LABELS, dealFieldEvidence, dealFieldReference } from './deal-context.ts';
 import { PgAgentStore } from '@ulysse/database';
 import type { Pool } from 'pg';
 import { z } from 'zod';
@@ -73,10 +74,13 @@ export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
 export const EXECUTION_CONTRACT = 'ulysse-execution-v6';
 /** sha256 of services/hermes/instructions.txt (LF); a unit test keeps both identical. */
 export const AGENT_INSTRUCTIONS_SHA256 =
-  'ad7ca00b010c86a384628c49b40edfcc26d9261d4883a7cee4ccd18def748980';
+  '81900f39ee5bcde0d42f59f4330b23f7bf44ec9cdb482b28b218cdd4d33ce760';
 export const WORKFLOW_INSTRUCTIONS_SHA256 =
   'fee2b7a8a30b0b4cb2c962ec1b5c1d46211df5fb5b11da7da4f7994de9acb2d1';
 export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
+/** Execution changes with instructions; business fingerprints remain stable across wording updates. */
+export const agentExecutionHash = (...args: Parameters<typeof agentInputHash>): string =>
+  fingerprintOf({ input: agentInputHash(...args), instructions: AGENT_INSTRUCTIONS_SHA256 });
 /** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
 export const MAX_ATTEMPTS = 2;
 export const DEAL_TIMEOUT_MS = 300_000;
@@ -383,7 +387,7 @@ export class AgentRuntime {
           [ctx.tenantId],
         );
         const { opportunity: o, doctrine: d, context: c } = await this.current(tx, subjectId);
-        const input = agentInputHash(o, d, c);
+        const input = agentExecutionHash(o, d, c);
         // At-least-once jobs and the periodic resume re-enter here: settled input is never
         // re-run, and failed attempts on unchanged input are bounded so they cannot drain budgets.
         const previous = await sql.query<{ settled: boolean }>(
@@ -625,18 +629,34 @@ export class AgentRuntime {
         'tool limit',
       );
       ensure(args.subjectId === undefined || args.subjectId === run.subject_id, 'FORBIDDEN');
-      const { opportunity: o, doctrine: d, context: c } = await this.current(tx, run.subject_id);
-      ensure(agentInputHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
+      const {
+        opportunity: o,
+        doctrine: d,
+        context: c,
+        connection,
+      } = await this.current(tx, run.subject_id);
+      ensure(agentExecutionHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
       let value: unknown;
       let refs: string[] = [];
       if (name === 'get_opportunity') {
         const { commercial, ...fields } = o.fields;
-        refs = [oppRef(o)];
+        const fieldEvidence = dealFieldEvidence(o);
+        refs = [oppRef(o), ...fieldEvidence.map((f) => f.reference)];
         value = {
           state: 'present',
           reference: refs[0],
           revision: o.revision,
           fields,
+          fieldEvidence,
+          source: { provider: connection.provider, dataAsOf: connection.dataAsOf },
+          interpretation: {
+            ownerName:
+              'Responsable indiqué dans un champ CRM, sans exclusivité prouvée sur les autres rôles commerciaux.',
+            nextStep:
+              'Objectif déclaré, pas un accord client sauf preuve explicite dans les échanges.',
+            dates:
+              'Première interaction, dernière interaction, commande et décision sont des événements différents.',
+          },
           contactPolicy: commercial?.contactPolicy ?? { state: 'unavailable' },
         };
       } else if (name === 'get_active_doctrine') {
@@ -699,6 +719,10 @@ export class AgentRuntime {
           refs =
             name === 'search_documents' ? [] : selected.map((m) => materialRef(o, m.id, m.version));
           value = {
+            coverage:
+              name === 'list_activities'
+                ? 'Activités structurées uniquement ; les notes et documents peuvent contenir des échanges et des dates supplémentaires.'
+                : 'Documents consultables dans le périmètre autorisé.',
             state: selected.length
               ? 'present'
               : name === 'read_document_excerpt'
@@ -767,6 +791,11 @@ export class AgentRuntime {
           .parse(e.items)
           .map((m) => m.reference),
       ),
+      ...z
+        .array(z.object({ reference: z.string(), state: z.string() }))
+        .parse(opportunity.fieldEvidence)
+        .filter((f) => f.state === 'present')
+        .map((f) => f.reference),
     ];
     const texts = JSON.stringify([activities.items, ...excerpts]).toLocaleLowerCase();
     const positive = /accord|disponible|créneau/.test(texts);
@@ -809,7 +838,7 @@ export class AgentRuntime {
         context: c,
         connection,
       } = await this.current(tx, run.subject_id);
-      if (agentInputHash(o, d, c) !== run.input_hash) {
+      if (agentExecutionHash(o, d, c) !== run.input_hash) {
         await sql.query(
           "UPDATE agent_runs SET status='obsolete',completed_at=clock_timestamp(),error_code='versions_changed',reserved_usd=committed_usd WHERE tenant_id=$1 AND id=$2",
           [ctx.tenantId, id],
@@ -889,7 +918,16 @@ export class AgentRuntime {
       let closedCount = 0;
       for (const previous of open.filter((r) => r.subject.id === o.id)) {
         if (previous.contentRevision > 1) continue; // Human edits are preserved and suppress automatic replacement.
-        await tx.updateRecommendation(close(previous, 'expired', 'evidence_changed', now));
+        await tx.updateRecommendation(
+          close(
+            previous,
+            'expired',
+            previous.fingerprint === agentFingerprint(o, d, c, previous.kind)
+              ? 'replaced'
+              : 'evidence_changed',
+            now,
+          ),
+        );
         closedCount++;
       }
       const kinds = new Set<string>();
@@ -961,8 +999,14 @@ export class AgentRuntime {
           const m = o.fields.commercial?.materials.find(
             (m) => materialRef(o, m.id, m.version) === reference,
           );
-          const fact = facts.find((f) => f.factType === (m ? 'commercial_context' : 'name'));
-          if (!fact || (!m && reference !== oppRef(o))) return [];
+          const field = facts.find(
+            (f) =>
+              f.factType !== 'commercial_context' &&
+              reference === dealFieldReference(o, f.factType),
+          );
+          const fact =
+            field ?? facts.find((f) => f.factType === (m ? 'commercial_context' : 'name'));
+          if (!fact || (!m && !field && reference !== oppRef(o))) return [];
           return [
             {
               tenantId: ctx.tenantId,
@@ -973,9 +1017,9 @@ export class AgentRuntime {
               sourceRevision: fact.sourceRevision,
               connectionId: fact.connectionId,
               factType: fact.factType,
-              label: m?.title ?? o.fields.name,
-              state: 'present',
-              value: m?.text ?? o.fields.name,
+              label: m?.title ?? (field ? DEAL_FIELD_LABELS[field.factType] : o.fields.name),
+              state: field?.state ?? 'present',
+              value: m?.text ?? (field ? field.value : o.fields.name),
               locator: reference,
               material: true,
               observedAt: fact.observedAt,
@@ -1270,7 +1314,7 @@ export class AgentRuntime {
         );
       if (run.workflow_kind === 'deal') {
         const { opportunity: o, doctrine: d, context: c } = await this.current(tx, run.subject_id);
-        ensure(agentInputHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
+        ensure(agentExecutionHash(o, d, c) === run.input_hash, 'INVALID_INPUT', 'obsolete');
       }
       // Deterministic authority over what reaches the provider: the versioned Ulysse
       // instructions as the only system message, and only the Ulysse tools.

@@ -35,7 +35,7 @@ try {
     name: 'proposition-fictive.csv',
     mimeType: 'text/csv',
     buffer: Buffer.from(
-      'Titre;Entreprise;Notes\nProjet CSV fictif;Atelier CSV fictif;Le client demande de clarifier les critères de décision et le calendrier.',
+      'Titre;Entreprise;Commercial;Responsable(s) des ventes;Prochaine action;Notes\nProjet CSV fictif;Atelier CSV fictif;Vendeur fictif A;Direction fictive B;Préparer les questions sur les critères du pilote.;Le client demande de clarifier les critères de décision et le calendrier.',
     ),
   });
   const preview = page.getByRole('region', { name: 'Vérifier l’import' });
@@ -64,8 +64,20 @@ try {
   assert.ok(proposal, 'human-reviewable proposal exists');
   const detail = await json(`/v1/recommendations/${proposal.id}`);
   assert.ok(detail.evidence.some((e) => e.factType === 'commercial_context'));
+  assert.ok(
+    detail.evidence.some((e) => e.factType === 'owner_name' && e.value === 'Vendeur fictif A'),
+  );
+  assert.ok(
+    detail.evidence.some(
+      (e) =>
+        e.factType === 'next_step' &&
+        e.value === 'Préparer les questions sur les critères du pilote.',
+    ),
+  );
   await page.goto(`${origin}/recommendations/${proposal.id}`);
   await page.getByRole('button', { name: 'Approuver', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Priorité à apprécier', exact: true }).waitFor();
+  assert.equal(await page.locator('.priority-value').count(), 0);
   await page.evaluate(async () => {
     await Promise.all(
       globalThis.document
@@ -102,6 +114,8 @@ try {
         modelCalls: run.model_calls,
         doctrineOrigin: run.snapshot.doctrineOrigin,
         status: proposal.status,
+        typedFieldCitations: true,
+        fixedScoreHidden: true,
         externalWrites: 0,
       },
       null,
