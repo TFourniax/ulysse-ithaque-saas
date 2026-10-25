@@ -74,3 +74,9 @@ Le navigateur ne connaît ni la capacité, ni le secret Hermes, ni la clé fourn
 ## Profils déclaratifs UL-019
 
 Le profil modèle, ses paramètres et prix ainsi que son empreinte sont enregistrés dans le snapshot du run. Le gateway refuse toute dérive, même sur le même modèle, avant une nouvelle transmission. Le raisonnement GLM reste dans la boucle temporaire et sa consommation est incluse dans le coût de sortie ; il n'est pas ajouté aux traces métier. Les messages restent texte : déclarer une capacité image dans le profil n'autorise pas les médias. [Guide](MODEL-PROFILES.md), [ADR-0015](adr/0015-declarative-model-profiles.md).
+
+## UL-026 — sources CRM et préparation du moteur (25 octobre)
+
+Les règles historiques limitées aux fixtures sont remplacées, pour les propositions d’affaires, par une liste explicite `fixture-crm` / `crm-file`. La doctrine doit rester validée et utilisable; `get_active_doctrine` indique son origine et si elle est fictive. Les sources importées sont des déclarations et ne modifient pas la doctrine. Le contrat d’exécution reste v6, avec une nouvelle empreinte d’instructions contrôlée des deux côtés.
+
+Les refus connus avant exécution produisent une trace sans appel modèle, dédupliquée sur les versions concernées. Le bail d’une affaire est de 300 secondes, avec 90 secondes maximum par appel fournisseur, comme les autres parcours; ce sont des limites de ressources, pas des objectifs de rapidité. Les lots commencent au plus douze nouvelles tentatives et cessent d’en démarrer après quatre minutes, afin de respecter le bail de job de dix minutes. Les affaires déjà traitées ne bloquent plus celles situées plus loin. Voir [ADR-0019](adr/0019-crm-agent-proposals.md).

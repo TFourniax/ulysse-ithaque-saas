@@ -11,6 +11,7 @@ on:
         'codex/ul-020-web-research',
         'codex/ul-023-content-preview',
         'codex/ul-024-crm-import',
+        'codex/ul-024-import-corrections',
       ]
   workflow_dispatch:
 permissions:
@@ -147,6 +148,8 @@ jobs:
       - name: Historical decision and session survive UL-016 upgrade
         if: matrix.origin == 'upgrade-ul016'
         run: node scripts/agent-smoke.mjs --resume
+      - name: CSV import reaches the real Hermes loop and a reviewable proposal
+        run: node scripts/crm-agent-smoke.mjs
       - name: November buyer and content through the real Hermes loop and simulated model
         run: node scripts/november-smoke.mjs
       - run: |
@@ -167,6 +170,7 @@ jobs:
           name: ul016-hermes-stub-evidence-${{ matrix.origin }}-${{ matrix.protocol }}
           path: |
             test-results/ul016-hermes-stub/proof.json
+            test-results/ul016-hermes-stub/crm-import-proof.json
             test-results/ul016-hermes-stub/*.png
   simulated-stack:
     runs-on: ubuntu-latest
@@ -223,6 +227,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: node scripts/agent-smoke.mjs
+      - run: node scripts/crm-agent-smoke.mjs
       - run: |
           docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app restart api worker
           docker compose -f infra/compose.yaml -f infra/hermes.compose.yaml --env-file .env --env-file infra/.env --profile app up -d --wait --wait-timeout 300 api worker
@@ -241,4 +246,5 @@ jobs:
           name: ul016-simulated-evidence-${{ matrix.origin }}
           path: |
             test-results/ul016/proof.json
+            test-results/ul016/crm-import-proof.json
             test-results/ul016/*.png

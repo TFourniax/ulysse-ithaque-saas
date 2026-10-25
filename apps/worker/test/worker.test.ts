@@ -52,7 +52,13 @@ import {
 } from '@ulysse/domain/testing';
 import { createLogger, createMetrics } from '@ulysse/observability';
 import { loadWorkerConfig } from '../src/config.ts';
-import { AgentRuntime, agentConfig, MAX_ATTEMPTS, TOOL_NAMES } from '../src/agent-runtime.ts';
+import {
+  AgentRuntime,
+  agentConfig,
+  DEAL_TIMEOUT_MS,
+  MAX_ATTEMPTS,
+  TOOL_NAMES,
+} from '../src/agent-runtime.ts';
 import { WORKFLOW_EVIDENCE_PREFIX, WORKFLOW_TOOLS } from '../src/workflow-runtime.ts';
 import { BUYER_REVIEW_INSTRUCTIONS, BUYER_REVIEW_PREFIX } from '../src/buyer-review.ts';
 import { inspectBuyerCitations, workflowRepairPrompt } from '../src/workflow-response.ts';
@@ -1015,7 +1021,7 @@ async function tenantWorld(name: string, dataset: string) {
       client.release();
     }
   };
-  return { tenantId, owner, connections, queries, connect, open, count };
+  return { tenantId, owner, connections, queries, connect, open, count, doctrines };
 }
 
 before(async () => {
@@ -4651,4 +4657,162 @@ test('CRM import rolls back all rows on failure, retries once and rejects an out
   await assert.rejects(() => store.confirm(w.owner, stale.id, []), /REVISION_CONFLICT/);
   await runtime.handleSync(job, crypto.randomUUID());
   assert.equal((await w.queries.listOpportunities(w.owner, { limit: 100 })).items.length, 2);
+});
+
+describe('CRM imports reach the configured agent with tenant-owned doctrine', () => {
+  async function imported(name: string, count = 1) {
+    const w = await tenantWorld(name, 'unused');
+    const agent = new AgentRuntime(workerPool, agentConfig({ ULYSSE_ANALYSIS_MODE: 'simulated' }));
+    const runtime = runtimeWith({ agent });
+    const imports = new PgCrmImportStore(appPool);
+    const csv =
+      'Titre;Entreprise;Notes\n' +
+      Array.from(
+        { length: count },
+        (_, i) =>
+          `Projet fictif ${i};Entreprise fictive ${i};Le client souhaite clarifier son besoin et le calendrier.`,
+      ).join('\n');
+    const preview = await imports.preview(w.owner, 'projets.csv', parseCrmCsv(csv), null);
+    const confirmed = await imports.confirm(w.owner, preview.id, []);
+    await runtime.handleSync(
+      { tenantId: w.tenantId, connectionId: confirmed.connectionId, trigger: 'manual' },
+      crypto.randomUUID(),
+    );
+    const opportunities = (await w.queries.listOpportunities(w.owner, { limit: 100 })).items;
+    assert.equal(opportunities.length, count);
+    return {
+      ...w,
+      agent,
+      runtime,
+      opportunities,
+      connectionId: confirmed.connectionId,
+      ctx: serviceContext(w.tenantId, ['analysis:run']),
+    };
+  }
+
+  test('CSV documents and validated customer doctrine reach execution, citations and human review', async () => {
+    const w = await imported('csv-agent');
+    const d = await w.doctrines.draft(w.owner, {
+      ...FIXTURE_DOCTRINE,
+      key: 'customer.test',
+      origin: 'customer',
+      usageRights: 'tenant-internal',
+    });
+    await w.doctrines.validate(w.owner, d.id, null);
+    let executions = 0;
+    // Scripted executor checks the production handoff. The container smoke separately runs real Hermes.
+    const agent: AgentRuntime = new AgentRuntime(workerPool, liveTestConfig(), {
+      execute: async (request) => {
+        executions++;
+        assert.equal(request.timeoutMs, DEAL_TIMEOUT_MS);
+        const doctrine = z
+          .object({ fictional: z.boolean(), origin: z.string() })
+          .parse(await agent.tool(request.capability, 'get_active_doctrine', {}));
+        assert.deepEqual(doctrine, { fictional: false, origin: 'customer' });
+        return agent.simulate(request.capability, request.subjectId);
+      },
+    });
+    const runtime = runtimeWith({ agent });
+    await runtime.handleAnalyze(
+      { tenantId: w.tenantId, trigger: 'source_change' },
+      crypto.randomUUID(),
+    );
+    const runs = await agent.store.list(w.owner);
+    assert.equal(runs[0]?.status, 'completed');
+    assert.equal(
+      z.object({ doctrineOrigin: z.string() }).parse(runs[0].snapshot).doctrineOrigin,
+      'customer',
+    );
+    const recs = await w.open();
+    assert.equal(recs.length, 1);
+    assert.equal(recs[0]!.status, 'pending');
+    assert.equal(recs[0]!.doctrine.fictional, false);
+    const detail = await w.queries.getRecommendation(w.owner, recs[0]!.id);
+    assert.ok(detail.evidence.some((e) => e.factType === 'commercial_context'));
+    assert.ok(
+      z
+        .array(z.string())
+        .parse(runs[0].retrieved)
+        .some((ref) => ref.startsWith('material:')),
+    );
+    await runtime.handleAnalyze(
+      { tenantId: w.tenantId, trigger: 'scheduled' },
+      crypto.randomUUID(),
+    );
+    assert.equal(executions, 1, 'unchanged imported data does not create repeated calls');
+    const foreign = await tenantWorld('csv-other', 'unused');
+    assert.equal((await agent.store.list(foreign.owner)).length, 0);
+    await w.connections.revoke(w.owner, w.connectionId);
+    await runtime.handleAnalyze(
+      { tenantId: w.tenantId, trigger: 'scheduled' },
+      crypto.randomUUID(),
+    );
+    assert.equal(executions, 1, 'revoked source cannot be analyzed');
+  });
+
+  test('missing doctrine is a visible zero-call state, deduplicated and resumable without reimport', async () => {
+    const w = await imported('csv-readiness');
+    const active = (await w.doctrines.list(w.owner)).find((d) => d.status === 'validated');
+    assert.ok(active);
+    await w.doctrines.retire(w.owner, active.id);
+    await w.agent.analyze(w.ctx, 'source_change');
+    await w.agent.analyze(w.ctx, 'maintenance');
+    const blocked = await w.agent.store.list(w.owner);
+    assert.equal(blocked.length, 1);
+    assert.equal(blocked[0]!.status, 'abstained');
+    assert.equal(blocked[0]!.error_code, 'no_validated_doctrine');
+    assert.equal(blocked[0]!.model_calls, 0);
+    assert.equal(blocked[0]!.tool_calls, 0);
+    assert.equal(Number(blocked[0]!.committed_usd), 0);
+    assert.equal((await w.open()).length, 0);
+    const replacement = await w.doctrines.draft(w.owner, {
+      ...FIXTURE_DOCTRINE,
+      key: 'replacement.test',
+      origin: 'customer',
+      usageRights: 'tenant-internal',
+    });
+    await w.doctrines.validate(w.owner, replacement.id, null);
+    await w.agent.analyze(w.ctx, 'maintenance');
+    assert.equal((await w.agent.store.list(w.owner))[0]!.status, 'completed');
+    assert.equal((await w.open()).length, 1);
+  });
+
+  test('settled first twelve deals do not starve later imports; stale data does not stop other sources', async () => {
+    const w = await imported('csv-batches', 13);
+    await w.agent.analyze(w.ctx, 'source_change');
+    assert.equal((await w.open()).length, 12);
+    await w.agent.analyze(w.ctx, 'maintenance');
+    assert.equal((await w.open()).length, 13);
+    await w.agent.store.transaction(w.ctx, async (_tx, sql) => {
+      await sql.query(
+        "UPDATE connections SET data_as_of=clock_timestamp()-interval '100 days' WHERE tenant_id=$1 AND id=$2",
+        [w.tenantId, w.connectionId],
+      );
+    });
+    const imports = new PgCrmImportStore(appPool);
+    const preview = await imports.preview(
+      w.owner,
+      'fresh.csv',
+      parseCrmCsv(
+        'Titre;Entreprise;Notes\nAffaire fraîche fictive;Entreprise fictive nouvelle;Clarifier le besoin.',
+      ),
+      null,
+    );
+    const confirmed = await imports.confirm(w.owner, preview.id, []);
+    await w.runtime.handleSync(
+      { tenantId: w.tenantId, connectionId: confirmed.connectionId, trigger: 'manual' },
+      crypto.randomUUID(),
+    );
+    await w.agent.analyze(w.ctx, 'source_change');
+    await w.agent.analyze(w.ctx, 'maintenance');
+    const runs = await w.agent.store.list(w.owner);
+    assert.equal(runs.filter((r) => r.error_code === 'stale_source').length, 13);
+    assert.ok(
+      runs.some(
+        (r) =>
+          z.object({ connectionId: z.string().optional() }).parse(r.snapshot).connectionId ===
+            confirmed.connectionId && r.status === 'completed',
+      ),
+    );
+  });
 });
