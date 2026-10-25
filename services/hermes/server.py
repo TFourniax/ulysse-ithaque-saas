@@ -33,7 +33,7 @@ def initial_evidence(request):
 
 
 def execution_timeout_ms(request):
-    maximum = 300000 if request.get("workflow", "deal") in ("buyer", "content") else 90000
+    maximum = 300000
     requested = request.get("timeoutMs", maximum)
     if type(requested) is not int or requested < 5000:
         raise ValueError("invalid_execution_timeout")

@@ -165,7 +165,7 @@ class ModelSettings(unittest.TestCase):
             with self.assertRaises(ValueError): model_settings({**request, **extra})
     def test_execution_deadlines_are_bounded_and_workflows_allow_provider_backoff(self):
         from server import execution_timeout_ms
-        for workflow, maximum in (("deal", 90000), ("buyer", 300000), ("content", 300000)):
+        for workflow, maximum in (("deal", 300000), ("buyer", 300000), ("content", 300000)):
             self.assertEqual(execution_timeout_ms({"workflow": workflow}), maximum)
             self.assertEqual(execution_timeout_ms({"workflow": workflow, "timeoutMs": 999999}), maximum)
             self.assertEqual(execution_timeout_ms({"workflow": workflow, "timeoutMs": 30000}), 30000)

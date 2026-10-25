@@ -64,7 +64,7 @@ export function OpportunityDetailPage() {
         </p>
       </PageHeader>
       <Banner kind="info">
-        Entreprise, sources et doctrine fictives. Mode :{' '}
+        Analyse des informations autorisées de cette affaire. Mode :{' '}
         {runs.data ? MODE_LABELS[runs.data.configuredMode] : 'chargement'}.
       </Banner>
       {awaiting && (
@@ -87,9 +87,9 @@ export function OpportunityDetailPage() {
         </dl>
       </section>
       <section className="section">
-        <h2>Activités, échanges et documents fictifs</h2>
+        <h2>Activités, échanges et documents</h2>
         {!o.commercial && (
-          <p>Informations indisponibles : enrichir les fixtures avec le seed de ce lot.</p>
+          <p>Aucune activité ni aucun document n’a été fourni pour cette affaire.</p>
         )}
         {o.commercial?.materials.length === 0 && (
           <p>Source accessible, sans activité ni document.</p>

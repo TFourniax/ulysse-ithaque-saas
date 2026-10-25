@@ -174,3 +174,7 @@ Les lots sont détaillés dans BACKLOG avec dépendances et preuves. Pas de date
 Ces documentations fondent les choix proposés. Elles ne prouvent pas que les composants sont installés ni leur compatibilité de bout en bout ; la première installation doit vérifier ces points.
 
 Contrats d'exécution, outils, résultats, progression et usages : [AGENT-CONTRACT](AGENT-CONTRACT.md).
+
+## Complément UL-026 — import et moteur proactif
+
+Le 25 octobre, le filtre historique de sources fictives est retiré du parcours proactif pour autoriser les fichiers CRM validés. Aucun moteur parallèle n’est ajouté : les événements d’import et la maintenance rejoignent la boucle Hermes existante. Les prérequis refusés deviennent visibles avant tout appel. Les contrôles de droits, doctrine validée, fraîcheur, versions et décision humaine restent actifs; voir [ADR-0019](adr/0019-crm-agent-proposals.md).

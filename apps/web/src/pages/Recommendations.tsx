@@ -4,6 +4,8 @@ import { Link } from 'react-router';
 import type { View } from '../api.ts';
 import { useAnalyses, useConnections, useRecommendations } from '../api.ts';
 import { can, useSession } from '../session.tsx';
+import { dealAnalysisIssue } from '../deal-analysis.ts';
+import { useAgentRuns } from './Analyses.tsx';
 import {
   Banner,
   EmptyState,
@@ -35,6 +37,7 @@ function SourceStatus({ tenantId }: { tenantId: string }) {
   const session = useSession();
   const connections = useConnections(tenantId);
   const analyses = useAnalyses(tenantId);
+  const agent = useAgentRuns(tenantId);
   if (connections.isPending) return null;
   if (connections.error)
     return <ErrorBanner error={connections.error} title="État des sources indisponible" />;
@@ -63,9 +66,50 @@ function SourceStatus({ tenantId }: { tenantId: string }) {
   }
   const neverSynced = active.filter((c) => c.dataAsOf === null);
   const latest = analyses.data?.[0];
+  const agentic = agent.data?.configuredMode !== undefined && agent.data.configuredMode !== 'rules';
+  const currentRuns = (agent.data?.runs ?? []).filter(
+    (r, i, all) =>
+      r.subject_label !== null && all.findIndex((v) => v.subject_id === r.subject_id) === i,
+  );
+  const activeRuns = currentRuns.filter((r) => r.status === 'running' || r.status === 'validating');
+  const issues = currentRuns.filter((r) => dealAnalysisIssue(r));
+  const latestRun = agent.data?.runs[0];
+  const lastAnalysed = agentic
+    ? agent.data?.runs.find(
+        (r) => !r.snapshot.preflight && (r.status === 'completed' || r.status === 'abstained'),
+      )?.completed_at
+    : latest?.completedAt;
+  const awaiting =
+    agentic &&
+    active.some(
+      (c) => c.dataAsOf && (!lastAnalysed || Date.parse(c.dataAsOf) > Date.parse(lastAnalysed)),
+    );
   const abstentions = latest ? Object.entries(latest.abstentions).filter(([, n]) => n > 0) : [];
   return (
     <div className="source-status">
+      {agent.error && <ErrorBanner error={agent.error} title="État des analyses indisponible" />}
+      {agentic && activeRuns.length > 0 && (
+        <Banner kind="info">
+          {activeRuns.length} analyse(s) en cours. <Link to="/analyses">Voir la progression</Link>
+        </Banner>
+      )}
+      {agentic && issues.length > 0 && (
+        <Banner kind="warning">
+          {issues.slice(0, 3).map((r) => (
+            <p key={r.id}>
+              <Link to={`/opportunities/${r.subject_id}`}>{r.subject_label}</Link> :{' '}
+              {dealAnalysisIssue(r)}
+            </p>
+          ))}
+          <Link to="/analyses">Voir l’état des analyses</Link>
+        </Banner>
+      )}
+      {awaiting && activeRuns.length === 0 && issues.length === 0 && (
+        <Banner kind="info">
+          Les données ont été importées, mais aucune analyse terminée depuis cet import n’est encore
+          affichée. <Link to="/analyses">Vérifier l’état des analyses</Link>
+        </Banner>
+      )}
       {neverSynced.length > 0 && (
         <Banner kind="info">
           Synchronisation initiale en cours pour {neverSynced.map((c) => c.displayName).join(', ')}.
@@ -81,7 +125,11 @@ function SourceStatus({ tenantId }: { tenantId: string }) {
       )}
       <p className="sync-line">
         <span
-          className={active.some((c) => c.lastErrorCode) ? 'live-dot is-degraded' : 'live-dot'}
+          className={
+            active.some((c) => c.lastErrorCode) || (agentic && (issues.length > 0 || awaiting))
+              ? 'live-dot is-degraded'
+              : 'live-dot'
+          }
           aria-hidden="true"
         />
         <span>
@@ -91,7 +139,13 @@ function SourceStatus({ tenantId }: { tenantId: string }) {
               (c) => `${c.displayName} ${c.dataAsOf ? formatRelative(c.dataAsOf) : '(en attente)'}`,
             )
             .join(' · ')}
-          {latest && (
+          {agentic && latestRun && (
+            <>
+              {' '}
+              · dernier traitement {formatRelative(latestRun.completed_at ?? latestRun.started_at)}
+            </>
+          )}
+          {!agentic && latest && (
             <>
               {' '}
               · dernière analyse {formatRelative(latest.completedAt)}
@@ -183,8 +237,9 @@ export function RecommendationsPage() {
           }
         >
           <p>
-            Ulysse analyse vos données en arrière-plan ; les nouvelles propositions apparaîtront ici
-            sans action de votre part.
+            Les propositions préparées pour vos affaires apparaissent ici.{' '}
+            <Link to="/analyses">Consulter l’état des analyses</Link> pour voir leur progression,
+            les éventuels blocages ou les raisons de ne pas proposer d’action.
           </p>
         </EmptyState>
       )}

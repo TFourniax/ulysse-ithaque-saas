@@ -4,9 +4,9 @@ Responsable produit : Thomas. Mise en œuvre : Codex. L’autorisation porte sur
 
 | Lot | Travail et preuve de clôture | État |
 | --- | --- | --- |
-| UL-024 | Dépôt CSV, reconnaissance Néréis, identifiants Ulysse, aperçu, réimport idempotent, ambiguïtés, retrait, alimentation des affaires. Tests sous les rôles réels puis essai du fichier privé sur la démo. | En vérification |
+| UL-024 | Dépôt CSV, reconnaissance Néréis, identifiants Ulysse, aperçu, réimport idempotent, ambiguïtés, retrait, alimentation des affaires. Tests sous les rôles réels puis essai du fichier privé sur la démo. | Import privé confirmé par Thomas le 25 octobre; raccordement agentique corrigé dans UL-026 |
 | UL-025 | Doctrine Denis de référence protégée, distincte de l’identité d’entreprise et des observations CRM. Sélection d’observations pertinentes et citables dans les trois parcours, sans exposer de données personnelles inutiles dans un contenu public. | À réaliser |
-| UL-026 | Prochaine action utile sur les affaires importées : situation, justification, travail préparé et résultat observable attendu. Suivi effectué/reporté/écarté séparé de l’approbation, actualisation avec nouvelles données. | À compléter sur le circuit existant |
+| UL-026 | Prochaine action utile sur les affaires importées : situation, justification, travail préparé et résultat observable attendu. Suivi effectué/reporté/écarté séparé de l’approbation, actualisation avec nouvelles données. | DEBT-044 : raccordement CSV → Hermes en vérification; suivi d’action restant |
 | UL-027 | Qualité éditoriale : longueur du brief, voix de l’entreprise et appel à l’action dans le texte copié. Révision de contenu sauvegardée et à réapprouver. | À réaliser |
 | UL-028 | Trois entrées de travail compréhensibles, cadrage réutilisé, configuration secondaire, arrêts/reprises avec données conservées. | À finaliser |
 | UL-029 | Recette pilote des trois parcours sur cas variés, validation commerciale, contrôle isolation/retrait, restauration sur environnement cible, version épinglée et retour arrière. | À réaliser |

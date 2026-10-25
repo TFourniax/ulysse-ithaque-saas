@@ -5,6 +5,7 @@ import { api } from '../api.ts';
 import { useSession } from '../session.tsx';
 import { Banner, EmptyState, ErrorBanner, Loading, PageHeader } from '../components/ui.tsx';
 import { formatDateTime } from '../format.ts';
+import { dealAnalysisIssue } from '../deal-analysis.ts';
 
 export const MODE_LABELS = {
   rules: 'Historique / règles',
@@ -18,7 +19,7 @@ const TOOL_LABELS: Record<string, string> = {
   search_documents: 'Recherche des documents autorisés',
   read_document_excerpt: "Lecture d'un extrait autorisé",
   get_company_context: "Consultation du contexte de l'entreprise",
-  get_active_doctrine: 'Consultation de la doctrine fictive',
+  get_active_doctrine: 'Consultation de la doctrine validée',
   list_related_recommendations: 'Consultation des propositions et décisions précédentes',
 };
 const STATUSES: Record<string, string> = {
@@ -39,6 +40,7 @@ export function useAgentRuns(tenantId: string) {
   });
 }
 export function RunCard({ run }: { run: AgentRunDto }) {
+  const issue = dealAnalysisIssue(run);
   const session = useSession();
   const events = useQuery({
     queryKey: ['agent-events', session.activeTenant.id, run.id],
@@ -47,7 +49,9 @@ export function RunCard({ run }: { run: AgentRunDto }) {
   });
   return (
     <section className="section" id={run.id} aria-label={`Analyse ${run.id}`}>
-      <h2>{STATUSES[run.status] ?? run.status}</h2>
+      <h2>
+        {run.snapshot.preflight ? 'Analyse à préparer' : (STATUSES[run.status] ?? run.status)}
+      </h2>
       <p>
         <Link to={`/opportunities/${run.subject_id}`}>
           {run.subject_label
@@ -74,7 +78,11 @@ export function RunCard({ run }: { run: AgentRunDto }) {
       </p>
       {run.error_code && (
         <Banner kind="warning">
-          Code : {run.error_code} · corrélation : {run.correlation_id}
+          {issue && <p>{issue}</p>}
+          <details>
+            <summary>Détails techniques</summary>
+            Code : {run.error_code} · corrélation : {run.correlation_id}
+          </details>
         </Banner>
       )}
       {events.isPending && <Loading label="Chargement des étapes" />}
@@ -119,7 +127,7 @@ export function AnalysesPage() {
         </p>
       </PageHeader>
       <Banner kind="info">
-        Sources et doctrine entièrement fictives. Mode configuré :{' '}
+        Chaque analyse indique les sources et la doctrine utilisées. Mode configuré :{' '}
         {runs.data ? MODE_LABELS[runs.data.configuredMode] : 'chargement'}.
       </Banner>
       {runs.isPending && <Loading />}

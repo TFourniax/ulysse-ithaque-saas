@@ -1,5 +1,12 @@
 # État actuel
 
+## UL-026 — Propositions après import CRM (DEBT-044)
+
+Pris le 25 octobre 2026, responsable Codex. Thomas confirme les affaires importées puis transmet un écran sans proposition et une ancienne date d’analyse. Le code révèle un filtre `fixture-crm`/doctrine `fixture` dans le moteur proactif, avant insertion d’une trace. Les tests UL-024 couvraient l’import et le moteur de règles, pas sa continuation agentique. Le correctif accepte les fichiers autorisés et les doctrines validées utilisables, conserve les contrôles de source et de publication, expose les blocages sans appel modèle et évite que les douze premières affaires monopolisent les lots suivants. Périmètre : worker, instructions Hermes, états UI, tests PostgreSQL/navigateur et recettes des deux protocoles. [Journal](journal/2026-10-25-UL-026-crm-proposals.md), [ADR](adr/0019-crm-agent-proposals.md).
+
+DEBT-043 : import du fichier privé confirmé par Thomas; cette confirmation ne validait pas encore la préparation d’une proposition. DEBT-044 reste en vérification jusqu’aux recettes de stack et à la lecture d’une proposition issue de la démo. Le suivi d’action effectué/reporté/écarté et la doctrine Denis protégée restent à réaliser : UL-026 complet et MVP ne sont pas déclarés livrés.
+
+
 ## UL-024 — Import CRM avant l’API Néréis
 
 **DEBT-043 — corrections avant import**, prise Codex le 24 octobre. Thomas rapporte trois lignes écartées pour montant/devise et demande de les ajuster dans l’aperçu. Le lot ajoute reconnaissance prudente des formats Excel, choix commun format/devise, correction des cellules autorisées par affaire, nouvel aperçu obligatoire, conservation des choix de rapprochement et provenance des corrections. Aucune migration historique ni donnée déployée modifiée. [Journal](journal/2026-10-24-UL-024-import-corrections.md). Clôture : tests de conversion et de refus, import réel via navigateur/API/worker, puis reprise du CSV réel sur la démo.

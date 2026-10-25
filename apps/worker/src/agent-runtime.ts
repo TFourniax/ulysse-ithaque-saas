@@ -23,6 +23,7 @@ import {
   doctrineRef,
   ensure,
   expiresAtFor,
+  fingerprintOf,
   HOUR_MS,
   record,
   requireScope,
@@ -72,12 +73,29 @@ export const HERMES_COMMIT = 'e76fb951a1d207c9596032426e7e0eadfb197bea';
 export const EXECUTION_CONTRACT = 'ulysse-execution-v6';
 /** sha256 of services/hermes/instructions.txt (LF); a unit test keeps both identical. */
 export const AGENT_INSTRUCTIONS_SHA256 =
-  'ee16082f3cb9ba52c8984afb5bc9288e7a7adb599a9922322dfd70c849b59bb7';
+  'ad7ca00b010c86a384628c49b40edfcc26d9261d4883a7cee4ccd18def748980';
 export const WORKFLOW_INSTRUCTIONS_SHA256 =
   'fee2b7a8a30b0b4cb2c962ec1b5c1d46211df5fb5b11da7da4f7994de9acb2d1';
 export const INSTRUCTIONS_VERSION = `${AGENT_VERSION}+${AGENT_INSTRUCTIONS_SHA256.slice(0, 12)}`;
 /** Failed, interrupted or refused attempts on unchanged input before analysis stops retrying. */
 export const MAX_ATTEMPTS = 2;
+export const DEAL_TIMEOUT_MS = 300_000;
+type ReadinessCode =
+  | 'no_validated_doctrine'
+  | 'doctrine_rights'
+  | 'stale_source'
+  | 'source_inactive'
+  | 'source_not_supported';
+function readinessCode(error: unknown): ReadinessCode | null {
+  if (!(error instanceof DomainError)) return null;
+  if (error.code === 'DOCTRINE_NOT_VALIDATED') return 'no_validated_doctrine';
+  if (error.code === 'DOCTRINE_RIGHTS') return 'doctrine_rights';
+  if (error.code === 'CONNECTION_INACTIVE') return 'source_inactive';
+  if (error.code === 'INVALID_INPUT' && error.detail === 'stale source') return 'stale_source';
+  if (error.code === 'FORBIDDEN' && error.detail === 'unsupported_deal_source')
+    return 'source_not_supported';
+  return null;
+}
 export const TOOL_NAMES = [
   'get_opportunity',
   'list_activities',
@@ -332,13 +350,17 @@ export class AgentRuntime {
   async analyze(ctx: Context, trigger: string, signal?: AbortSignal): Promise<void> {
     requireScope(ctx, 'analysis:run');
     const subjects = await this.store.transaction(ctx, async (tx) =>
-      (await tx.listOpportunitiesForAnalysis(new Date(Date.now() - 30 * DAY_MS).toISOString()))
-        .filter((o) => !o.deletedAt && o.fields.stage === 'open')
-        .slice(0, 12),
+      (
+        await tx.listOpportunitiesForAnalysis(new Date(Date.now() - 30 * DAY_MS).toISOString())
+      ).filter((o) => !o.deletedAt && o.fields.stage === 'open'),
     );
+    const started = Date.now();
+    let attempted = 0;
     for (const subject of subjects) {
-      if (signal?.aborted) return;
-      await this.run(ctx, subject.id, trigger, signal);
+      // The queue lease is ten minutes. Leave room for one full five-minute execution.
+      // Already settled subjects do not consume the batch: later imported deals must progress.
+      if (signal?.aborted || attempted >= 12 || Date.now() - started >= 240_000) return;
+      if (await this.run(ctx, subject.id, trigger, signal)) attempted++;
     }
   }
   async run(
@@ -352,85 +374,101 @@ export class AgentRuntime {
     const capability = randomBytes(32).toString('base64url');
     const mode = this.config.ULYSSE_ANALYSIS_MODE;
     ensure(mode !== 'rules', 'INVALID_INPUT');
-    const accepted = await this.store.transaction(ctx, async (tx, sql) => {
-      await tx.lock('analysis');
-      await sql.query(
-        "UPDATE agent_runs SET status='interrupted',completed_at=clock_timestamp(),error_code='lease_expired',reserved_usd=committed_usd WHERE tenant_id=$1 AND status IN ('running','validating') AND expires_at<=clock_timestamp()",
-        [ctx.tenantId],
-      );
-      const { opportunity: o, doctrine: d, context: c } = await this.current(tx, subjectId);
-      const input = agentInputHash(o, d, c);
-      // At-least-once jobs and the periodic resume re-enter here: settled input is never
-      // re-run, and failed attempts on unchanged input are bounded so they cannot drain budgets.
-      const previous = await sql.query<{ settled: boolean }>(
-        "SELECT status IN ('running','validating','completed','abstained') AS settled FROM agent_runs WHERE tenant_id=$1 AND subject_id=$2 AND input_hash=$3 AND mode=$4 AND (status IN ('running','validating','completed','abstained') OR (status IN ('failed','interrupted','budget_reached') AND session_id=$5))",
-        [ctx.tenantId, subjectId, input, mode, this.config.AGENT_SESSION_ID ?? 'simulation'],
-      );
-      if (previous.rows.some((r) => r.settled) || previous.rows.length >= MAX_ATTEMPTS)
-        return false;
-      const slots = await sql.query<{ available: boolean }>(
-        'SELECT app.agent_slot_available() AS available',
-      );
-      if (!slots.rows[0]?.available) throw new Error('agent_concurrency_limit');
-      await sql.query(
-        "INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id) VALUES($1,$2,$3,$4,$5,'running',$6,$7,$8,clock_timestamp()+interval '90 seconds',$9,$10,$11,$12,$13)",
-        [
-          ctx.tenantId,
-          id,
-          subjectId,
-          input,
-          mode,
-          trigger,
-          JSON.stringify({
-            sourceRevision: o.revision,
-            doctrineId: d.id,
-            doctrineVersion: d.version,
-            contextVersion: c?.version ?? null,
-            providerRoute: this.config.AGENT_PROVIDER_ROUTE,
-            modelProfile: this.provider?.profile ?? null,
-            modelProfileHash: this.provider?.profileHash ?? null,
-          }),
-          hash(capability),
-          this.config.AGENT_SESSION_ID ?? 'simulation',
-          this.config.AGENT_MODEL_ID ?? 'simulation',
-          HERMES_COMMIT,
-          // The worker simulation does not use the instructions sent to the model.
-          mode === 'simulated' ? AGENT_VERSION : INSTRUCTIONS_VERSION,
-          ctx.correlationId,
-        ],
-      );
-      if (mode !== 'simulated') {
-        const reservation = await sql.query<{ accepted: boolean }>(
-          'SELECT app.reserve_agent_run_budget($1,$2,$3,$4) AS accepted',
+    let accepted: boolean;
+    try {
+      accepted = await this.store.transaction(ctx, async (tx, sql) => {
+        await tx.lock('analysis');
+        await sql.query(
+          "UPDATE agent_runs SET status='interrupted',completed_at=clock_timestamp(),error_code='lease_expired',reserved_usd=committed_usd WHERE tenant_id=$1 AND status IN ('running','validating') AND expires_at<=clock_timestamp()",
+          [ctx.tenantId],
+        );
+        const { opportunity: o, doctrine: d, context: c } = await this.current(tx, subjectId);
+        const input = agentInputHash(o, d, c);
+        // At-least-once jobs and the periodic resume re-enter here: settled input is never
+        // re-run, and failed attempts on unchanged input are bounded so they cannot drain budgets.
+        const previous = await sql.query<{ settled: boolean }>(
+          "SELECT status IN ('running','validating','completed','abstained') AS settled FROM agent_runs WHERE tenant_id=$1 AND subject_id=$2 AND input_hash=$3 AND mode=$4 AND (status IN ('running','validating','completed','abstained') OR (status IN ('failed','interrupted','budget_reached') AND session_id=$5))",
+          [ctx.tenantId, subjectId, input, mode, this.config.AGENT_SESSION_ID ?? 'simulation'],
+        );
+        if (previous.rows.some((r) => r.settled) || previous.rows.length >= MAX_ATTEMPTS)
+          return false;
+        const slots = await sql.query<{ available: boolean }>(
+          'SELECT app.agent_slot_available() AS available',
+        );
+        if (!slots.rows[0]?.available) throw new Error('agent_concurrency_limit');
+        await sql.query(
+          "INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id) VALUES($1,$2,$3,$4,$5,'running',$6,$7,$8,clock_timestamp()+($14::integer * interval '1 millisecond'),$9,$10,$11,$12,$13)",
           [
+            ctx.tenantId,
             id,
-            this.config.AGENT_RUN_BUDGET_USD,
-            this.config.AGENT_SESSION_BUDGET_USD,
-            this.config.AGENT_MONTH_BUDGET_USD,
+            subjectId,
+            input,
+            mode,
+            trigger,
+            JSON.stringify({
+              sourceRevision: o.revision,
+              connectionId: o.connectionId,
+              doctrineOrigin: d.origin,
+              doctrineId: d.id,
+              doctrineVersion: d.version,
+              contextVersion: c?.version ?? null,
+              providerRoute: this.config.AGENT_PROVIDER_ROUTE,
+              modelProfile: this.provider?.profile ?? null,
+              modelProfileHash: this.provider?.profileHash ?? null,
+            }),
+            hash(capability),
+            this.config.AGENT_SESSION_ID ?? 'simulation',
+            this.config.AGENT_MODEL_ID ?? 'simulation',
+            HERMES_COMMIT,
+            // The worker simulation does not use the instructions sent to the model.
+            mode === 'simulated' ? AGENT_VERSION : INSTRUCTIONS_VERSION,
+            ctx.correlationId,
+            DEAL_TIMEOUT_MS,
           ],
         );
-        if (!reservation.rows[0]?.accepted) {
-          await sql.query(
-            "UPDATE agent_runs SET status='budget_reached',completed_at=clock_timestamp(),error_code='reservation_refused' WHERE tenant_id=$1 AND id=$2",
-            [ctx.tenantId, id],
+        if (mode !== 'simulated') {
+          const reservation = await sql.query<{ accepted: boolean }>(
+            'SELECT app.reserve_agent_run_budget($1,$2,$3,$4) AS accepted',
+            [
+              id,
+              this.config.AGENT_RUN_BUDGET_USD,
+              this.config.AGENT_SESSION_BUDGET_USD,
+              this.config.AGENT_MONTH_BUDGET_USD,
+            ],
           );
-          await this.store.event(sql, ctx.tenantId, id, 'budget', 'Budget ou concurrence atteint');
-          return false;
+          if (!reservation.rows[0]?.accepted) {
+            await sql.query(
+              "UPDATE agent_runs SET status='budget_reached',completed_at=clock_timestamp(),error_code='reservation_refused' WHERE tenant_id=$1 AND id=$2",
+              [ctx.tenantId, id],
+            );
+            await this.store.event(
+              sql,
+              ctx.tenantId,
+              id,
+              'budget',
+              'Budget ou concurrence atteint',
+            );
+            return false;
+          }
         }
-      }
-      await this.store.event(
-        sql,
-        ctx.tenantId,
-        id,
-        'started',
-        mode === 'hermes-live'
-          ? 'Hermes live démarré'
-          : mode === 'hermes-stub'
-            ? 'Hermes démarré avec le modèle simulé'
-            : 'Analyse agentique simulée démarrée',
-      );
-      return true;
-    });
+        await this.store.event(
+          sql,
+          ctx.tenantId,
+          id,
+          'started',
+          mode === 'hermes-live'
+            ? 'Hermes live démarré'
+            : mode === 'hermes-stub'
+              ? 'Hermes démarré avec le modèle simulé'
+              : 'Analyse agentique simulée démarrée',
+        );
+        return true;
+      });
+    } catch (error) {
+      const code = readinessCode(error);
+      if (!code) throw error;
+      return this.recordReadiness(ctx, subjectId, trigger, code);
+    }
     if (!accepted) return null;
     try {
       const raw =
@@ -444,7 +482,7 @@ export class AgentRuntime {
                 mode,
                 model: this.config.AGENT_MODEL_ID ?? '',
                 modelSettings: this.provider?.executionSettings,
-                timeoutMs: 90000,
+                timeoutMs: DEAL_TIMEOUT_MS,
               },
               signal,
             );
@@ -487,21 +525,86 @@ export class AgentRuntime {
     o = await tx.getOpportunity(subjectId);
     ensure(o && !o.deletedAt && o.fields.stage === 'open', 'NOT_FOUND');
     const [doctrine, context] = await Promise.all([tx.getActiveDoctrine(), tx.getCurrentContext()]);
-    ensure(connection?.status === 'active' && connection.provider === 'fixture-crm', 'FORBIDDEN');
+    ensure(connection?.status === 'active', 'CONNECTION_INACTIVE');
     ensure(
-      doctrine !== null && doctrine.origin === 'fixture',
-      'INVALID_INPUT',
-      'fictional doctrine required',
+      connection.provider === 'fixture-crm' || connection.provider === 'crm-file',
+      'FORBIDDEN',
+      'unsupported_deal_source',
     );
+    ensure(doctrine !== null, 'DOCTRINE_NOT_VALIDATED');
     assertUsableForAnalysis(doctrine);
     ensure(
       connection.dataAsOf !== null &&
+        Date.parse(connection.dataAsOf) <= Date.now() &&
         Date.now() - Date.parse(connection.dataAsOf) <=
           doctrine.content.policy.maxSourceAgeHours * HOUR_MS,
       'INVALID_INPUT',
       'stale source',
     );
     return { opportunity: o, doctrine, context, connection };
+  }
+  private async recordReadiness(
+    ctx: Context,
+    subjectId: string,
+    trigger: string,
+    code: ReadinessCode,
+  ): Promise<string | null> {
+    return this.store.transaction(ctx, async (tx, sql) => {
+      await tx.lock('analysis');
+      const o = await tx.getOpportunity(subjectId);
+      if (!o || o.deletedAt || o.fields.stage !== 'open') return null;
+      const connection = await tx.getConnection(o.connectionId, { forUpdate: true });
+      // Never recreate execution data after source revocation/purge.
+      if (!connection || connection.status !== 'active') return null;
+      const d = await tx.getActiveDoctrine(),
+        c = await tx.getCurrentContext();
+      const snapshot = {
+        sourceRevision: o.revision,
+        connectionId: connection.id,
+        doctrineId: d?.id ?? null,
+        doctrineVersion: d?.version ?? null,
+        doctrineOrigin: d?.origin ?? null,
+        contextVersion: c?.version ?? null,
+        preflight: { code },
+      };
+      const input = fingerprintOf({
+        blocked: snapshot,
+        provider: connection.provider,
+        dataAsOf: connection.dataAsOf,
+        doctrineHash: d?.contentHash ?? null,
+      });
+      const id = randomUUID();
+      const inserted = await sql.query(
+        `INSERT INTO agent_runs(tenant_id,id,subject_id,input_hash,mode,status,trigger,snapshot,capability_hash,expires_at,session_id,model,hermes_version,instructions_version,correlation_id,completed_at,error_code,cost_state)
+         VALUES($1,$2,$3,$4,$5,'abstained',$6,$7,$8,clock_timestamp(),$9,$10,$11,$12,$13,clock_timestamp(),$14,'declared')
+         ON CONFLICT DO NOTHING RETURNING id`,
+        [
+          ctx.tenantId,
+          id,
+          subjectId,
+          input,
+          this.config.ULYSSE_ANALYSIS_MODE,
+          trigger,
+          JSON.stringify(snapshot),
+          hash(randomBytes(32).toString('base64url')),
+          this.config.AGENT_SESSION_ID ?? 'simulation',
+          this.config.AGENT_MODEL_ID ?? 'simulation',
+          HERMES_COMMIT,
+          INSTRUCTIONS_VERSION,
+          ctx.correlationId,
+          code,
+        ],
+      );
+      if (!inserted.rowCount) return null;
+      await this.store.event(
+        sql,
+        ctx.tenantId,
+        id,
+        'preflight',
+        'Préparation bloquée avant tout appel modèle',
+      );
+      return id;
+    });
   }
   async tool(capability: string, name: string, rawArgs: unknown): Promise<unknown> {
     if ((WORKFLOW_TOOLS as readonly string[]).includes(name))
@@ -541,7 +644,8 @@ export class AgentRuntime {
         value = {
           state: 'present',
           reference: refs[0],
-          fictional: true,
+          fictional: d.origin === 'fixture',
+          origin: d.origin,
           version: d.version,
           content: d.content,
           imperative:
@@ -640,7 +744,10 @@ export class AgentRuntime {
         summary: 'Simulation : opposition ou pause explicite, aucune sollicitation.',
         proposals: [],
       };
-    if (activities.state !== 'present')
+    if (
+      activities.state !== 'present' &&
+      !excerpts.some((e) => Array.isArray(e.items) && e.items.length > 0)
+    )
       return {
         version: AGENT_VERSION,
         outcome: 'abstained',
@@ -661,7 +768,7 @@ export class AgentRuntime {
           .map((m) => m.reference),
       ),
     ];
-    const texts = JSON.stringify(activities.items).toLocaleLowerCase();
+    const texts = JSON.stringify([activities.items, ...excerpts]).toLocaleLowerCase();
     const positive = /accord|disponible|créneau/.test(texts);
     return {
       version: AGENT_VERSION,
@@ -681,7 +788,7 @@ export class AgentRuntime {
           references: refs.slice(0, 12),
           assumptions: [],
           missingInformation: ['Validation du cadrage par le client'],
-          limits: ['Sources et doctrine fictives', 'Aucun envoi externe'],
+          limits: ['Résultat simulé, sans appel modèle', 'Aucun envoi externe'],
           urgency: 'normal',
         },
       ],
@@ -1284,10 +1391,12 @@ export class AgentRuntime {
       if (preparedBytes > provider.profile.maxContextBytes)
         throw new ContextLimitError('prepared', preparedBytes, provider.profile.maxContextBytes);
       // Include delivered source text and the native schema in the per-call reservation.
-      const upperCost = provider.reserve(
-        preparedBytes + 2048,
-        provider.profile.generation.maxOutputTokens,
-      );
+      // Use the same six-decimal amount for reservation and release. PostgreSQL rounds
+      // numeric(12,6); subtracting an unrounded estimate later leaves a spurious residual.
+      const upperCost =
+        Math.ceil(
+          provider.reserve(preparedBytes + 2048, provider.profile.generation.maxOutputTokens) * 1e6,
+        ) / 1e6;
       ensure(run.committed_usd + upperCost <= run.reserved_usd, 'FORBIDDEN', 'budget limit');
       if (switching) {
         await sql.query(
@@ -1362,13 +1471,7 @@ export class AgentRuntime {
         preparedMessages,
         responseFormat,
         upperCost,
-        remainingMs: Math.max(
-          1,
-          Math.min(
-            run.workflow_kind === 'deal' ? 45000 : 90000,
-            Date.parse(run.expires_at) - Date.now(),
-          ),
-        ),
+        remainingMs: Math.max(1, Math.min(90000, Date.parse(run.expires_at) - Date.now())),
       };
     });
     const live = mode === 'hermes-live';
