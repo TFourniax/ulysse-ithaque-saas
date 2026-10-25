@@ -801,18 +801,24 @@ describe('UL-016 agent pipeline with real PostgreSQL roles', () => {
         await runner.tool(request.capability, 'get_company_context', {});
         const response = await runner.anthropicInference(request.capability, body);
         assert.equal(z.object({ type: z.string() }).parse(response).type, 'message');
+        assert.equal(Number((await runner.store.list(w.owner))[0]?.committed_usd), 0.0123);
+        // A different transcript size must not leave half-micro-dollar reservation residues.
+        await runner.anthropicInference(request.capability, {
+          ...body,
+          messages: [{ role: 'user', content: 'Fixture x' }, ...body.messages.slice(1)],
+        });
         checked = true;
         return abstention;
       },
     });
     await runner.run(w.ctx, w.o.id, 'test');
     assert.equal(checked, true);
-    assert.equal(calls, 1);
+    assert.equal(calls, 2);
     const run = (await runner.store.list(w.owner))[0]!;
     assert.equal(run.status, 'abstained');
     assert.equal(run.cost_state, 'estimated');
-    assert.equal(Number(run.committed_usd), 0.0123);
-    assert.equal(run.input_tokens, 6000);
+    assert.equal(Number(run.committed_usd), 0.0246);
+    assert.equal(run.input_tokens, 12000);
     const persisted = JSON.stringify(run);
     assert.ok(!persisted.includes('opaque-signature'));
     assert.ok(!persisted.includes('private-fixture-reasoning'));

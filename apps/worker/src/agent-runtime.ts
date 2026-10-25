@@ -1391,10 +1391,12 @@ export class AgentRuntime {
       if (preparedBytes > provider.profile.maxContextBytes)
         throw new ContextLimitError('prepared', preparedBytes, provider.profile.maxContextBytes);
       // Include delivered source text and the native schema in the per-call reservation.
-      const upperCost = provider.reserve(
-        preparedBytes + 2048,
-        provider.profile.generation.maxOutputTokens,
-      );
+      // Use the same six-decimal amount for reservation and release. PostgreSQL rounds
+      // numeric(12,6); subtracting an unrounded estimate later leaves a spurious residual.
+      const upperCost =
+        Math.ceil(
+          provider.reserve(preparedBytes + 2048, provider.profile.generation.maxOutputTokens) * 1e6,
+        ) / 1e6;
       ensure(run.committed_usd + upperCost <= run.reserved_usd, 'FORBIDDEN', 'budget limit');
       if (switching) {
         await sql.query(

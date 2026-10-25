@@ -25,3 +25,7 @@ Thomas confirme l’import privé puis montre l’absence de proposition et une 
 La maintenance configurée par défaut toutes les cinq minutes doit reprendre les affaires importées encore admissibles, sans les réimporter. Elle ne renouvelle pas la fraîcheur d’un fichier. Une source trop ancienne ou une doctrine manquante restent des blocages explicites.
 
 Recette live requise après déploiement : lire une première proposition et ses sources. La qualité commerciale, le suivi effectué/reporté/écarté et les autres conditions [MVP](../MVP-NEXT.md) restent à valider; ce correctif ne déclare pas le MVP terminé.
+
+## Première recette CI et correction comptable
+
+Sur `395f5c3`, les trois nouveaux tests PostgreSQL passent (CSV → proposition avec doctrine d’entreprise, blocage/reprise, treizième affaire et fraîcheur). Un test Anthropic préexistant révèle un résidu d’arrondi de 0,000001 USD : la réservation est stockée en `numeric(12,6)` mais sa libération soustrait l’estimation non arrondie. Le nouveau texte des instructions change la taille qui déclenche ce cas. La passerelle arrondit désormais la réservation par excès au millionième avant son écriture et réutilise exactement ce montant pour la libération, comme la recherche. Le test conserve des assertions de coût exact et couvre deux tailles de conversation. Aucun tarif ou budget n’est modifié. Référence : CI PostgreSQL `40154236573`.
